@@ -617,9 +617,11 @@ function omitUndefined<T extends Record<string, unknown>>(value: T): T {
  * into MoviePilot-comparable structured meta + the local quality-ladder enums.
  */
 export function parseReleaseMeta(title: string, options: ParseReleaseMetaOptions = {}): ReleaseMeta {
-  const prepared = prepareTitle(title, options.customWords ?? [], {
-    includeBuiltin: options.includeBuiltinWords,
-  });
+  const prepared = prepareTitle(
+    title,
+    options.customWords ?? [],
+    options.includeBuiltinWords === undefined ? {} : { includeBuiltin: options.includeBuiltinWords },
+  );
   const tagged = extractExplicitMediaTags(prepared.title);
   const working = [tagged.title, options.subtitle].filter((part) => part && part.trim().length > 0).join(" ");
   const stem = working.replace(MEDIA_EXT_RE, "");

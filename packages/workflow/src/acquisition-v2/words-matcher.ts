@@ -78,7 +78,7 @@ function parseWord(word: string): ParsedWord | null {
   }
   if (word.includes(" >> ") && word.includes(" <> ")) {
     const [front, rest = ""] = word.split(" <> ");
-    const [back, offset = ""] = rest.split(" >> ");
+    const [back = "", offset = ""] = rest.split(" >> ");
     return { kind: "offset", params: [front!.trim(), back.trim(), offset.trim()], raw: word };
   }
   return { kind: "block", params: [word.trim()], raw: word.trim() };
