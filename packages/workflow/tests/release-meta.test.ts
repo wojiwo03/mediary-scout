@@ -3,8 +3,10 @@ import { parseReleaseQuality, shouldReplaceCoverage } from "../src/acquisition-v
 import { mapTvCoverage } from "../src/acquisition-v2/rules-selector.js";
 import {
   isAnimeTitle,
+  isIncompleteMovieDisc,
   joinReleaseTitleParts,
   parseAirDateFromTitle,
+  parseDiscPartTokens,
   parseReleaseMeta,
   parseReleaseMetaParts,
   splitReleaseTitleParts,
@@ -121,6 +123,8 @@ describe("parseReleaseMeta — MoviePilot-style golden titles", () => {
   it("PART/CD and 10bit are extracted without changing the quality ladder score", () => {
     const meta = parseReleaseMeta("Movie.2010.1080p.BluRay.DTS-HD.MA.5.1.x264.10bit.CD1");
     expect(meta.part).toMatch(/CD1/i);
+    expect(meta.discParts).toEqual(["CD1"]);
+    expect(isIncompleteMovieDisc(meta)).toBe(true);
     expect(meta.videoBit).toBe("10bit");
     expect(meta.videoCodec).toBe("h264");
     expect(meta.audio).toBe("dtshd");
@@ -549,6 +553,40 @@ describe("parseReleaseMeta — expanded groups and platforms", () => {
     expect(parseReleaseMeta("狂飙 优酷 1080p 中字").webSource).toBe("Youku");
     expect(parseReleaseMeta("A Random Title Without Web Tags HS")).not.toHaveProperty("webSource");
     expect(parseReleaseMeta("A Random Title Without Web Tags NF")).not.toHaveProperty("webSource");
+  });
+});
+
+describe("parseReleaseMeta — multi-disc CD/PART completeness", () => {
+  it("treats a lone CD1 / PART1 / 上集 as incomplete", () => {
+    expect(parseDiscPartTokens("Movie.2008.1080p.BluRay.CD1")).toEqual(["CD1"]);
+    expect(isIncompleteMovieDisc("Movie.2008.1080p.BluRay.CD1")).toBe(true);
+    expect(isIncompleteMovieDisc("Movie.2008.1080p.PART1")).toBe(true);
+    expect(isIncompleteMovieDisc("黑暗骑士 2008 上集 1080p")).toBe(true);
+    expect(isIncompleteMovieDisc("Movie.2008.DISC2.1080p")).toBe(true);
+    expect(parseReleaseMeta("Movie.2008.1080p.CD1").part).toBe("CD1");
+  });
+
+  it("treats CD1+CD2 / CD1-2 / 上下集 as a complete set in one title", () => {
+    expect(isIncompleteMovieDisc("Movie.2008.1080p.BluRay.CD1+CD2")).toBe(false);
+    expect(parseReleaseMeta("Movie.2008.1080p.BluRay.CD1+CD2").discParts).toEqual(["CD1", "CD2"]);
+    expect(isIncompleteMovieDisc("Movie.2008.1080p.CD1-CD2")).toBe(false);
+    expect(isIncompleteMovieDisc("Movie.2008.1080p.CD1-2")).toBe(false);
+    expect(parseDiscPartTokens("Movie.2008.PART1-PART2")).toEqual(["PART1", "PART2"]);
+    expect(isIncompleteMovieDisc("黑暗骑士 2008 上下集 1080p")).toBe(false);
+    expect(isIncompleteMovieDisc("黑暗骑士 2008 上集+下集 1080p")).toBe(false);
+  });
+
+  it("titles without a disc split are complete, and DVD5/DVD9 are not discs", () => {
+    expect(isIncompleteMovieDisc("蝙蝠侠：黑暗骑士 2008 1080p BluRay 中字")).toBe(false);
+    expect(parseReleaseMeta("蝙蝠侠：黑暗骑士 2008 1080p").discParts).toEqual([]);
+    expect(isIncompleteMovieDisc("Movie.2008.DVDRip.1080p")).toBe(false);
+    expect(parseDiscPartTokens("Movie.2008.DVD9.ISO")).toEqual([]);
+  });
+
+  it("parent CD1-CD2 fills a leaf so the share is a complete set", () => {
+    const meta = parseReleaseMeta("Movie.2008.1080p.CD1-CD2/Movie.mkv");
+    expect(meta.discParts).toEqual(expect.arrayContaining(["CD1", "CD2"]));
+    expect(isIncompleteMovieDisc(meta)).toBe(false);
   });
 });
 

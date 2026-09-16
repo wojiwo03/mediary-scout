@@ -14,6 +14,7 @@ import {
 } from "./quality-ladder.js";
 import {
   airDateCodeForms,
+  isIncompleteMovieDisc,
   parseEpisodeSpanFromTitle,
   parseNamedSeasons,
   parseReleaseMeta,
@@ -268,6 +269,7 @@ function leftoverAfterTitle(
     meta.webSource,
     meta.releaseGroup,
     meta.part,
+    ...meta.discParts,
     meta.audioCodec,
     meta.resourceType,
     meta.resourcePix,
@@ -507,7 +509,15 @@ export function selectResourceCandidates(input: {
     );
     const pool = playable.length > 0 ? playable : eligible;
     const withChinese = preferZh && !originCN ? pool.filter((candidate) => candidate.chineseScore >= 0) : pool;
-    const ranked = (withChinese.length > 0 ? withChinese : pool).sort((a, b) => b.totalScore - a.totalScore);
+    const rankedBase = withChinese.length > 0 ? withChinese : pool;
+    // Movies transfer exactly one share. A lone CD1/PART1 is incomplete when a
+    // complete pack (no disc split, or CD1+CD2 in the same title) exists.
+    const complete = rankedBase.filter(
+      (candidate) => !isIncompleteMovieDisc(parseReleaseMeta(candidate.title, parseOptions(words))),
+    );
+    const incomplete = rankedBase.filter((candidate) => !complete.includes(candidate));
+    const moviePool = complete.length > 0 ? complete : rankedBase;
+    const ranked = [...moviePool].sort((a, b) => b.totalScore - a.totalScore);
     const best = ranked[0];
     if (!best) {
       return {
@@ -516,16 +526,30 @@ export function selectResourceCandidates(input: {
         reason: "规则选片：没有标题匹配且可播放的目标影片候选",
       };
     }
+    const skippedIncomplete =
+      complete.length > 0
+        ? incomplete.map((candidate) => ({
+            snapshotId: candidate.snapshotId,
+            candidateId: candidate.candidateId,
+            title: candidate.title,
+            reason: "incomplete-disc-set",
+          }))
+        : [];
+    const skippedIds = new Set(skippedIncomplete.map((candidate) => candidate.candidateId));
     return {
       selected: [best],
       rejected: [
         ...rejected,
-        ...ranked.slice(1).map((candidate) => ({
-          snapshotId: candidate.snapshotId,
-          candidateId: candidate.candidateId,
-          title: candidate.title,
-          reason: "outranked",
-        })),
+        ...skippedIncomplete,
+        ...ranked
+          .slice(1)
+          .filter((candidate) => !skippedIds.has(candidate.candidateId))
+          .map((candidate) => ({
+            snapshotId: candidate.snapshotId,
+            candidateId: candidate.candidateId,
+            title: candidate.title,
+            reason: "outranked",
+          })),
       ],
       reason: `规则选片：按画质阶梯选择「${best.title}」`,
     };

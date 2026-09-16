@@ -110,6 +110,82 @@ describe("selectResourceCandidates — movie", () => {
   });
 });
 
+describe("selectResourceCandidates — movie multi-disc", () => {
+  const target = {
+    kind: "movie" as const,
+    title: "蝙蝠侠：黑暗骑士",
+    aliases: ["The Dark Knight"],
+    year: 2008,
+  };
+
+  it("prefers a CD1+CD2 pack over a lone CD1 of the same quality", () => {
+    const selection = selectResourceCandidates({
+      candidates: [
+        cand("cd1", "蝙蝠侠：黑暗骑士 2008 1080p BluRay CD1 中字"),
+        cand("pack", "蝙蝠侠：黑暗骑士 2008 1080p BluRay CD1+CD2 中字"),
+      ],
+      target,
+      policy: high,
+    });
+    expect(selection.selected.map((c) => c.candidateId)).toEqual(["pack"]);
+    expect(
+      selection.rejected.some((r) => r.candidateId === "cd1" && r.reason === "incomplete-disc-set"),
+    ).toBe(true);
+  });
+
+  it("prefers a title without PART/CD over a lone CD1 of equal quality", () => {
+    const selection = selectResourceCandidates({
+      candidates: [
+        cand("cd1", "蝙蝠侠：黑暗骑士 2008 1080p WEB-DL CD1 中字"),
+        cand("full", "蝙蝠侠：黑暗骑士 2008 1080p WEB-DL 中字"),
+      ],
+      target,
+      policy: high,
+    });
+    expect(selection.selected.map((c) => c.candidateId)).toEqual(["full"]);
+    expect(
+      selection.rejected.some((r) => r.candidateId === "cd1" && r.reason === "incomplete-disc-set"),
+    ).toBe(true);
+  });
+
+  it("prefers a complete 1080p pack over a 4K lone CD1", () => {
+    const selection = selectResourceCandidates({
+      candidates: [
+        cand("cd1-4k", "蝙蝠侠：黑暗骑士 2008 2160p DV REMUX CD1 中字"),
+        cand("full-1080", "蝙蝠侠：黑暗骑士 2008 1080p WEB-DL 中字"),
+      ],
+      target,
+      policy: high,
+    });
+    expect(selection.selected.map((c) => c.candidateId)).toEqual(["full-1080"]);
+  });
+
+  it("still picks a lone CD1 when it is the only match", () => {
+    const selection = selectResourceCandidates({
+      candidates: [cand("cd1", "蝙蝠侠：黑暗骑士 2008 1080p BluRay CD1 中字")],
+      target,
+      policy: high,
+    });
+    expect(selection.selected.map((c) => c.candidateId)).toEqual(["cd1"]);
+    expect(selection.rejected.some((r) => r.reason === "incomplete-disc-set")).toBe(false);
+  });
+
+  it("does not multi-pick separate CD1 and CD2 shares (movies transfer one)", () => {
+    const selection = selectResourceCandidates({
+      candidates: [
+        cand("cd1", "蝙蝠侠：黑暗骑士 2008 1080p BluRay CD1 中字"),
+        cand("cd2", "蝙蝠侠：黑暗骑士 2008 1080p BluRay CD2 中字"),
+      ],
+      target,
+      policy: high,
+    });
+    expect(selection.selected).toHaveLength(1);
+    expect(["cd1", "cd2"]).toContain(selection.selected[0]!.candidateId);
+    expect(selection.rejected.some((r) => r.reason === "outranked")).toBe(true);
+    expect(selection.rejected.some((r) => r.reason === "incomplete-disc-set")).toBe(false);
+  });
+});
+
 describe("selectResourceCandidates — TV", () => {
   it("prefers one complete pack over overlapping ranges", () => {
     const selection = selectResourceCandidates({

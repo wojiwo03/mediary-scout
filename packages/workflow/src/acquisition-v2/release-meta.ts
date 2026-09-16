@@ -88,8 +88,13 @@ export interface ReleaseMeta extends ParsedReleaseQuality {
   episode?: ReleaseEpisodeSpan;
   /** Fansub re-encode marker (`28v2` / `[08v3]`) — same episode, later version. */
   episodeVersion?: number;
-  /** PART1 / CD1 / DISC1 when present. */
+  /** PART1 / CD1 / DISC1 when present (first token; see `discParts`). */
   part?: string;
+  /**
+   * Every disc/part token on the title (`CD1`, `PART2`, `上集`).
+   * A range like `CD1-CD2` lists both. Empty = not a split disc listing.
+   */
+  discParts: string[];
   /** Raw pix token MoviePilot would put in resource_pix (e.g. 2160p, 4k). */
   resourcePix?: string;
   /** Raw source token (WEB-DL, BluRay, REMUX, …). */
@@ -144,7 +149,15 @@ const RELEASE_GROUP_RE = compileReleaseGroupRegExp();
 const FANSUB_BRACKET_RE =
   /[【\[]([^\]】]{2,24}(?:字幕组|字幕社|字幕|Raws|House|Sub|手抄部|奶茶屋|发布组|压制组))[】\]]/;
 
-const PART_RE = /\b(?:part|cd|dvd|disk|disc)\s*([0-9abi]{1,2})\b/i;
+const DISC_KIND_RE = "part|cd|dvd|disk|disc";
+const DISC_RANGE_RE = new RegExp(
+  `\\b(${DISC_KIND_RE})\\s*([0-9abi]{1,2})\\s*[-+~_/到至]\\s*(?:(?:${DISC_KIND_RE})\\s*)?([0-9abi]{1,2})\\b`,
+  "gi",
+);
+const DISC_SINGLE_RE = new RegExp(`\\b(${DISC_KIND_RE})\\s*([0-9abi]{1,2})\\b`, "gi");
+const CJK_BOTH_DISC_RE = /上下[集部碟篇]/;
+const CJK_UPPER_DISC_RE = /上[集部碟篇]/;
+const CJK_LOWER_DISC_RE = /下[集部碟篇]/;
 
 const VIDEO_BIT_RE = /(?<![A-Za-z0-9])(8|10|12)[\s._-]*bits?\b/i;
 
@@ -581,12 +594,93 @@ function detectReleaseGroup(title: string): string | undefined {
   return group?.[0];
 }
 
-function detectPart(title: string): string | undefined {
-  const match = PART_RE.exec(normalizeQualityText(title));
-  if (!match) {
+function discIndexFromRaw(raw: string): number | undefined {
+  const token = raw.toLowerCase();
+  if (token === "a" || token === "i") {
+    return 1;
+  }
+  if (token === "b") {
+    return 2;
+  }
+  const n = Number(token);
+  return Number.isInteger(n) && n >= 1 && n <= 20 ? n : undefined;
+}
+
+function canonicalDiscToken(kind: string, rawIndex: string): string | undefined {
+  const index = discIndexFromRaw(rawIndex);
+  if (index === undefined) {
     return undefined;
   }
-  return `${match[0].replace(/\s+/g, "")}`.toUpperCase();
+  const label = kind.toUpperCase() === "DISK" ? "DISC" : kind.toUpperCase();
+  // DVD5 / DVD9 are dual-layer capacity tags, not disc indices.
+  if (label === "DVD" && (index === 5 || index === 9)) {
+    return undefined;
+  }
+  return `${label}${index}`;
+}
+
+function pushUniqueToken(tokens: string[], token: string | undefined): void {
+  if (!token || tokens.includes(token)) {
+    return;
+  }
+  tokens.push(token);
+}
+
+/** Collect CD/PART/DISC tokens, including `CD1-CD2` / `CD1-2` ranges and 上/下集. */
+export function parseDiscPartTokens(title: string): string[] {
+  const text = normalizeQualityText(title);
+  const tokens: string[] = [];
+  DISC_RANGE_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = DISC_RANGE_RE.exec(text)) !== null) {
+    pushUniqueToken(tokens, canonicalDiscToken(match[1]!, match[2]!));
+    pushUniqueToken(tokens, canonicalDiscToken(match[1]!, match[3]!));
+  }
+  DISC_SINGLE_RE.lastIndex = 0;
+  while ((match = DISC_SINGLE_RE.exec(text)) !== null) {
+    pushUniqueToken(tokens, canonicalDiscToken(match[1]!, match[2]!));
+  }
+  if (CJK_BOTH_DISC_RE.test(text)) {
+    pushUniqueToken(tokens, "上集");
+    pushUniqueToken(tokens, "下集");
+  } else {
+    if (CJK_UPPER_DISC_RE.test(text)) {
+      pushUniqueToken(tokens, "上集");
+    }
+    if (CJK_LOWER_DISC_RE.test(text)) {
+      pushUniqueToken(tokens, "下集");
+    }
+  }
+  return tokens;
+}
+
+function uniqueDiscKeys(tokens: readonly string[]): string[] {
+  const keys: string[] = [];
+  for (const token of tokens) {
+    if (token === "上集") {
+      pushUniqueToken(keys, "1");
+      continue;
+    }
+    if (token === "下集") {
+      pushUniqueToken(keys, "2");
+      continue;
+    }
+    const numbered = /(\d{1,2})$/.exec(token);
+    if (numbered) {
+      pushUniqueToken(keys, String(Number(numbered[1])));
+    }
+  }
+  return keys;
+}
+
+/**
+ * True when the title names exactly one disc of a multi-disc split
+ * (`CD1`, `PART2`, `上集`). A same-title set (`CD1+CD2`, `CD1-2`, `上下集`)
+ * or a title with no disc token is complete for movie selection.
+ */
+export function isIncompleteMovieDisc(input: string | Pick<ReleaseMeta, "discParts">): boolean {
+  const tokens = typeof input === "string" ? parseDiscPartTokens(input) : input.discParts;
+  return uniqueDiscKeys(tokens).length === 1;
 }
 
 function detectResourcePix(title: string, resolution: ResolutionBand): string | undefined {
@@ -894,6 +988,12 @@ function mergeReleaseMeta(leaf: ReleaseMeta, parent: ReleaseMeta): ReleaseMeta {
       effects.push(effect);
     }
   }
+  const discParts = [...leaf.discParts];
+  for (const token of parent.discParts) {
+    if (!discParts.includes(token)) {
+      discParts.push(token);
+    }
+  }
   const applied = [...leaf.appliedWords];
   for (const word of parent.appliedWords) {
     if (!applied.includes(word)) {
@@ -909,6 +1009,7 @@ function mergeReleaseMeta(leaf: ReleaseMeta, parent: ReleaseMeta): ReleaseMeta {
     discImage: leaf.discImage,
     seasons,
     resourceEffect: effects,
+    discParts,
     videoCodec: pick(leaf.videoCodec, parent.videoCodec, "unknown"),
     appliedWords: applied,
     special: leaf.special || (!leaf.episode && parent.special),
@@ -930,7 +1031,7 @@ function mergeReleaseMeta(leaf: ReleaseMeta, parent: ReleaseMeta): ReleaseMeta {
       : parent.airDate
         ? { airDate: parent.airDate }
         : {}),
-    ...(leaf.part ? { part: leaf.part } : parent.part ? { part: parent.part } : {}),
+    ...(discParts[0] ? { part: leaf.part ?? parent.part ?? discParts[0] } : {}),
     ...(leaf.webSource ? { webSource: leaf.webSource } : parent.webSource ? { webSource: parent.webSource } : {}),
     ...(leaf.releaseGroup ? { releaseGroup: leaf.releaseGroup } : parent.releaseGroup ? { releaseGroup: parent.releaseGroup } : {}),
     ...(leaf.resourcePix ? { resourcePix: leaf.resourcePix } : parent.resourcePix ? { resourcePix: parent.resourcePix } : {}),
@@ -987,7 +1088,8 @@ function parseReleaseMetaFlat(title: string, options: ParseReleaseMetaOptions = 
   const audioCodec = detectAudioCodec(stem);
   const airDate = parseAirDateFromTitle(stem);
   const year = detectYear(stem) ?? (airDate ? Number(airDate.slice(0, 4)) : undefined);
-  const part = detectPart(stem);
+  const discParts = parseDiscPartTokens(stem);
+  const part = discParts[0];
   const webSource = detectWebSource(stem);
   const releaseGroup = detectReleaseGroup(title) ?? detectReleaseGroup(stem);
   const resourcePix = detectResourcePix(stem, quality.resolution);
@@ -999,6 +1101,7 @@ function parseReleaseMetaFlat(title: string, options: ParseReleaseMetaOptions = 
     ...quality,
     seasons,
     resourceEffect: detectEffects(stem),
+    discParts,
     videoCodec: mapVideoCodec(stem),
     appliedWords: prepared.appliedWords,
     special: SPECIAL_RE.test(stem),
