@@ -703,6 +703,50 @@ describe("assessRulesConfidence", () => {
     expect(report.reasons).toContain("no-episode-coverage");
   });
 
+  it("is high when the empty set is only a hard quality-floor reject (do not escalate to agent)", () => {
+    const movieSel = selectResourceCandidates({
+      candidates: [cand("low", "盗梦空间 2010 720p WEB-DL 中字")],
+      target: { kind: "movie", title: "盗梦空间", aliases: ["Inception"], year: 2010 },
+      policy: qualityLadderPolicyFromFlags({ resolutionFloor: "1080p" }),
+    });
+    expect(movieSel.selected).toEqual([]);
+    expect(movieSel.rejected.some((row) => row.reason === BELOW_QUALITY_FLOOR_REASON)).toBe(true);
+    expect(
+      assessRulesConfidence({
+        target: { kind: "movie", title: "盗梦空间", aliases: ["Inception"], year: 2010 },
+        selection: movieSel,
+        candidateCount: 1,
+      }),
+    ).toEqual({ confidence: "high", reasons: [] });
+
+    const tvSel = selectResourceCandidates({
+      candidates: [cand("pack", "Show 全集 720p WEB-DL")],
+      target: {
+        kind: "tv",
+        title: "Show",
+        aliases: [],
+        seasons: [1],
+        missingEpisodes: ["S01E01"],
+        originCountries: ["CN"],
+      },
+      policy: qualityLadderPolicyFromFlags({ resolutionFloor: "1080p" }),
+    });
+    expect(
+      assessRulesConfidence({
+        target: {
+          kind: "tv",
+          title: "Show",
+          aliases: [],
+          seasons: [1],
+          missingEpisodes: ["S01E01"],
+          originCountries: ["CN"],
+        },
+        selection: tvSel,
+        candidateCount: 1,
+      }).confidence,
+    ).toBe("high");
+  });
+
   it("is low for sequel-or-year-only leftovers and for an empty pool", () => {
     const sequels = selectResourceCandidates({
       candidates: [cand("rises", "蝙蝠侠：黑暗骑士崛起 2012 1080p")],

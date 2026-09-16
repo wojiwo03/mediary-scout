@@ -170,6 +170,28 @@ describe("runAcquisitionAgent — the real AI SDK tool-loop over the sandbox", (
     expect(result.coverage.coverageMet).toBe(false);
   });
 
+  it("诚实留缺的 finish（coverageMet:false）也立刻收束 — 不再空转「正在收尾」", async () => {
+    const { sandbox } = await setup(["S01E01"]);
+    const activities: string[] = [];
+    const model = scriptedModel([
+      { tool: "finish", input: {} },
+      { tool: "readSkill", input: { section: "protocol" } },
+      { text: "should not run" },
+    ]);
+    const result = await runAcquisitionAgent({
+      sandbox,
+      model,
+      system: "You acquire media into the scoped sandbox.",
+      prompt: "Ensure S01E01 is obtained.",
+      maxSteps: 20,
+      onProgress: (event) => activities.push(event.activity),
+    });
+    expect(result.steps).toBe(1);
+    expect(result.coverage.coverageMet).toBe(false);
+    expect(result.text).toBe("");
+    expect(activities).toEqual(["正在收尾…"]);
+  });
+
   it("病1: 无搜索证据的 reportNoCoverage 被拒（{error}）→ 循环继续", async () => {
     const { sandbox } = await setup(["S01E01"]);
     // 不预搜——§9 护栏会 throw，asEvidence 转成 {error} 返回。

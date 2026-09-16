@@ -574,6 +574,13 @@ export function assessRulesConfidence(input: {
     if (input.candidateCount === 0) {
       reasons.push("no-candidates");
     } else if (reasons.length === 0) {
+      // Hard quality floor is a confident "do not download" — not parser
+      // uncertainty. Escalating to the agent would show 「正在收尾」 after an
+      // unmet-coverage finish and then keep the loop alive (coverageMet:false
+      // used to not stop). Leave the gap for patrol instead.
+      if (count(BELOW_QUALITY_FLOOR_REASON) > 0) {
+        return { confidence: "high", reasons: [] };
+      }
       reasons.push("empty-selection");
     }
     return { confidence: "low", reasons };

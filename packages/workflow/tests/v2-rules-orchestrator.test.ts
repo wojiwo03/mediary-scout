@@ -692,4 +692,55 @@ describe("runAcquisitionV2 — auto path confidence fallback", () => {
     expect(result.outcome.transferAttempts).toEqual([]);
     expect(result.text).toMatch(/画质下限/);
   });
+
+  it("auto + quality-floor-only empty set stays on rules (does not escalate / hang on finish)", async () => {
+    const snapId = "snap_auto_floor";
+    const provider: ResourceProvider = {
+      search: async ({ keyword }) =>
+        snapshot(snapId, keyword, [
+          candidate({ id: "low", snapshotId: snapId, index: 0, title: "盗梦空间 2010 720p WEB-DL 中字" }),
+        ]),
+    };
+    const executor = new FakeStorageExecutor({
+      directories: { staging: [], movie: [] },
+      transferOutcomes: {
+        low: {
+          status: "succeeded",
+          providerMessage: "must not run",
+          files: [videoFile("film", "盗梦空间.2010.720p.mkv", null)],
+        },
+      },
+    });
+
+    const activities: string[] = [];
+    const result = await runAcquisitionV2({
+      provider,
+      executor,
+      model: throwingModel(),
+      workflowRunId: "run-auto-floor",
+      target: {
+        kind: "movie",
+        title: "盗梦空间",
+        aliases: ["Inception"],
+        year: 2010,
+        qualityPreference: "1080p",
+      },
+      stagingDirectoryId: "staging",
+      targetMovieDirectoryId: "movie",
+      acquisitionSelectionPath: "auto",
+      qualityPolicy: { resolutionFloor: "1080p" },
+      onProgress: (event) => activities.push(event.activity),
+    });
+
+    expect(result.coverage.coverageMet).toBe(false);
+    expect(result.outcome.transferAttempts).toEqual([]);
+    expect(result.text).toMatch(/画质下限/);
+    expect(
+      result.auditEvents.some(
+        (event) => event.type === ACQUISITION_SELECTION_PATH_AUDIT_TYPE && event.data?.["path"] === "rules",
+      ),
+    ).toBe(true);
+    expect(activities.some((line) => line.includes("规则拿不准"))).toBe(false);
+    expect(activities.at(-1)).toBe("正在收尾…");
+  });
 });
