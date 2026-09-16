@@ -66,6 +66,18 @@ export * from "./acquisition-v2/real-storage-adapter.js";
 export * from "./acquisition-v2/orchestrator.js";
 export * from "./acquisition-v2/selection-mode.js";
 export * from "./acquisition-v2/rules-selector.js";
+export {
+  MAX_GAP_RESEARCH_ROUNDS,
+  MAX_GAP_QUERIES_PER_ROUND,
+  MAX_TV_TRANSFERS_PER_RUN,
+  gapSearchQueries,
+  groupEpisodeRanges,
+  refillCover,
+  remainingGain,
+  uncoveredEpisodes,
+  candidatesFromSnapshots,
+  transferAttemptSucceeded,
+} from "./acquisition-v2/cover-planner.js";
 export * from "./acquisition-v2/directory-lifecycle.js";
 export * from "./acquisition-v2/sync-need.js";
 export * from "./acquisition-v2/workflow-v2.js";

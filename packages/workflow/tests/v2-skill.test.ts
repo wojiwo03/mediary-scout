@@ -59,6 +59,9 @@ describe("acquisition skill — localized, sectioned, on-demand manual", () => {
     expect(tv.toLowerCase()).toMatch(/plan the (whole|full) distribution/); // plan first
     expect(tv.toLowerCase()).toMatch(/verify.*(returned|season)/); // verify the returned seasons after the batch
     expect(tv.toLowerCase()).toMatch(/subtitle/); // each video's subtitle rides in the same season's fileIds
+    expect(tv).toMatch(/planEpisodeCover/);
+    expect(tv).toMatch(/补搜|gapQueries/);
+    expect(tv).toMatch(/转失败换备选/);
   });
 
   it("gives each agent an index pointing at exactly its responsibility sections", () => {

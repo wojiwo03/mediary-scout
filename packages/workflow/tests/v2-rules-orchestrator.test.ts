@@ -330,6 +330,186 @@ describe("runAcquisitionV2 — rules selector (no LLM)", () => {
     expect(result.outcome.decisions[0]?.selectedCandidateIds.sort()).toEqual(["a", "b", "c"]);
   });
 
+  it("TV: gap re-search fills later episodes that the first snapshot never recalled", async () => {
+    const searches: string[] = [];
+    const provider: ResourceProvider = {
+      search: async ({ keyword }) => {
+        searches.push(keyword);
+        if (keyword === "庆余年") {
+          return snapshot("snap_early", keyword, [
+            candidate({ id: "early", snapshotId: "snap_early", index: 0, title: "庆余年 1-3集 1080p WEB-DL" }),
+          ]);
+        }
+        if (/4-10集/.test(keyword)) {
+          return snapshot("snap_late", keyword, [
+            candidate({ id: "late", snapshotId: "snap_late", index: 0, title: "庆余年 4-10集 1080p WEB-DL" }),
+          ]);
+        }
+        return snapshot(`snap_${keyword}`, keyword, []);
+      },
+    };
+    const lateFiles = [4, 5, 6, 7, 8, 9, 10].map((n) =>
+      videoFile(`e${n}`, `庆余年.S01E${String(n).padStart(2, "0")}.mkv`, `S01E${String(n).padStart(2, "0")}`),
+    );
+    const executor = new FakeStorageExecutor({
+      directories: { staging: [], season: [] },
+      transferOutcomes: {
+        early: {
+          status: "succeeded",
+          providerMessage: "ok",
+          files: [
+            videoFile("e1", "庆余年.S01E01.mkv", "S01E01"),
+            videoFile("e2", "庆余年.S01E02.mkv", "S01E02"),
+            videoFile("e3", "庆余年.S01E03.mkv", "S01E03"),
+          ],
+        },
+        late: { status: "succeeded", providerMessage: "ok", files: lateFiles },
+      },
+    });
+
+    const missing = Array.from({ length: 10 }, (_, i) => `S01E${String(i + 1).padStart(2, "0")}`);
+    const result = await runAcquisitionV2({
+      provider,
+      executor,
+      model: throwingModel(),
+      workflowRunId: "run-rules-gap-research",
+      target: {
+        kind: "tv",
+        title: "庆余年",
+        aliases: [],
+        seasons: [1],
+        missingEpisodes: missing,
+        qualityPreference: "1080p",
+      },
+      stagingDirectoryId: "staging",
+      targetSeasonDirectoryIds: { 1: "season" },
+      acquisitionSelectionPath: "rules",
+    });
+
+    expect(searches.some((keyword) => /4-10集/.test(keyword))).toBe(true);
+    expect(searches.length).toBeLessThanOrEqual(4);
+    expect(result.coverage.coverageMet).toBe(true);
+    expect(result.coverage.obtained.sort()).toEqual(missing);
+    expect(result.outcome.transferAttempts.map((attempt) => attempt.candidateId).sort()).toEqual(["early", "late"]);
+    expect(result.text).toMatch(/补搜/);
+    expect(result.text).toMatch(/用 2 个分享补齐/);
+  });
+
+  it("TV: a failed transfer is replaced by an unused alternate (转失败换备选)", async () => {
+    const snapId = "snap_refill";
+    const provider: ResourceProvider = {
+      search: async ({ keyword }) =>
+        snapshot(snapId, keyword, [
+          candidate({ id: "dead", snapshotId: snapId, index: 0, title: "庆余年 1-3集 2160p WEB-DL" }),
+          candidate({ id: "alt", snapshotId: snapId, index: 1, title: "庆余年 1-3集 1080p WEB-DL" }),
+          candidate({ id: "tail", snapshotId: snapId, index: 2, title: "庆余年 4-6集 1080p WEB-DL" }),
+        ]),
+    };
+    const executor = new FakeStorageExecutor({
+      directories: { staging: [], season: [] },
+      transferOutcomes: {
+        dead: { status: "failed", providerMessage: "链接已过期", files: [] },
+        alt: {
+          status: "succeeded",
+          providerMessage: "ok",
+          files: [
+            videoFile("e1", "庆余年.S01E01.mkv", "S01E01"),
+            videoFile("e2", "庆余年.S01E02.mkv", "S01E02"),
+            videoFile("e3", "庆余年.S01E03.mkv", "S01E03"),
+          ],
+        },
+        tail: {
+          status: "succeeded",
+          providerMessage: "ok",
+          files: [
+            videoFile("e4", "庆余年.S01E04.mkv", "S01E04"),
+            videoFile("e5", "庆余年.S01E05.mkv", "S01E05"),
+            videoFile("e6", "庆余年.S01E06.mkv", "S01E06"),
+          ],
+        },
+      },
+    });
+
+    const result = await runAcquisitionV2({
+      provider,
+      executor,
+      model: throwingModel(),
+      workflowRunId: "run-rules-refill",
+      target: {
+        kind: "tv",
+        title: "庆余年",
+        aliases: [],
+        seasons: [1],
+        missingEpisodes: ["S01E01", "S01E02", "S01E03", "S01E04", "S01E05", "S01E06"],
+        qualityPreference: "1080p",
+      },
+      stagingDirectoryId: "staging",
+      targetSeasonDirectoryIds: { 1: "season" },
+      acquisitionSelectionPath: "rules",
+    });
+
+    expect(result.coverage.coverageMet).toBe(true);
+    expect(result.outcome.transferAttempts.map((attempt) => attempt.candidateId)).toEqual(["dead", "alt", "tail"]);
+    expect(result.outcome.transferAttempts[0]?.status).toBe("failed");
+    expect(result.text).toMatch(/转失败换备选/);
+    expect(result.text).toMatch(/用 2 个分享补齐/);
+  });
+
+  it("TV: caps transfers so a long single-file season leaves leftovers for patrol", async () => {
+    const snapId = "snap_cap";
+    const singles = Array.from({ length: 15 }, (_, i) => {
+      const n = i + 1;
+      return candidate({
+        id: `e${n}`,
+        snapshotId: snapId,
+        index: i,
+        title: `庆余年 第${n}集 1080p WEB-DL`,
+      });
+    });
+    const provider: ResourceProvider = {
+      search: async ({ keyword }) => snapshot(snapId, keyword, singles),
+    };
+    const outcomes: Record<string, { status: "succeeded"; providerMessage: string; files: ReturnType<typeof videoFile>[] }> = {};
+    for (let n = 1; n <= 15; n += 1) {
+      const code = `S01E${String(n).padStart(2, "0")}`;
+      outcomes[`e${n}`] = {
+        status: "succeeded",
+        providerMessage: "ok",
+        files: [videoFile(`f${n}`, `庆余年.${code}.mkv`, code)],
+      };
+    }
+    const executor = new FakeStorageExecutor({
+      directories: { staging: [], season: [] },
+      transferOutcomes: outcomes,
+    });
+    const missing = Array.from({ length: 15 }, (_, i) => `S01E${String(i + 1).padStart(2, "0")}`);
+
+    const result = await runAcquisitionV2({
+      provider,
+      executor,
+      model: throwingModel(),
+      workflowRunId: "run-rules-transfer-cap",
+      target: {
+        kind: "tv",
+        title: "庆余年",
+        aliases: [],
+        seasons: [1],
+        missingEpisodes: missing,
+        qualityPreference: "1080p",
+      },
+      stagingDirectoryId: "staging",
+      targetSeasonDirectoryIds: { 1: "season" },
+      acquisitionSelectionPath: "rules",
+    });
+
+    expect(result.outcome.transferAttempts).toHaveLength(12);
+    expect(result.coverage.coverageMet).toBe(false);
+    expect(result.coverage.obtained).toHaveLength(12);
+    expect(result.coverage.missing).toHaveLength(3);
+    expect(result.text).toMatch(/留给巡检/);
+    expect(result.text).toMatch(/用 12 个分享补齐/);
+  });
+
   it("default (agent) path still invokes the model", async () => {
     const provider: ResourceProvider = {
       search: async ({ keyword }) => snapshot("snap_empty", keyword, []),

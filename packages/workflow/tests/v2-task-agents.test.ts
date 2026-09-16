@@ -73,6 +73,7 @@ describe("TV/anime system prompt carries the 字字泣血 invariants", () => {
     [/black-box|opaque|publish time|last resort/i, "black-box last resort + publish time"],
     [/lag the disk|inspect[^.]*(first|before)[^.]*search|already in its season director[^.]*mark/i, "patrol: inspect landing point FIRST, mark what 115 already has, don't re-acquire (§6b#8)"],
     [/complementary ranges|E01-E02|absence of a complete/i, "scattered shares still fill; no 全集 required"],
+    [/planEpisodeCover/, "shared cover planner tool — not prompt-only"],
   ])("mentions %s (%s)", (re) => {
     expect(prompt).toMatch(re);
   });

@@ -13,6 +13,7 @@ import { isSystemicTransferBlockMessage } from "./transfer-block.js";
 import { animeSearchTabooWarnings, type SearchProfile } from "./search-profile.js";
 import type { AuditEvent } from "../domain.js";
 import { isMergedSourceEvidenceUsable, type MergedSourceHealth } from "../resource-source-health.js";
+import { MAX_TV_TRANSFERS_PER_RUN, transferCapMessage } from "./cover-planner.js";
 
 /** Quality / subtitle / source tokens that PanSou share titles almost never carry,
  *  so appending them collapses recall (实测归零). Case-insensitive; word-ish so
@@ -198,6 +199,8 @@ export class TaskSandbox {
   private pendingDigest: { keyword: string; count: number } | null = null;
   /** 病4: 本任务的审计事件（no_coverage 上报/dedup 重复/禁忌词警告）。runner 持久化到 workflowRun.auditEvents。 */
   private readonly auditEvents: AuditEvent[] = [];
+  /** TV/anime transfer attempts this run (success + failure). Movies are uncapped here. */
+  private tvTransferAttempts = 0;
 
   constructor(options: TaskSandboxOptions) {
     this.provider = options.provider;
@@ -248,6 +251,18 @@ export class TaskSandbox {
 
   private missingNeed(): string[] {
     return this.need.filter((token) => !this.obtainedCodes.has(token));
+  }
+
+  /** Still-missing coverage tokens (need minus markObtained). */
+  remainingNeed(): string[] {
+    return this.missingNeed();
+  }
+
+  tvTransfersRemaining(): number {
+    if (this.seasonDirs.size === 0) {
+      return Number.POSITIVE_INFINITY;
+    }
+    return Math.max(0, MAX_TV_TRANSFERS_PER_RUN - this.tvTransferAttempts);
   }
 
   /** Search one keyword. Repeats are deduped (no extra provider hit); distinct
@@ -473,6 +488,12 @@ export class TaskSandbox {
     }
     if (!snapshot.candidates.some((candidate) => candidate.id === input.candidateId)) {
       throw new Error(`SANDBOX_CANDIDATE_NOT_IN_SNAPSHOT: ${input.candidateId} is not in ${input.snapshotId}`);
+    }
+    if (this.seasonDirs.size > 0 && this.tvTransferAttempts >= MAX_TV_TRANSFERS_PER_RUN) {
+      throw new Error(transferCapMessage());
+    }
+    if (this.seasonDirs.size > 0) {
+      this.tvTransferAttempts += 1;
     }
     const attempt = await this.storage.transferCandidate({
       candidateId: input.candidateId,
