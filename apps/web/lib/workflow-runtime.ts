@@ -2316,6 +2316,46 @@ async function getWorkerStorageExecutor(
   return fakeStorageExecutor;
 }
 
+const LANDED_NAME_LIST_TIMEOUT_MS = 2000;
+
+/**
+ * Best-effort on-drive video names for quality parsing. Fail-soft: timeout,
+ * missing credentials, or fake adapter without seeded files all return [].
+ */
+export async function tryListLandedVideoNames(
+  storageDirectoryId: string,
+  connectedStorageId: string | undefined,
+): Promise<string[]> {
+  if (!storageDirectoryId) {
+    return [];
+  }
+  try {
+    const accountId = await getCurrentAccountId();
+    const executor = await getWorkerStorageExecutor(accountId, connectedStorageId ?? null);
+    const listing = Promise.all([
+      executor.listVideoFiles(storageDirectoryId),
+      executor.listUnparsedVideoFiles(storageDirectoryId),
+    ]).then(([videos, unparsed]) =>
+      [...videos.map((file) => file.name), ...unparsed.map((file) => file.name)].filter(
+        (name) => name.trim().length > 0,
+      ),
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<string[]>((resolve) => {
+      timer = setTimeout(() => resolve([]), LANDED_NAME_LIST_TIMEOUT_MS);
+    });
+    try {
+      return await Promise.race([listing, timeout]);
+    } finally {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+    }
+  } catch {
+    return [];
+  }
+}
+
 /**
  * The 115 landing parent CIDs for a run's account. Sourced from the account's
  * connected_storage (set at connect-time directory provision); falls back to the

@@ -7,7 +7,10 @@ import {
   formatQualityLadderSummary,
   formatReleaseQualityLabel,
   formatTargetQualityLabel,
+  describeUpgradeOpportunity,
+  hasQualityEvidence,
   HDR_LADDER_LINES,
+  landedQualityTitlesFromAcquisition,
   parseAudioClass,
   parseHdrFormat,
   parseReleaseQuality,
@@ -17,7 +20,9 @@ import {
   QUALITY_SEARCH_TOKEN_LAW,
   QUALITY_UPGRADE_LINES,
   shouldReplaceCoverage,
+  shouldScheduleQualityUpgrade,
   SOURCE_LADDER_LINES,
+  summarizeLandedQuality,
 } from "../src/acquisition-v2/quality-ladder.js";
 
 describe("parseHdrFormat", () => {
@@ -75,6 +80,35 @@ describe("parseSourceClass", () => {
 
   it("prefers Remux over a co-occurring BluRay token", () => {
     expect(parseSourceClass("Movie.2160p.BluRay.REMUX.mkv")).toBe("remux");
+  });
+});
+
+describe("Chinese / cloud-share title and filename patterns", () => {
+  it("reads 网盘 bracket / fullwidth / dotted scene names", () => {
+    expect(parseResolutionBand("【４Ｋ】沙丘2 2024")).toBe("4k");
+    expect(parseHdrFormat("【杜比视界】沙丘：第二部")).toBe("dv");
+    expect(parseHdrFormat("Show.HDR10＋.WEB.DL")).toBe("hdr10plus");
+    expect(parseSourceClass("狂飙.2023.WEB.DL.1080p")).toBe("webdl");
+    expect(parseSourceClass("权力的游戏 S01 蓝光1080P")).toBe("bluray");
+    expect(parseAudioClass("Movie.True.HD.7.1.mkv")).toBe("truehd");
+    expect(parseAudioClass("Movie.DTS.HD.MA.mkv")).toBe("dtshd");
+  });
+
+  it("reads common Chinese aliases (超高清 / 全高清 / 超清 / 无压 / 官源 / 尝鲜版)", () => {
+    expect(parseResolutionBand("三体 4K超高清 全集")).toBe("4k");
+    expect(parseResolutionBand("庆余年 超高清")).toBe("4k");
+    expect(parseResolutionBand("庆余年 第一季 全高清完整版")).toBe("1080p");
+    expect(parseResolutionBand("狂飙 超清 全集")).toBe("1080p");
+    expect(parseResolutionBand("最后生还者 2K")).toBe("1080p");
+    expect(parseSourceClass("沙丘2 4K无压")).toBe("remux");
+    expect(parseSourceClass("热辣滚烫 官源 1080P")).toBe("webdl");
+    expect(parseSourceClass("电影 尝鲜版")).toBe("cam");
+    expect(parseSourceClass("预告 抢先版")).toBe("cam");
+    expect(parseAudioClass("沙丘 全景声")).toBe("atmos");
+  });
+
+  it("does not treat 超高清 as 1080p 超清", () => {
+    expect(parseResolutionBand("电影 超高清")).toBe("4k");
   });
 });
 
@@ -299,5 +333,70 @@ describe("guidance copy (prompt/skill shared strings)", () => {
     expect(on).toContain(QUALITY_UPGRADE_LINES[0]);
     expect(on).toContain("严格更高");
     expect(on).not.toContain(PATROL_GAP_ONLY_LINE);
+  });
+});
+
+describe("true upgrade detection — current vs preference target", () => {
+  const high = { resolutionPreference: "high" as const };
+
+  it("summarizes mixed files by the lowest parseable quality", () => {
+    const summary = summarizeLandedQuality(
+      [
+        "Show.S01E01.2160p.DV.mkv",
+        "Show.S01E02.720p.WEBRip.mkv",
+        "readme.txt",
+      ],
+      high,
+    );
+    expect(summary.mixed).toBe(true);
+    expect(summary.current?.resolution).toBe("720p");
+    expect(hasQualityEvidence(summary.current!)).toBe(true);
+  });
+
+  it("treats generic episode names as unknown evidence", () => {
+    const summary = summarizeLandedQuality(["Show - 01.mkv", "Show - 02.mkv"], high);
+    expect(summary.current).toBeNull();
+    const view = describeUpgradeOpportunity(null, high);
+    expect(view.evidence).toBe("unknown");
+    expect(view.headline).toMatch(/未能从已入库文件名判断画质/);
+    expect(shouldScheduleQualityUpgrade(null, high)).toBe(true);
+  });
+
+  it("writes 现在 → 可升 from parsed 1080p WEB-DL toward 4K DV", () => {
+    const current = parseReleaseQuality("庆余年.S01E01.1080p.WEB-DL.mkv");
+    const view = describeUpgradeOpportunity(current, high);
+    expect(view.evidence).toBe("parsed");
+    expect(view.belowPreference).toBe(true);
+    expect(view.headline).toBe("现在 1080p WEB-DL → 可升 4K 杜比视界");
+    expect(shouldScheduleQualityUpgrade(current, high)).toBe(true);
+  });
+
+  it("does not schedule an upgrade when already at the ladder top", () => {
+    const current = parseReleaseQuality("Dune.2160p.DV.REMUX.mkv");
+    const view = describeUpgradeOpportunity(current, high);
+    expect(view.atLadderTop).toBe(true);
+    expect(view.headline).toMatch(/已达偏好阶梯顶部/);
+    expect(shouldScheduleQualityUpgrade(current, high)).toBe(false);
+  });
+
+  it("does not fake a specific better target when current already matches 4K DV Remux", () => {
+    const current = parseReleaseQuality("Movie.2160p.DoVi.REMUX.mkv");
+    expect(describeUpgradeOpportunity(current, high).belowPreference).toBe(false);
+  });
+
+  it("reads transferred share titles when filenames themselves are generic", () => {
+    const titles = landedQualityTitlesFromAcquisition({
+      snapshots: [
+        {
+          candidates: [
+            { id: "c1", title: "沙丘2 2024 1080P WEB-DL 中字" },
+            { id: "c2", title: "无关" },
+          ],
+        },
+      ],
+      transferAttempts: [{ candidateId: "c1", status: "succeeded" }],
+    });
+    expect(titles).toEqual(["沙丘2 2024 1080P WEB-DL 中字"]);
+    expect(summarizeLandedQuality(titles, high).current?.resolution).toBe("1080p");
   });
 });

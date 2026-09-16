@@ -21,7 +21,7 @@ import type { DeadLinkStore } from "./acquisition-v2/dead-links.js";
 import { readLandedSize, type LandedSize } from "./acquisition-v2/landed-size.js";
 import type { AgentToolEvent } from "./acquisition-v2/activity.js";
 import { runAcquisitionV2 } from "./acquisition-v2/orchestrator.js";
-import { qualityLadderPolicyFromFlags } from "./acquisition-v2/quality-ladder.js";
+import { QUALITY_UPGRADE_AUDIT_TYPE, qualityLadderPolicyFromFlags } from "./acquisition-v2/quality-ladder.js";
 import { getAcquisitionQualityGuidance, getSearchRecipe } from "./acquisition-v2/search-profile.js";
 import { ensureMediaLibraryDirectory } from "./media-library-folder.js";
 
@@ -185,8 +185,17 @@ function buildResult(input: {
   // was systemically blocked (115 云下载配额不足/登录过期), OR the search source
   // itself was down all run (源挂了 6 天却报「暂未找到资源」的那个真实案例) — say which.
   // 电影与剧集共用 emptyRunOutcome,所以这两条必须同时接,否则电影仍在撒谎。
+  const qualityReplaced =
+    input.request.qualityUpgrade === true &&
+    input.obtained &&
+    input.attempts.some((attempt) => attempt.status === "succeeded");
   const report = input.obtained
-    ? baseReport
+    ? qualityReplaced
+      ? {
+          ...baseReport,
+          lines: ["已用严格更高画质替换原文件（失败不会删旧文件）", ...baseReport.lines],
+        }
+      : baseReport
     : {
         ...baseReport,
         ...emptyRunOutcome(
@@ -199,7 +208,12 @@ function buildResult(input: {
     workflowRunId: input.request.workflowRunId,
     // A systemic transfer block → report.status "failed" → distinct kind so the
     // leading icon + daily-digest don't count it as 暂无资源.
-    kind: report.status === "failed" ? "transfer_failed" : input.kind,
+    kind:
+      report.status === "failed"
+        ? "transfer_failed"
+        : qualityReplaced
+          ? "quality_upgrade"
+          : input.kind,
     title: input.request.title.title,
     body: formatReportPushText(report),
     createdAt: input.now(),
@@ -217,6 +231,11 @@ function buildResult(input: {
     decisions: input.decisions,
     notification,
     notifications: [notification],
-    auditEvents: input.auditEvents,
+    auditEvents: [
+      ...(input.request.qualityUpgrade
+        ? [{ type: QUALITY_UPGRADE_AUDIT_TYPE, message: "Quality upgrade run" }]
+        : []),
+      ...input.auditEvents,
+    ],
   };
 }

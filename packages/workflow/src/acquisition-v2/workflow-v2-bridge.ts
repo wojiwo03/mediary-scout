@@ -15,6 +15,7 @@ import {
   type WorkflowStatus,
 } from "../domain.js";
 import { buildSeasonReport, buildSeriesReport, formatReportPushText } from "../notification-report.js";
+import { QUALITY_UPGRADE_AUDIT_TYPE } from "./quality-ladder.js";
 import { classifyTransferBlock } from "./transfer-block.js";
 import { classifySearchSourceFault } from "./search-source-fault.js";
 import type { RunAcquisitionV2WorkflowResult } from "./workflow-v2.js";
@@ -78,6 +79,7 @@ export function bridgeV2WorkflowToResult(input: {
   v2: RunAcquisitionV2WorkflowResult;
   workflowRunId: string;
   now: () => string;
+  qualityUpgrade?: boolean;
 }): BridgedV2Result {
   const { title, v2, workflowRunId } = input;
   const obtainedSet = new Set(v2.obtained);
@@ -104,6 +106,10 @@ export function bridgeV2WorkflowToResult(input: {
   const sourceFault = classifySearchSourceFault(v2.auditEvents);
   const searchSourceFaultReason = status === "no_coverage" && sourceFault ? sourceFault.reason : null;
 
+  const qualityReplaced =
+    input.qualityUpgrade === true &&
+    v2.outcome.transferAttempts.some((attempt) => attempt.status === "succeeded");
+
   const notification = buildNotification({
     title,
     mode: input.mode,
@@ -114,6 +120,7 @@ export function bridgeV2WorkflowToResult(input: {
     newlyObtainedCodes,
     workflowRunId,
     now: input.now,
+    ...(qualityReplaced ? { qualityReplaced: true } : {}),
     ...(v2.landedFileCount !== undefined && v2.landedBytes !== undefined
       ? { fileCount: v2.landedFileCount, totalBytes: v2.landedBytes }
       : {}),
@@ -127,7 +134,12 @@ export function bridgeV2WorkflowToResult(input: {
     transferAttempts: v2.outcome.transferAttempts,
     notification,
     notifications: [notification],
-    auditEvents: v2.auditEvents,
+    auditEvents: [
+      ...(input.qualityUpgrade
+        ? [{ type: QUALITY_UPGRADE_AUDIT_TYPE, message: "Quality upgrade run" }]
+        : []),
+      ...v2.auditEvents,
+    ],
   };
 }
 
@@ -241,6 +253,7 @@ function buildNotification(input: {
   now: () => string;
   fileCount?: number;
   totalBytes?: number;
+  qualityReplaced?: boolean;
 }): NotificationEvent {
   const { title, mode, seasons, status, workflowRunId } = input;
   const noCoverage = status === "no_coverage";
@@ -287,41 +300,56 @@ function buildNotification(input: {
     meta: titleMeta,
     ...sizeInput(input),
   });
+  const upgradedReport: NotificationReport = input.qualityReplaced
+    ? {
+        ...report,
+        lines: ["已用严格更高画质替换原文件（失败不会删旧文件）", ...report.lines],
+      }
+    : report;
 
   if (mode === "type3") {
     return {
       id: `notification_${workflowRunId}`,
       workflowRunId,
       kind:
-        report.status === "failed"
+        upgradedReport.status === "failed"
           ? "transfer_failed"
           : noCoverage
             ? "no_coverage"
-            : report.status === "complete"
+            : input.qualityReplaced
+              ? "quality_upgrade"
+            : upgradedReport.status === "complete"
               ? "tracking_completed"
               : // 例行巡检查过、追更中且本季无新增 = 无事发生：already_current 让
                 // 通知页折叠成一张例行巡检卡、digest 归入「其余已是最新」，不再每日
                 // 刷屏。airing 构造上保证 realMissing 为空（notification-report.ts
                 // buildSeasonReport），有新增的 airing 必须保持 episodes_restored。
-                report.status === "airing" && newlyObtained.length === 0
+                upgradedReport.status === "airing" && newlyObtained.length === 0
                 ? "already_current"
                 : "episodes_restored",
-      title: `${report.titleName} ${report.seasonLabel}`,
-      body: formatReportPushText(report),
+      title: `${upgradedReport.titleName} ${upgradedReport.seasonLabel}`,
+      body: formatReportPushText(upgradedReport),
       createdAt: input.now(),
       trigger: "scheduled",
-      report,
+      report: upgradedReport,
     };
   }
 
   return {
     id: `notification_${workflowRunId}`,
     workflowRunId,
-    kind: report.status === "failed" ? "transfer_failed" : noCoverage ? "no_coverage" : "tracking_initialized",
-    title: `${report.titleName} ${report.seasonLabel}`,
-    body: formatReportPushText(report),
+    kind:
+      upgradedReport.status === "failed"
+        ? "transfer_failed"
+        : noCoverage
+          ? "no_coverage"
+          : input.qualityReplaced
+            ? "quality_upgrade"
+            : "tracking_initialized",
+    title: `${upgradedReport.titleName} ${upgradedReport.seasonLabel}`,
+    body: formatReportPushText(upgradedReport),
     createdAt: input.now(),
     trigger: "user",
-    report,
+    report: upgradedReport,
   };
 }

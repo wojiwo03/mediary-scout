@@ -1,5 +1,6 @@
 import {
   landedSize,
+  isQualityUpgradeAudit,
   type MediaType,
   type NotificationReportStatus,
   type WorkflowRepository,
@@ -37,6 +38,8 @@ export interface ActivityActiveRun {
   missingCount: number;
   /** Live agent progress (running only). */
   progress: WorkflowRunProgress | null;
+  /** True when this run is a quality-upgrade (manual or scheduled). */
+  qualityUpgrade: boolean;
 }
 
 /** A recently-finished run. The client session-scopes 已完成 by matching these
@@ -50,6 +53,7 @@ export interface ActivityCompletedItem {
   /** "每集 约 410 MB" / "体积 1.4 GB"; null when unknown. */
   sizeText: string | null;
   createdAt: string;
+  qualityUpgrade: boolean;
 }
 
 export interface ActivityView {
@@ -120,6 +124,7 @@ export async function getActivityView(input: {
       queuePosition: status === "queued" && queueIndex >= 0 ? queueIndex + 1 : null,
       missingCount,
       progress: snapshot.workflowRun.progress ?? null,
+      qualityUpgrade: isQualityUpgradeAudit(snapshot.workflowRun.auditEvents),
     };
   });
 
@@ -153,6 +158,7 @@ export async function getActivityView(input: {
         posterPath,
         sizeText: size ? `${size.label} ${size.value}` : null,
         createdAt: notification.createdAt,
+        qualityUpgrade: notification.kind === "quality_upgrade",
       };
     });
 

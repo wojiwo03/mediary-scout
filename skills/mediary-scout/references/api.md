@@ -100,7 +100,7 @@ curl -H "Authorization: Bearer $TOKEN" "$BASE/api/agent/config"
 - `considerSourceClass`：默认 `true`。为 false 时不比较 Remux / BluRay / WEB-DL 等片源类型。
 - `qualityLadderSummary`：只读。当前生效阶梯的中文摘要（分辨率 / HDR / 片源 / 音轨）。
 - `upgradeOnReacquire`：默认 `false`。为 true 时对已入库标题再 acquire 会排队画质升级（仅严格更高才替换）。
-- `patrolQualityUpgrade`：默认 `false`。为 true 时定时巡检也会扫已完结季/已入库电影做升级；默认巡检只补缺。
+- `patrolQualityUpgrade`：默认 `false`。为 true 时定时巡检在追更补集之外，还会对已入库作品寻找严格更高画质（与追更共用同一巡检时间；失败不删旧文件）。默认巡检只补缺。
 - `preferredLanguage`：如 `"zh"`。
 - `dailySweepTime`：`HH:MM`，每日巡检时间。
 

@@ -618,12 +618,12 @@ function PosterCard({ entry, activeStorageId }: { entry: LibraryWallEntry; activ
       : entry.state === "complete"
         ? [
             { tone: "green", icon: CheckCircle2, label: "已全部入库" },
-            { tone: "teal", icon: Sparkles, label: "打开详情可升级画质（仅当找到严格更高的版本才替换）" },
+            { tone: "teal", icon: Sparkles, label: "打开详情可对比当前画质并升级（仅严格更高才替换）" },
           ]
         : entry.state === "tracking"
           ? [
               { tone: "indigo", icon: Clock3, label: "追更中" },
-              { tone: "teal", icon: Sparkles, label: "打开详情可升级画质（仅当找到严格更高的版本才替换）" },
+              { tone: "teal", icon: Sparkles, label: "打开详情可对比当前画质并升级（仅严格更高才替换）" },
             ]
           : [
               { tone: "amber", icon: TriangleAlert, label: "有缺集" },

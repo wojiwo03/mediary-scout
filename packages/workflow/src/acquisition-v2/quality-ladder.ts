@@ -116,97 +116,116 @@ const AUDIO_WEIGHT = 1;
 const DISC_PENALTY = 10_000;
 
 const DV_RE =
-  /杜比视界|dolby[\s._-]*vision|\bdovi\b|\bdv\b|\bdo\s*vi\b/i;
-const HDR10_PLUS_RE = /hdr\s*10\s*\+|hdr10plus|hdr10\s*plus/i;
-const HDR10_RE = /\bhdr\s*10\b|\bhdr\b/i;
+  /杜比视界|dolby[\s._-]*vision|\bdovi\b|\bdv\b|\bdo[\s._-]*vi\b/i;
+const HDR10_PLUS_RE = /hdr[\s._-]*10[\s._-]*(?:\+|plus)|hdr10plus/i;
+const HDR10_RE = /\bhdr[\s._-]*10\b|\bhdr\b/i;
 const DISC_RE = /\.iso\b|\bbdmv\b|蓝光原盘|原盘|\biso\b/i;
-const RES_4K_RE = /2160p|\b4k\b|\buhd\b|3840\s*[x×]\s*2160/i;
-const RES_1080_RE = /1080\s*[pi]|\bfhd\b/i;
+const RES_4K_RE = /2160p|\b4k\b|\buhd\b|3840\s*[x×]\s*2160|超高清/i;
+const RES_1080_RE = /1080\s*[pi]|\bfhd\b|全高清|1920\s*[x×]\s*1080|\b2k\b/i;
 const RES_720_RE = /720\s*[pi]/i;
 const RES_SD_RE = /480\s*[pi]|576\s*[pi]|540p|\bsd\b/i;
+/** Bare 超清 after 4K/超高清 have already been ruled out — 网盘常把它当 1080p. */
+const RES_ULTRA_CLEAR_RE = /超清/i;
 
-const REMUX_RE = /\bremux\b/i;
-const BLURAY_RE = /\bblu-?ray\b|\bbdrip\b|\bbd-?rip\b|\bbluray\b|蓝光/i;
-const WEBDL_RE = /\bweb-?dl\b|\bwebdl\b/i;
-const WEBRIP_RE = /\bweb-?rip\b|\bwebrip\b/i;
-const HDTV_RE = /\bhdtv\b/i;
-const CAM_RE = /\bcamrip\b|\bhdcams?\b|\bcam\b|枪版|抢版/i;
+const REMUX_RE = /\bremux\b|无压/i;
+const BLURAY_RE = /\bblu[\s._-]*ray\b|\bbd[\s._-]*rip\b|\bbluray\b|\bbdrip\b|\bbd\b|蓝光/i;
+const WEBDL_RE = /\bweb[\s._-]*dl\b|\bwebdl\b|官源/i;
+const WEBRIP_RE = /\bweb[\s._-]*rip\b|\bwebrip\b/i;
+const HDTV_RE = /\bhdtv\b|电视录制/i;
+const CAM_RE =
+  /\bcamrip\b|\bhd[\s._-]*cams?\b|\bcam\b|\bhdts\b|枪版|抢版|抢先版|尝鲜版/i;
 
-const ATMOS_RE = /\batmos\b|杜比全景声/i;
-const TRUEHD_RE = /\btrue-?hd\b/i;
-const DTSHD_RE = /\bdts-?hd(?:\s*ma)?\b|\bdts:?x\b/i;
+const ATMOS_RE = /\batmos\b|杜比全景声|全景声/i;
+const TRUEHD_RE = /\btrue[\s._-]*hd\b/i;
+const DTSHD_RE = /\bdts[\s._-]*hd(?:[\s._-]*ma)?\b|\bdts[\s._:]*x\b/i;
+
+/**
+ * NFKC folds fullwidth ４Ｋ/＋; brackets become spaces so 【DV】 / [4K] get
+ * word boundaries. Shared by every parse* helper.
+ */
+export function normalizeQualityText(title: string): string {
+  return title.normalize("NFKC").replace(/[【】\[\]]/g, " ");
+}
 
 export function parseHdrFormat(title: string): HdrFormat {
-  if (DV_RE.test(title)) {
+  const text = normalizeQualityText(title);
+  if (DV_RE.test(text)) {
     return "dv";
   }
-  if (HDR10_PLUS_RE.test(title)) {
+  if (HDR10_PLUS_RE.test(text)) {
     return "hdr10plus";
   }
-  if (HDR10_RE.test(title)) {
+  if (HDR10_RE.test(text)) {
     return "hdr10";
   }
   return "sdr";
 }
 
 export function parseResolutionBand(title: string): ResolutionBand {
-  if (RES_4K_RE.test(title)) {
+  const text = normalizeQualityText(title);
+  if (RES_4K_RE.test(text)) {
     return "4k";
   }
-  if (RES_1080_RE.test(title)) {
+  if (RES_1080_RE.test(text)) {
     return "1080p";
   }
-  if (RES_720_RE.test(title)) {
+  if (RES_ULTRA_CLEAR_RE.test(text)) {
+    return "1080p";
+  }
+  if (RES_720_RE.test(text)) {
     return "720p";
   }
-  if (RES_SD_RE.test(title)) {
+  if (RES_SD_RE.test(text)) {
     return "sd";
   }
   return "unknown";
 }
 
 export function parseSourceClass(title: string): SourceClass {
-  if (REMUX_RE.test(title)) {
+  const text = normalizeQualityText(title);
+  if (REMUX_RE.test(text)) {
     return "remux";
   }
-  if (CAM_RE.test(title)) {
+  if (CAM_RE.test(text)) {
     return "cam";
   }
-  if (BLURAY_RE.test(title)) {
+  if (BLURAY_RE.test(text)) {
     return "bluray";
   }
-  if (WEBDL_RE.test(title)) {
+  if (WEBDL_RE.test(text)) {
     return "webdl";
   }
-  if (WEBRIP_RE.test(title)) {
+  if (WEBRIP_RE.test(text)) {
     return "webrip";
   }
-  if (HDTV_RE.test(title)) {
+  if (HDTV_RE.test(text)) {
     return "hdtv";
   }
   return "unknown";
 }
 
 export function parseAudioClass(title: string): AudioClass {
-  if (ATMOS_RE.test(title)) {
+  const text = normalizeQualityText(title);
+  if (ATMOS_RE.test(text)) {
     return "atmos";
   }
-  if (TRUEHD_RE.test(title)) {
+  if (TRUEHD_RE.test(text)) {
     return "truehd";
   }
-  if (DTSHD_RE.test(title)) {
+  if (DTSHD_RE.test(text)) {
     return "dtshd";
   }
   return "unknown";
 }
 
 export function parseReleaseQuality(title: string): ParsedReleaseQuality {
+  const text = normalizeQualityText(title);
   return {
-    resolution: parseResolutionBand(title),
-    hdr: parseHdrFormat(title),
-    source: parseSourceClass(title),
-    audio: parseAudioClass(title),
-    discImage: DISC_RE.test(title),
+    resolution: parseResolutionBand(text),
+    hdr: parseHdrFormat(text),
+    source: parseSourceClass(text),
+    audio: parseAudioClass(text),
+    discImage: DISC_RE.test(text),
   };
 }
 
@@ -286,11 +305,11 @@ export const QUALITY_UPGRADE_LINES = [
   "QUALITY UPGRADE(本次已开启替换):已入库的正片/集也可以被更高阶候选替换,不只补缺。",
   "先 inspectTargetDir 读现有文件名,再在活期文档里找【严格更高】的候选(默认分辨率优先,其次 HDR,再次片源/压制,音轨仅同分决胜;同等或更低不要换)。",
   "更高阶候选转存并回读验证落盘后,删除被替换的低画质文件,保持库/覆盖状态与网盘文件一致。升级失败不得删除旧文件。不要只比体积;阶梯比 keep-larger 优先。",
-  "未开启升级时巡检只补缺,不会全库重写。画质词(含 DV/HDR/Remux/WEB-DL)不进搜索关键词。",
+  "定时画质升级与追更补集共用同一巡检时间;打开后巡检会对已入库标题寻找严格更高版本,关闭则只补缺。画质词(含 DV/HDR/Remux/WEB-DL)不进搜索关键词。",
 ] as const;
 
 export const PATROL_GAP_ONLY_LINE =
-  "定时巡检默认只补缺(缺集 / 未入库);不会因为库里已有更低画质就自动全库升级。要巡检也升级,须在设置里显式打开「巡检时也升级画质」。";
+  "定时巡检默认只补缺(缺集 / 未入库);与「定时画质升级」是两项独立任务、共用同一巡检时间。未打开画质升级时,不会因为库里已有更低画质就自动全库升级。";
 
 export function formatHdrLadderGuidance(policy: QualityLadderPolicy = {}): string {
   const cross =
@@ -498,11 +517,217 @@ export function formatReleaseQualityLabel(parsed: ParsedReleaseQuality): string 
   return parts.join(" · ");
 }
 
+/**
+ * Short label that omits unmarked axes, e.g. "1080p WEB-DL" not
+ * "1080p · SDR · 片源未标注". Empty when nothing parseable.
+ */
+export function formatCompactReleaseQuality(parsed: ParsedReleaseQuality): string {
+  const parts: string[] = [];
+  if (parsed.resolution !== "unknown") {
+    parts.push(RES_LABEL[parsed.resolution]);
+  }
+  if (parsed.hdr !== "sdr") {
+    parts.push(HDR_LABEL[parsed.hdr]);
+  }
+  if (parsed.source !== "unknown") {
+    parts.push(SOURCE_LABEL[parsed.source]);
+  }
+  if (parsed.audio !== "unknown") {
+    parts.push(AUDIO_LABEL[parsed.audio]);
+  }
+  if (parsed.discImage) {
+    parts.push("原盘/ISO");
+  }
+  return parts.join(" ");
+}
+
+/** At least one ladder axis was actually read off the title/filename. */
+export function hasQualityEvidence(parsed: ParsedReleaseQuality): boolean {
+  return (
+    parsed.resolution !== "unknown" ||
+    parsed.hdr !== "sdr" ||
+    parsed.source !== "unknown" ||
+    parsed.audio !== "unknown" ||
+    parsed.discImage
+  );
+}
+
+export function preferredResolutionBand(policy: QualityLadderPolicy = {}): ResolutionBand {
+  return policy.resolutionPreference === "medium" ? "1080p" : "4k";
+}
+
+/** Ideal profile implied by the user's preference — used as the upgrade target. */
+export function preferredTargetQuality(policy: QualityLadderPolicy = {}): ParsedReleaseQuality {
+  return {
+    resolution: preferredResolutionBand(policy),
+    hdr: "dv",
+    source: sourceParticipates(policy) ? "remux" : "unknown",
+    audio: "unknown",
+    discImage: false,
+  };
+}
+
+export function formatPreferenceTargetLabel(policy: QualityLadderPolicy = {}): string {
+  const res = RES_LABEL[preferredResolutionBand(policy)];
+  return `${res} 杜比视界`;
+}
+
+function nextUpgradeTargetLabel(current: ParsedReleaseQuality, policy: QualityLadderPolicy): string {
+  const targetRes = preferredResolutionBand(policy);
+  const currentResRank = resolutionRank(current.resolution, policy.resolutionPreference);
+  const targetResRank = resolutionRank(targetRes, policy.resolutionPreference);
+  if (current.resolution === "unknown" || currentResRank < targetResRank) {
+    return `${RES_LABEL[targetRes]} 杜比视界`;
+  }
+  const resLabel = RES_LABEL[current.resolution];
+  if (current.hdr !== "dv") {
+    return `${resLabel} 杜比视界`;
+  }
+  if (sourceParticipates(policy) && SOURCE_RANK[current.source] < SOURCE_RANK.remux) {
+    return `${resLabel} 杜比视界 Remux`;
+  }
+  return formatPreferenceTargetLabel(policy);
+}
+
+export interface LandedQualitySummary {
+  current: ParsedReleaseQuality | null;
+  mixed: boolean;
+  titles: string[];
+}
+
+/**
+ * Representative current quality from on-drive names / share titles.
+ * Uses the *lowest* scoring parseable file so mixed seasons don't hide a 720p
+ * episode behind one 4K file.
+ */
+export function summarizeLandedQuality(
+  titles: readonly string[],
+  policy: QualityLadderPolicy = {},
+): LandedQualitySummary {
+  const parsed = titles
+    .map((title) => ({ title, quality: parseReleaseQuality(title) }))
+    .filter((entry) => hasQualityEvidence(entry.quality));
+  if (parsed.length === 0) {
+    return { current: null, mixed: false, titles: [...titles] };
+  }
+  const scored = parsed.map((entry) => ({
+    ...entry,
+    score: scoreReleaseQuality(entry.quality, policy),
+  }));
+  scored.sort((a, b) => a.score - b.score);
+  const worst = scored[0]!;
+  const best = scored[scored.length - 1]!;
+  return {
+    current: worst.quality,
+    mixed: best.score !== worst.score,
+    titles: [...titles],
+  };
+}
+
+export interface UpgradeOpportunityView {
+  /** Compact current label, or null when filenames/share titles had no tags. */
+  currentLabel: string | null;
+  targetLabel: string;
+  /** User-facing one-liner, e.g. 「现在 1080p WEB-DL → 可升 4K 杜比视界」. */
+  headline: string;
+  evidence: "parsed" | "unknown";
+  mixed: boolean;
+  atLadderTop: boolean;
+  /** Parsed current is strictly below the preference target. */
+  belowPreference: boolean;
+}
+
+export function describeUpgradeOpportunity(
+  current: ParsedReleaseQuality | null,
+  policy: QualityLadderPolicy = {},
+  mixed = false,
+): UpgradeOpportunityView {
+  const targetLabel = formatPreferenceTargetLabel(policy);
+  if (current === null || !hasQualityEvidence(current)) {
+    return {
+      currentLabel: null,
+      targetLabel,
+      headline: `未能从已入库文件名判断画质，将按偏好寻找 ${targetLabel}`,
+      evidence: "unknown",
+      mixed: false,
+      atLadderTop: false,
+      belowPreference: false,
+    };
+  }
+  const compact = formatCompactReleaseQuality(current);
+  const currentLabel = mixed && compact ? `最低 ${compact}` : compact;
+  const top = preferredTargetQuality(policy);
+  const atLadderTop = scoreReleaseQuality(current, policy) >= scoreReleaseQuality(top, policy);
+  if (atLadderTop) {
+    return {
+      currentLabel,
+      targetLabel: currentLabel,
+      headline: `现在 ${currentLabel}（已达偏好阶梯顶部）`,
+      evidence: "parsed",
+      mixed,
+      atLadderTop: true,
+      belowPreference: false,
+    };
+  }
+  const next = nextUpgradeTargetLabel(current, policy);
+  return {
+    currentLabel,
+    targetLabel: next,
+    headline: `现在 ${currentLabel} → 可升 ${next}`,
+    evidence: "parsed",
+    mixed,
+    atLadderTop: false,
+    belowPreference: true,
+  };
+}
+
+/**
+ * Whether a scheduled quality-upgrade sweep should spend an agent run.
+ * Unknown current → yes (the agent can inspectTargetDir). Already at the
+ * preference top → no. Parsed-and-below → yes.
+ */
+export function shouldScheduleQualityUpgrade(
+  current: ParsedReleaseQuality | null,
+  policy: QualityLadderPolicy = {},
+): boolean {
+  return !describeUpgradeOpportunity(current, policy).atLadderTop;
+}
+
+/**
+ * Titles of candidates that actually transferred, used as quality evidence when
+ * on-drive names are generic (E01.mkv) but the share title carried 4K/DV tags.
+ */
+export function landedQualityTitlesFromAcquisition(input: {
+  snapshots: ReadonlyArray<{ candidates: ReadonlyArray<{ id: string; title: string }> }>;
+  decisions?: ReadonlyArray<{ selectedCandidateIds: readonly string[] }>;
+  transferAttempts?: ReadonlyArray<{ candidateId: string; status: string }>;
+}): string[] {
+  const succeeded = new Set(
+    (input.transferAttempts ?? [])
+      .filter((attempt) => attempt.status === "succeeded")
+      .map((attempt) => attempt.candidateId),
+  );
+  const selected = new Set((input.decisions ?? []).flatMap((decision) => decision.selectedCandidateIds));
+  const wanted = succeeded.size > 0 ? succeeded : selected;
+  if (wanted.size === 0) {
+    return [];
+  }
+  const titles: string[] = [];
+  for (const snapshot of input.snapshots) {
+    for (const candidate of snapshot.candidates) {
+      if (wanted.has(candidate.id)) {
+        titles.push(candidate.title);
+      }
+    }
+  }
+  return titles;
+}
+
 export const QUALITY_UPGRADE_MODE_COPY = [
   {
     id: "manual" as const,
     title: "详情页「升级画质」",
-    summary: "对单部已入库作品点一次。始终可用，不会默默全库替换。失败不会删掉现有文件。",
+    summary: "对单部已入库作品点一次。始终可用，不会默默全库替换。入队前会预览现在→目标；失败不会删掉现有文件。",
   },
   {
     id: "reacquire" as const,
@@ -511,7 +736,7 @@ export const QUALITY_UPGRADE_MODE_COPY = [
   },
   {
     id: "patrol" as const,
-    title: "巡检时也升级画质",
-    summary: "打开后，定时巡检才会扫已完结季和已入库电影。默认巡检仍然只补缺。",
+    title: "定时画质升级（与追更共用巡检时间）",
+    summary: "打开后，每日巡检会同时做两件事：补缺 + 对已入库作品寻找严格更高版本。默认只补缺。失败不删旧文件。",
   },
 ] as const;

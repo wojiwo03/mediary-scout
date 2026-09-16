@@ -17,6 +17,7 @@ import { AssrtTokenForm } from "../../components/assrt-token-form";
 import { ProwlarrConfigForm } from "../../components/prowlarr-config-form";
 import { PanSouConfigForm } from "../../components/pansou-config-form";
 import { DailySweepForm } from "../../components/daily-sweep-form";
+import { PatrolQualityUpgradeForm } from "../../components/patrol-quality-upgrade-form";
 import { PatrolNowButton } from "../../components/patrol-now-button";
 import { SettingsTabs } from "../../components/settings-tabs";
 import { PasswordChangeForm } from "../../components/password-change-form";
@@ -536,15 +537,24 @@ async function DailySweepSection() {
             <CalendarClock size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
             每日定时巡检
           </h2>
-          <p className="panel-note">在这些时间点自动追更：检查已追踪剧集，获取新播出或仍缺失的集数。默认不升级已入库画质。</p>
+          <p className="panel-note">
+            同一组时间点跑两项任务：追更补集始终开启；定时画质升级可选、默认关。不另开定时器。
+          </p>
         </div>
       </div>
       <DailySweepForm initial={times} max={MAX_DAILY_SWEEP_TIMES} />
+      <div className="patrol-task-grid">
+        <div className="patrol-task-card is-on">
+          <span className="patrol-task-tag">始终开启</span>
+          <strong>定时追更补集</strong>
+          <small>检查已追踪剧集的缺集 / 未入库，获取新播出的集。已完结且齐全的标题默认跳过。</small>
+        </div>
+        <PatrolQualityUpgradeForm initial={patrolUpgrade} />
+      </div>
       <p className="panel-note" style={{ marginTop: 16 }}>
         {patrolUpgrade
-          ? "当前已打开「巡检时也升级画质」：定时巡检会扫已完结季和已入库电影，仅替换严格更高的版本。"
-          : "当前巡检只补缺，不会替换已入库画质。"}
-        开关在「获取偏好 → 偏好画质」。
+          ? "两项都会在上述时间点运行。画质升级只替换严格更高的版本；失败不会删除旧文件。盘内文件已达偏好顶部时本轮会跳过，避免空跑。"
+          : "当前只跑追更补集，不会替换已入库画质。"}
       </p>
       <div
         style={{

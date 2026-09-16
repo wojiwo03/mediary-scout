@@ -22,6 +22,7 @@ function run(over: Partial<ActivityActiveRun>): ActivityActiveRun {
     queuePosition: null,
     missingCount: 0,
     progress: null,
+    qualityUpgrade: false,
     ...over,
   };
 }
