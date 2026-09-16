@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseReleaseQuality, shouldReplaceCoverage } from "../src/acquisition-v2/quality-ladder.js";
 import { mapTvCoverage } from "../src/acquisition-v2/rules-selector.js";
-import { isAnimeTitle, parseReleaseMeta } from "../src/acquisition-v2/release-meta.js";
+import { isAnimeTitle, parseReleaseMeta, parseIdentifierWordLines, validateIdentifierWord, validateIdentifierWordText } from "../src/acquisition-v2/release-meta.js";
 
 /**
  * Golden titles shaped like MoviePilot MetaInfo inputs (PT / WEB / 网盘分享 /
@@ -248,6 +248,34 @@ describe("rules coverage uses the same meta parser", () => {
         missingEpisodes: ["S01E13"],
       }),
     ).toEqual(["S01E13"]);
+  });
+});
+
+describe("identifier word parse / validate", () => {
+  it("parseIdentifierWordLines keeps replacement lines and drops comments", () => {
+    expect(
+      parseIdentifierWordLines("# note\n\n网盘乱码 => 沙丘2\n  \n招募翻译校对\n测试替换 => \n"),
+    ).toEqual(["网盘乱码 => 沙丘2", "招募翻译校对", "测试替换 => "]);
+  });
+
+  it("validateIdentifierWord accepts the three MoviePilot formats", () => {
+    expect(validateIdentifierWord("招募翻译校对")).toBeNull();
+    expect(validateIdentifierWord("B-Blobal => B-Global")).toBeNull();
+    expect(validateIdentifierWord("测试替换 => ")).toBeNull();
+    expect(validateIdentifierWord("第 <> 集 >> EP+1")).toBeNull();
+    expect(validateIdentifierWord("旧名 => 新名 && 第 <> 集 >> EP-1")).toBeNull();
+    expect(validateIdentifierWord("# comment")).toBeNull();
+    expect(validateIdentifierWord("   ")).toBeNull();
+  });
+
+  it("validateIdentifierWord reports invalid regex and offset", () => {
+    expect(validateIdentifierWord("(unclosed")).toContain("正则无效");
+    expect(validateIdentifierWord("第 <> 集 >> EP+x")).toContain("集数偏移");
+  });
+
+  it("validateIdentifierWordText points at the first bad line", () => {
+    expect(validateIdentifierWordText("ok\n(unclosed")).toMatch(/^第 2 行：/);
+    expect(validateIdentifierWordText("ok")).toBeNull();
   });
 });
 

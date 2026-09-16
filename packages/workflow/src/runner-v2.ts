@@ -16,6 +16,7 @@ import { runMovieAcquisitionV2 } from "./movie-workflow-v2.js";
 import type { ResourceProvider, StorageExecutor } from "./ports.js";
 import type { WorkflowRepository } from "./repository.js";
 import type { AcquisitionSelectionPath } from "./acquisition-v2/selection-mode.js";
+import { customIdentifierWordsSpread } from "./acquisition-v2/release-meta.js";
 
 /**
  * Phase 7d — production persist wrappers on the V2 engine. These mirror the old
@@ -63,6 +64,8 @@ interface TvV2Common {
    */
   now?: () => string;
   acquisitionSelectionPath?: AcquisitionSelectionPath;
+  /** MoviePilot-style identifier words from Settings; applied after built-ins. */
+  customIdentifierWords?: readonly string[];
 }
 
 function resolveNow(input: { now?: () => string }): () => string {
@@ -80,6 +83,7 @@ function passthrough(input: TvV2Common): {
   storageProvider?: string;
   assrtToken?: string;
   acquisitionSelectionPath?: AcquisitionSelectionPath;
+  customIdentifierWords?: string[];
 } {
   return {
     ...(input.searchBudget === undefined ? {} : { searchBudget: input.searchBudget }),
@@ -94,6 +98,7 @@ function passthrough(input: TvV2Common): {
     ...(input.acquisitionSelectionPath === undefined
       ? {}
       : { acquisitionSelectionPath: input.acquisitionSelectionPath }),
+    ...customIdentifierWordsSpread(input.customIdentifierWords),
   };
 }
 
@@ -352,6 +357,8 @@ export async function runMovieAcquisitionV2AndPersist(input: {
   /** See TvV2Common.now — finishedAt is stamped post-run from this clock. */
   now?: () => string;
   acquisitionSelectionPath?: AcquisitionSelectionPath;
+  /** MoviePilot-style identifier words from Settings; applied after built-ins. */
+  customIdentifierWords?: readonly string[];
 }): Promise<MovieWorkflowResult> {
   const now = resolveNow(input);
   const result = await runMovieAcquisitionV2({
@@ -381,6 +388,7 @@ export async function runMovieAcquisitionV2AndPersist(input: {
     ...(input.acquisitionSelectionPath === undefined
       ? {}
       : { acquisitionSelectionPath: input.acquisitionSelectionPath }),
+    ...customIdentifierWordsSpread(input.customIdentifierWords),
   });
 
   await input.repository.saveWorkflowRunSnapshot({

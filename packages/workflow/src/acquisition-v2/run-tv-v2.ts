@@ -13,6 +13,7 @@ import { qualityLadderPolicyFromFlags } from "./quality-ladder.js";
 import { getAcquisitionQualityGuidance, getSearchRecipe, searchProfile } from "./search-profile.js";
 import type { AgentToolEvent } from "./activity.js";
 import type { AcquisitionSelectionPath } from "./selection-mode.js";
+import { customIdentifierWordsSpread } from "./release-meta.js";
 
 function defaultNowIso(): string {
   return new Date().toISOString();
@@ -60,6 +61,8 @@ export interface RunTvAcquisitionV2Request {
   onProgress?: (event: AgentToolEvent) => void;
   now?: () => string;
   acquisitionSelectionPath?: AcquisitionSelectionPath;
+  /** MoviePilot-style identifier words from Settings; applied after built-ins. */
+  customIdentifierWords?: readonly string[];
 }
 
 export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Promise<BridgedV2Result> {
@@ -117,6 +120,9 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
       ? {}
       : { acquisitionSelectionPath: request.acquisitionSelectionPath }),
     qualityPolicy: policy,
+    ...customIdentifierWordsSpread(
+      request.customIdentifierWords ? [...request.customIdentifierWords] : undefined,
+    ),
   });
 
   return bridgeV2WorkflowToResult({

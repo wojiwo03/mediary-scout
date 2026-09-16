@@ -157,6 +157,47 @@ describe("runAcquisitionV2 — rules selector (no LLM)", () => {
     expect(result.text).toMatch(/规则选片/);
   });
 
+  it("movie: custom identifier words let a messy share title match and transfer", async () => {
+    const snapId = "snap_words";
+    const provider: ResourceProvider = {
+      search: async ({ keyword }) =>
+        snapshot(snapId, keyword, [
+          candidate({ id: "messy", snapshotId: snapId, index: 0, title: "网盘乱码分享 2010 2160p DV 中字" }),
+        ]),
+    };
+    const executor = new FakeStorageExecutor({
+      directories: { staging: [], movie: [] },
+      transferOutcomes: {
+        messy: {
+          status: "succeeded",
+          providerMessage: "ok",
+          files: [videoFile("film", "盗梦空间.2010.2160p.mkv", null)],
+        },
+      },
+    });
+
+    const result = await runAcquisitionV2({
+      provider,
+      executor,
+      model: throwingModel(),
+      workflowRunId: "run-rules-words",
+      target: {
+        kind: "movie",
+        title: "盗梦空间",
+        aliases: ["Inception"],
+        year: 2010,
+        qualityPreference: "1080p",
+      },
+      stagingDirectoryId: "staging",
+      targetMovieDirectoryId: "movie",
+      acquisitionSelectionPath: "rules",
+      customIdentifierWords: ["网盘乱码分享 => 盗梦空间"],
+    });
+
+    expect(result.coverage.coverageMet).toBe(true);
+    expect(result.outcome.transferAttempts.map((attempt) => attempt.candidateId)).toEqual(["messy"]);
+  });
+
   it("TV: covers missing episodes from a complete pack and skips a sequel title", async () => {
     const snapId = "snap_tv";
     const provider: ResourceProvider = {

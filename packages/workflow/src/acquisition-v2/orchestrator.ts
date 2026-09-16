@@ -17,6 +17,7 @@ import {
   runRulesAcquisition,
   tvTargetToRules,
 } from "./rules-task.js";
+import { customIdentifierWordsSpread } from "./release-meta.js";
 import {
   AGENT_DECISION_NODE,
   RULES_DECISION_NODE,
@@ -58,6 +59,8 @@ export interface RunAcquisitionV2Request {
   acquisitionSelectionPath?: AcquisitionSelectionPath;
   /** Post-recall quality ladder (rules selector). Agent path still uses qualityGuidance text. */
   qualityPolicy?: QualityLadderPolicy;
+  /** MoviePilot-style identifier words from Settings; applied after built-ins. */
+  customIdentifierWords?: readonly string[];
   /** The scoped staging dir (under the show dir / storage parent — NEVER inside the Season dir). */
   stagingDirectoryId: string;
   /** TV: season number -> scoped Season directory. A multi-season pack's files are
@@ -249,6 +252,9 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
                 }),
           ...(request.qualityPolicy === undefined ? {} : { policy: request.qualityPolicy }),
           ...(request.qualityUpgrade ? { qualityUpgrade: true } : {}),
+          ...customIdentifierWordsSpread(
+            request.customIdentifierWords ? [...request.customIdentifierWords] : undefined,
+          ),
           ...(request.onProgress ? { onProgress: request.onProgress } : {}),
         })
       : request.target.kind === "tv"

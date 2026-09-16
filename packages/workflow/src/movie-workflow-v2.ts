@@ -25,6 +25,7 @@ import { QUALITY_UPGRADE_AUDIT_TYPE, qualityLadderPolicyFromFlags } from "./acqu
 import { getAcquisitionQualityGuidance, getSearchRecipe } from "./acquisition-v2/search-profile.js";
 import { ensureMediaLibraryDirectory } from "./media-library-folder.js";
 import type { AcquisitionSelectionPath } from "./acquisition-v2/selection-mode.js";
+import { customIdentifierWordsSpread } from "./acquisition-v2/release-meta.js";
 
 function defaultNowIso(): string {
   return new Date().toISOString();
@@ -63,6 +64,8 @@ export interface RunMovieAcquisitionV2Request {
   onProgress?: (event: AgentToolEvent) => void;
   now?: () => string;
   acquisitionSelectionPath?: AcquisitionSelectionPath;
+  /** MoviePilot-style identifier words from Settings; applied after built-ins. */
+  customIdentifierWords?: readonly string[];
 }
 
 export async function runMovieAcquisitionV2(
@@ -127,6 +130,9 @@ export async function runMovieAcquisitionV2(
     ...(request.acquisitionSelectionPath === undefined
       ? {}
       : { acquisitionSelectionPath: request.acquisitionSelectionPath }),
+    ...customIdentifierWordsSpread(
+      request.customIdentifierWords ? [...request.customIdentifierWords] : undefined,
+    ),
   });
 
   // Truth = the AGENT'S coverage (its markObtained), NOT a mechanical file scan

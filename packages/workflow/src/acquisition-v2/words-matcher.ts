@@ -108,6 +108,82 @@ function replaceRegex(title: string, from: string, to: string): { title: string;
   return { title: next, hit: next !== title };
 }
 
+const MAX_IDENTIFIER_WORD_CHARS = 8000;
+const MAX_IDENTIFIER_WORD_LINES = 200;
+
+/** Non-comment, non-blank lines from a Settings textarea (preserves `from => `). */
+export function parseIdentifierWordLines(raw: string | null | undefined): string[] {
+  if (!raw) {
+    return [];
+  }
+  return raw.split(/\r?\n/).filter((line) => {
+    const trimmed = line.trim();
+    return trimmed.length > 0 && !trimmed.startsWith("#");
+  });
+}
+
+/** `null` = ok (blank and `#` comments included). Otherwise a short Chinese error. */
+export function validateIdentifierWord(word: string): string | null {
+  const trimmed = word.trim();
+  if (!trimmed || trimmed.startsWith("#")) {
+    return null;
+  }
+  const parsed = parseWord(word);
+  if (!parsed) {
+    return "无法解析。格式：屏蔽词、A => B、前 <> 后 >> EP±n";
+  }
+  if (parsed.kind === "block" || parsed.kind === "replace" || parsed.kind === "replace_and_offset") {
+    if (!compileSafe(parsed.params[0]!)) {
+      return `正则无效：${parsed.params[0]}`;
+    }
+  }
+  if (parsed.kind === "offset" || parsed.kind === "replace_and_offset") {
+    const front = parsed.kind === "offset" ? parsed.params[0]! : parsed.params[2]!;
+    const back = parsed.kind === "offset" ? parsed.params[1]! : parsed.params[3]!;
+    const offset = parsed.kind === "offset" ? parsed.params[2]! : parsed.params[4]!;
+    if (front && !compileSafe(front)) {
+      return `前定位词正则无效：${front}`;
+    }
+    if (back && !compileSafe(back)) {
+      return `后定位词正则无效：${back}`;
+    }
+    try {
+      applyEpisodeOffsetExpr(offset, 1);
+    } catch {
+      return "集数偏移仅支持 EP±n / EP*n / EP/n";
+    }
+  }
+  return null;
+}
+
+/** Validate a full textarea. First error wins. */
+export function validateIdentifierWordText(raw: string): string | null {
+  if (raw.length > MAX_IDENTIFIER_WORD_CHARS) {
+    return `识别词过长（最多 ${MAX_IDENTIFIER_WORD_CHARS} 字）`;
+  }
+  const lines = raw.split(/\r?\n/);
+  if (lines.length > MAX_IDENTIFIER_WORD_LINES) {
+    return `识别词过多（最多 ${MAX_IDENTIFIER_WORD_LINES} 行）`;
+  }
+  for (let index = 0; index < lines.length; index += 1) {
+    const message = validateIdentifierWord(lines[index]!);
+    if (message) {
+      return `第 ${index + 1} 行：${message}`;
+    }
+  }
+  return null;
+}
+
+/** exactOptionalPropertyTypes-safe spread for workflow / worker request bags. */
+export function customIdentifierWordsSpread(
+  words: readonly string[] | undefined,
+): { customIdentifierWords?: string[] } {
+  if (!words || words.length === 0) {
+    return {};
+  }
+  return { customIdentifierWords: [...words] };
+}
+
 export function applyEpisodeOffsetExpr(offset: string, episode: number): number {
   const match = OFFSET_SIMPLE_RE.exec(offset.trim());
   if (!match) {

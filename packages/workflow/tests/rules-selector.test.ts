@@ -264,3 +264,50 @@ describe("selectResourceCandidates — mediaBinding", () => {
     ).toBe(90000);
   });
 });
+
+describe("selectResourceCandidates — custom identifier words", () => {
+  const dune = {
+    kind: "movie" as const,
+    title: "沙丘2",
+    aliases: [],
+    year: 2024,
+  };
+
+  it("rejects a messy share title without user words", () => {
+    const selection = selectResourceCandidates({
+      candidates: [cand("alias", "网盘乱码分享 2024 2160p DV 中字")],
+      target: dune,
+      policy: high,
+    });
+    expect(selection.selected).toEqual([]);
+    expect(selection.rejected.some((r) => r.reason === "title-mismatch")).toBe(true);
+  });
+
+  it("matches after a stored from => to replacement", () => {
+    const selection = selectResourceCandidates({
+      candidates: [cand("alias", "网盘乱码分享 2024 2160p DV 中字")],
+      target: dune,
+      policy: high,
+      customIdentifierWords: ["网盘乱码分享 => 沙丘2"],
+    });
+    expect(selection.selected.map((c) => c.candidateId)).toEqual(["alias"]);
+  });
+
+  it("maps TV coverage after an episode-offset word", () => {
+    expect(
+      mapTvCoverage({
+        title: "进击的巨人 第08集 1080p",
+        seasons: [1],
+        missingEpisodes: ["S01E10"],
+        customWords: ["第 <> 集 >> EP+2"],
+      }),
+    ).toEqual(["S01E10"]);
+    expect(
+      mapTvCoverage({
+        title: "进击的巨人 第08集 1080p",
+        seasons: [1],
+        missingEpisodes: ["S01E10"],
+      }),
+    ).toEqual([]);
+  });
+});

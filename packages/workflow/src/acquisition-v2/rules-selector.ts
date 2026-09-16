@@ -17,7 +17,9 @@ import {
   parseEpisodeSpanFromTitle,
   parseNamedSeasons,
   parseReleaseMeta,
+  prepareTitle,
   releaseMetaNoisePattern,
+  type ParseReleaseMetaOptions,
   type ReleaseEpisodeSpan,
 } from "./release-meta.js";
 
@@ -78,6 +80,17 @@ const ENGLISH_SCENE_RE =
 
 const QUALITY_NOISE_RE = releaseMetaNoisePattern();
 
+function parseOptions(customWords: readonly string[] | undefined): ParseReleaseMetaOptions {
+  return !customWords || customWords.length === 0 ? {} : { customWords };
+}
+
+function titledWithWords(title: string, customWords: readonly string[] | undefined): string {
+  if (!customWords || customWords.length === 0) {
+    return title;
+  }
+  return prepareTitle(title, customWords).title;
+}
+
 export function titleTermsFor(target: Pick<RulesSelectorTarget, "title" | "aliases">): string[] {
   return [target.title, ...target.aliases].map((term) => term.trim()).filter((term) => term.length > 0);
 }
@@ -89,8 +102,9 @@ export function titleTermsFor(target: Pick<RulesSelectorTarget, "title" | "alias
 export function mediaBindingDecision(
   candidateTitle: string,
   target: Pick<RulesSelectorTarget, "tmdbId">,
+  customWords?: readonly string[],
 ): "match" | "mismatch" | "absent" {
-  const binding = parseReleaseMeta(candidateTitle).mediaBinding;
+  const binding = parseReleaseMeta(candidateTitle, parseOptions(customWords)).mediaBinding;
   if (!binding) {
     return "absent";
   }
@@ -156,12 +170,14 @@ export function mapTvCoverage(input: {
   title: string;
   seasons: readonly number[];
   missingEpisodes: readonly string[];
+  customWords?: readonly string[];
 }): string[] {
   const tracked = input.seasons.filter((season) => season >= 1);
   if (tracked.length === 0 || input.missingEpisodes.length === 0) {
     return [];
   }
-  const markers = parseSeasonMarkers(input.title);
+  const meta = parseReleaseMeta(input.title, parseOptions(input.customWords));
+  const markers = meta.seasons;
   const completeSeries = markers.includes(-1);
   const named = markers.filter((season) => season > 0);
   const needsNonFirst = tracked.some((season) => season >= 2);
@@ -181,11 +197,10 @@ export function mapTvCoverage(input: {
     return [];
   }
 
-  const meta = parseReleaseMeta(input.title);
   if (meta.special && !/[Ss]\d{1,2}[Ee]\d/.test(input.title)) {
     return [];
   }
-  const span = parseEpisodeSpan(input.title);
+  const span = meta.episode ?? null;
   if (!span) {
     // Season-named pack with no episode span (e.g. "第二季 1080p") — treat as
     // that season's full missing set only when the title also looks like a pack.
@@ -202,14 +217,20 @@ export function mapTvCoverage(input: {
 const SEASON_EPISODE_NOISE =
   /第\s*[一二三四五六七八九十两\d]+\s*[季集话話期幕]|s\d{1,2}(?:[-~～]s?\d{1,2})?(?:e\d{1,4}(?:[-~～]e?\d{1,4})?)?|season\s*\d+|(?:e|ep)\d{1,4}|\d{1,4}\s*[-~～至到]\s*\d{1,4}\s*[集话話]|\d{1,4}[集话話]/gi;
 
-function leftoverAfterTitle(candidateTitle: string, matchedTerm: string, year: number | undefined): string {
-  const hay = normalizeForTitleMatch(candidateTitle);
+function leftoverAfterTitle(
+  candidateTitle: string,
+  matchedTerm: string,
+  year: number | undefined,
+  customWords?: readonly string[],
+): string {
+  const titled = titledWithWords(candidateTitle, customWords);
+  const hay = normalizeForTitleMatch(titled);
   const needle = normalizeForTitleMatch(matchedTerm);
   let rest = needle.length > 0 ? hay.replace(needle, "") : hay;
   if (year && year > 0) {
     rest = rest.replace(String(year), "");
   }
-  const meta = parseReleaseMeta(candidateTitle);
+  const meta = parseReleaseMeta(candidateTitle, parseOptions(customWords));
   for (const extra of [
     meta.webSource,
     meta.releaseGroup,
@@ -247,8 +268,10 @@ function looksLikeSequelOrRemake(
   candidateTitle: string,
   terms: readonly string[],
   year: number | undefined,
+  customWords?: readonly string[],
 ): boolean {
-  const years = [...candidateTitle.matchAll(/\b((?:19|20)\d{2})\b/g)].map((match) => Number(match[1]));
+  const titled = titledWithWords(candidateTitle, customWords);
+  const years = [...titled.matchAll(/\b((?:19|20)\d{2})\b/g)].map((match) => Number(match[1]));
   if (
     year &&
     year > 0 &&
@@ -260,11 +283,11 @@ function looksLikeSequelOrRemake(
   }
   const matched = [...terms]
     .sort((a, b) => b.length - a.length)
-    .find((term) => candidateMatchesTitle(candidateTitle, [term]));
+    .find((term) => candidateMatchesTitle(titled, [term]));
   if (!matched) {
     return true;
   }
-  const leftover = leftoverAfterTitle(candidateTitle, matched, year);
+  const leftover = leftoverAfterTitle(candidateTitle, matched, year, customWords);
   return leftover.length > 0 && (SEQUEL_WORD.test(leftover) || SEQUEL_TOKEN.test(leftover));
 }
 
@@ -301,15 +324,16 @@ function originIsCN(target: RulesSelectorTarget): boolean {
   return (target.originCountries ?? []).includes("CN");
 }
 
-function rejectMovieNoise(title: string): string | null {
-  const quality = parseReleaseQuality(title);
+function rejectMovieNoise(title: string, customWords?: readonly string[]): string | null {
+  const titled = titledWithWords(title, customWords);
+  const quality = parseReleaseQuality(titled);
   if (quality.discImage) {
     return "disc-image";
   }
-  if (MOVIE_PACK_RE.test(title)) {
+  if (MOVIE_PACK_RE.test(titled)) {
     return "tv-pack";
   }
-  if (/花絮|预告|trailer|sample|extras?|花絮篇/i.test(title)) {
+  if (/花絮|预告|trailer|sample|extras?|花絮篇/i.test(titled)) {
     return "extra";
   }
   return null;
@@ -320,9 +344,11 @@ function rankOne(
   target: RulesSelectorTarget,
   policy: QualityLadderPolicy,
   coveredEpisodes: string[],
+  customWords?: readonly string[],
 ): RankedRulesCandidate {
-  const qualityScore = scoreReleaseTitle(candidate.title, policy);
-  const chineseScore = chineseSubtitleScore(candidate.title, preferChineseSubs(target), originIsCN(target));
+  const titled = titledWithWords(candidate.title, customWords);
+  const qualityScore = scoreReleaseTitle(titled, policy);
+  const chineseScore = chineseSubtitleScore(titled, preferChineseSubs(target), originIsCN(target));
   return {
     snapshotId: candidate.snapshotId,
     candidateId: candidate.candidateId,
@@ -376,6 +402,7 @@ export function selectResourceCandidates(input: {
   candidates: readonly RulesSelectorCandidate[];
   target: RulesSelectorTarget;
   policy?: QualityLadderPolicy;
+  customIdentifierWords?: readonly string[];
 }): RulesSelection {
   const policy = input.policy ?? {};
   const terms = titleTermsFor(input.target);
@@ -385,32 +412,34 @@ export function selectResourceCandidates(input: {
   const originCN = originIsCN(input.target);
   const missing = input.target.missingEpisodes ?? (input.target.kind === "movie" ? ["MOVIE"] : []);
   const seasons = input.target.seasons ?? [1];
+  const words = input.customIdentifierWords;
 
   for (const candidate of input.candidates) {
-    const binding = mediaBindingDecision(candidate.title, input.target);
+    const titled = titledWithWords(candidate.title, words);
+    const binding = mediaBindingDecision(candidate.title, input.target, words);
     if (binding === "mismatch") {
       rejected.push({ ...candidate, reason: "media-id-mismatch" });
       continue;
     }
     const boundMatch = binding === "match";
-    if (!boundMatch && !candidateMatchesTitle(candidate.title, terms)) {
+    if (!boundMatch && !candidateMatchesTitle(titled, terms)) {
       rejected.push({ ...candidate, reason: "title-mismatch" });
       continue;
     }
-    if (!boundMatch && looksLikeSequelOrRemake(candidate.title, terms, input.target.year)) {
+    if (!boundMatch && looksLikeSequelOrRemake(candidate.title, terms, input.target.year, words)) {
       rejected.push({ ...candidate, reason: "sequel-or-year" });
       continue;
     }
     if (input.target.kind === "movie") {
-      const noise = rejectMovieNoise(candidate.title);
+      const noise = rejectMovieNoise(candidate.title, words);
       if (noise) {
         rejected.push({ ...candidate, reason: noise });
         continue;
       }
-      if (preferZh && !originCN && looksLikeEnglishScene(candidate.title) && chineseSubtitleScore(candidate.title, true, false) < 0) {
+      if (preferZh && !originCN && looksLikeEnglishScene(titled) && chineseSubtitleScore(titled, true, false) < 0) {
         // Keep as last-resort raw: don't reject yet, just low-score.
       }
-      eligible.push(rankOne(candidate, input.target, policy, ["MOVIE"]));
+      eligible.push(rankOne(candidate, input.target, policy, ["MOVIE"], words));
       continue;
     }
 
@@ -418,20 +447,23 @@ export function selectResourceCandidates(input: {
       title: candidate.title,
       seasons,
       missingEpisodes: missing,
+      ...(words && words.length > 0 ? { customWords: words } : {}),
     });
     if (covered.length === 0) {
       rejected.push({ ...candidate, reason: "no-episode-coverage" });
       continue;
     }
-    if (preferZh && !originCN && looksLikeEnglishScene(candidate.title)) {
+    if (preferZh && !originCN && looksLikeEnglishScene(titled)) {
       rejected.push({ ...candidate, reason: "raw-foreign" });
       continue;
     }
-    eligible.push(rankOne(candidate, input.target, policy, covered));
+    eligible.push(rankOne(candidate, input.target, policy, covered, words));
   }
 
   if (input.target.kind === "movie") {
-    const playable = eligible.filter((candidate) => parseReleaseQuality(candidate.title).discImage === false);
+    const playable = eligible.filter(
+      (candidate) => parseReleaseQuality(titledWithWords(candidate.title, words)).discImage === false,
+    );
     const pool = playable.length > 0 ? playable : eligible;
     const withChinese = preferZh && !originCN ? pool.filter((candidate) => candidate.chineseScore >= 0) : pool;
     const ranked = (withChinese.length > 0 ? withChinese : pool).sort((a, b) => b.totalScore - a.totalScore);

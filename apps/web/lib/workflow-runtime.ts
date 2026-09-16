@@ -86,6 +86,8 @@ import {
   resolveAcquisitionSelectionPath,
   type AcquisitionSelectionMode,
   type AcquisitionSelectionPath,
+  parseIdentifierWordLines,
+  customIdentifierWordsSpread,
 } from "@media-track/workflow";
 import {
   buildPanSouProviderChain,
@@ -903,7 +905,7 @@ function buildAccountContextResolver(): ResolveAccountWorkerContext {
     // specific drive it was queued onto.
     const scoped = getAccountScopedSettings(accountId);
     const parents = await getWorkerStorageParents(accountId, connectedStorageId);
-    const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade, acquisitionSelectionPath } =
+    const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade, acquisitionSelectionPath, customIdentifierWords } =
       await getAgentModel(scoped);
     // The run's drive brand selects its resource sources (quark→PanSou quark-only;
     // 115→PanSou+Prowlarr). null when no drive resolves → default 115 fallback.
@@ -922,6 +924,7 @@ function buildAccountContextResolver(): ResolveAccountWorkerContext {
       ...(considerSourceClass === false ? { considerSourceClass: false } : {}),
       ...(patrolQualityUpgrade ? { patrolQualityUpgrade: true } : {}),
       acquisitionSelectionPath,
+      ...customIdentifierWordsSpread(customIdentifierWords),
       storageParentDirectoryId: parents.tv,
       animeStorageParentDirectoryId: parents.anime,
       moviesParentDirectoryId: parents.movies,
@@ -973,7 +976,7 @@ export async function runNextQueuedWorkflow() {
   // The user's language preference is standing context baked into the agent
   // instance (one global preference), so every workflow — movie, series, type2,
   // anime — searches with it. No per-workflow plumbing.
-  const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade, acquisitionSelectionPath } =
+  const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade, acquisitionSelectionPath, customIdentifierWords } =
     await getAgentModel(getAccountScopedSettings(accountId));
   const language = preferredLanguage === undefined ? {} : { preferredLanguage };
   const quality = qualityPreference === undefined ? {} : { qualityPreference };
@@ -981,6 +984,7 @@ export async function runNextQueuedWorkflow() {
   const source = considerSourceClass === false ? { considerSourceClass: false as const } : {};
   const patrolUpgrade = patrolQualityUpgrade ? { patrolQualityUpgrade: true as const } : {};
   const selection = { acquisitionSelectionPath };
+  const words = customIdentifierWordsSpread(customIdentifierWords);
   const storage = await getWorkerStorageExecutor(accountId);
   const parents = await getWorkerStorageParents(accountId);
   const resolveAccountContext = buildAccountContextResolver();
@@ -997,6 +1001,7 @@ export async function runNextQueuedWorkflow() {
     ...source,
     ...patrolUpgrade,
     ...selection,
+    ...words,
     storageParentDirectoryId: parents.tv,
     animeStorageParentDirectoryId: parents.anime,
     resolveAccountContext,
@@ -1016,6 +1021,7 @@ export async function runNextQueuedWorkflow() {
     ...hdr,
     ...source,
     ...selection,
+    ...words,
     storageParentDirectoryId: parents.tv,
     animeStorageParentDirectoryId: parents.anime,
     resolveAccountContext,
@@ -1036,6 +1042,7 @@ export async function runNextQueuedWorkflow() {
     ...source,
     ...patrolUpgrade,
     ...selection,
+    ...words,
     moviesParentDirectoryId: parents.movies,
     resolveAccountContext,
     onAuthErrorFreeze,
@@ -1069,6 +1076,7 @@ export const CONSIDER_SOURCE_CLASS_SETTING_KEY = "consider_source_class";
 export const UPGRADE_ON_REACQUIRE_SETTING_KEY = "upgrade_on_reacquire";
 export const PATROL_QUALITY_UPGRADE_SETTING_KEY = "patrol_quality_upgrade";
 export const ACQUISITION_SELECTION_MODE_SETTING_KEY = "acquisition_selection_mode";
+export const CUSTOM_IDENTIFIER_WORDS_SETTING_KEY = "custom_identifier_words";
 
 /** The user's acquisition quality preference, or undefined when 不限/unset
  *  (the default). undefined → inject NO quality guidance (coverage-only, current
@@ -1123,6 +1131,16 @@ export async function getAcquisitionSelectionMode(
   repository: { getSetting(key: string): Promise<string | null> },
 ): Promise<AcquisitionSelectionMode> {
   return parseAcquisitionSelectionMode(await repository.getSetting(ACQUISITION_SELECTION_MODE_SETTING_KEY));
+}
+
+/**
+ * MoviePilot-style custom identifier words (one per line). Comments (`#`) and
+ * blank lines are stripped; the raw textarea (including comments) stays in DB.
+ */
+export async function getCustomIdentifierWords(
+  repository: { getSetting(key: string): Promise<string | null> },
+): Promise<string[]> {
+  return parseIdentifierWordLines(await repository.getSetting(CUSTOM_IDENTIFIER_WORDS_SETTING_KEY));
 }
 
 // AI 模型 (LLM) 三件套 — OpenAI-compatible. Stored in the user's OWN app_settings
@@ -1650,7 +1668,7 @@ export async function runScheduledType3(options?: {
     await hydratePan115CookieFromDb();
     const sync = tmdbSeasonMetadataSync();
     const accountId = await getCurrentAccountId();
-    const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade, acquisitionSelectionPath } =
+    const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade, acquisitionSelectionPath, customIdentifierWords } =
       await getAgentModel(getAccountScopedSettings(accountId));
     const parents = await getWorkerStorageParents(accountId);
     result = await runScheduledType3Monitoring({
@@ -1664,6 +1682,7 @@ export async function runScheduledType3(options?: {
       ...(considerSourceClass === false ? { considerSourceClass: false } : {}),
       ...(patrolQualityUpgrade ? { patrolQualityUpgrade: true } : {}),
       acquisitionSelectionPath,
+      ...customIdentifierWordsSpread(customIdentifierWords),
       storageParentDirectoryId: parents.tv,
       animeStorageParentDirectoryId: parents.anime,
       moviesParentDirectoryId: parents.movies,
@@ -2469,6 +2488,7 @@ async function getAgentModel(repository: {
   upgradeOnReacquire: boolean;
   patrolQualityUpgrade: boolean;
   acquisitionSelectionPath: AcquisitionSelectionPath;
+  customIdentifierWords: string[];
 }> {
   assertWorkflowAgentAdapterPolicy(process.env);
   const env = process.env;
@@ -2480,6 +2500,7 @@ async function getAgentModel(repository: {
   const upgradeOnReacquire = await getUpgradeOnReacquire(repository);
   const patrolQualityUpgrade = await getPatrolQualityUpgrade(repository);
   const selectionMode = await getAcquisitionSelectionMode(repository);
+  const customIdentifierWords = await getCustomIdentifierWords(repository);
 
   // Resolve the live model config the SAME way the test action does (shared
   // resolver) — DB-first, then .env. No built-in default endpoint.
@@ -2508,6 +2529,7 @@ async function getAgentModel(repository: {
       upgradeOnReacquire,
       patrolQualityUpgrade,
       acquisitionSelectionPath,
+      customIdentifierWords,
     };
   }
   // Cache per resolved config signature (so a Settings edit takes effect without
@@ -2527,6 +2549,7 @@ async function getAgentModel(repository: {
     upgradeOnReacquire,
     patrolQualityUpgrade,
     acquisitionSelectionPath,
+    customIdentifierWords,
   };
 }
 

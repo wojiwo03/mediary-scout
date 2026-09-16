@@ -38,7 +38,7 @@ BASE=$(jq -r .baseUrl ~/.mediary/agent.json)
 | 用户意图 | 端点 | curl |
 |---|---|---|
 | 查当前配置（画质/语言/LLM/推送…） | `GET /api/agent/config` | `curl -H "Authorization: Bearer $TOKEN" "$BASE/api/agent/config"` |
-| 改配置（画质、HDR、片源阶梯、升级策略、选片方式、语言、扫描时间…，传啥改啥） | `PUT /api/agent/config` | `curl -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"qualityPreference":"high","acquisitionSelectionMode":"rules"}' "$BASE/api/agent/config"` |
+| 改配置（画质、HDR、片源阶梯、升级策略、选片方式、识别词、语言、扫描时间…，传啥改啥） | `PUT /api/agent/config` | `curl -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"qualityPreference":"high","acquisitionSelectionMode":"rules"}' "$BASE/api/agent/config"` |
 | 「帮我找/下 XX」 | `POST /api/agent/acquire` | `curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"query":"进击的巨人","type":"tv","season":2}' "$BASE/api/agent/acquire"` |
 | 「触发一次巡检」「跑一遍巡检」 | `POST /api/agent/patrol` | `curl -X POST -H "Authorization: Bearer $TOKEN" "$BASE/api/agent/patrol"` |
 | 「我在追哪些剧」「缺哪几集」「我的库存」 | `GET /api/agent/library` | `curl -H "Authorization: Bearer $TOKEN" "$BASE/api/agent/library"` |
@@ -46,7 +46,7 @@ BASE=$(jq -r .baseUrl ~/.mediary/agent.json)
 
 `acquire` body 字段：`query`(必填)、`type`(`"tv"`/`"movie"`/`null`)、`season`(数字/`null`)、`storageId`(`"cs_…"`/`null`，缺省用 primary drive)、`tmdbId`(数字/`null`，用于消歧重发)、`qualityUpgrade`(布尔，显式升级已入库画质)。
 
-画质/DV/HDR/片源/音轨只在召回后读候选标题，**不要**让用户把这些词写进搜索 query。`acquisitionSelectionMode`：`auto`（默认，有 LLM 走 agent，否则规则选片）/ `agent` / `rules`（`non_agent` 同 `rules`）。定时追更补集与定时画质升级是两项独立任务、共用巡检时间；要巡检也升级须 `patrolQualityUpgrade: true`。`GET /api/agent/config` 的 `qualityLadderSummary` 是当前阶梯的可读摘要。详见仓库 `docs/quality-upgrade-and-hdr.md`。
+画质/DV/HDR/片源/音轨只在召回后读候选标题，**不要**让用户把这些词写进搜索 query。`acquisitionSelectionMode`：`auto`（默认，有 LLM 走 agent，否则规则选片）/ `agent` / `rules`（`non_agent` 同 `rules`）。`customIdentifierWords` 是 MoviePilot 语法识别词数组（屏蔽 / `from => to` / 集偏移）；规则选片与画质升级会套用，内置词先生效。定时追更补集与定时画质升级是两项独立任务、共用巡检时间；要巡检也升级须 `patrolQualityUpgrade: true`。`GET /api/agent/config` 的 `qualityLadderSummary` 是当前阶梯的可读摘要。详见仓库 `docs/quality-upgrade-and-hdr.md`。
 
 ## 3. 关键规则（必须遵守）
 

@@ -627,6 +627,33 @@ export async function saveAcquisitionSelectionModeAction(
   }
 }
 
+export async function saveCustomIdentifierWordsAction(
+  text: string,
+): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const { validateIdentifierWordText } = await import("@media-track/workflow");
+    const {
+      getWorkflowRepository,
+      getCurrentAccountId,
+      CUSTOM_IDENTIFIER_WORDS_SETTING_KEY,
+    } = await import("../lib/workflow-runtime");
+    const message = validateIdentifierWordText(text);
+    if (message) {
+      return { success: false, message };
+    }
+    const repository = getWorkflowRepository();
+    await repository.setAccountSetting(
+      await getCurrentAccountId(),
+      CUSTOM_IDENTIFIER_WORDS_SETTING_KEY,
+      text,
+    );
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
 export async function saveLlmConfigAction(input: {
   baseURL: string;
   modelId: string;

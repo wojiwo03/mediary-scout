@@ -3,6 +3,7 @@ import type { AcquisitionAgentResult } from "./agent-loop.js";
 import { interpretTool, type AgentToolEvent } from "./activity.js";
 import type { QualityLadderPolicy } from "./quality-ladder.js";
 import { shouldReplaceCoverage } from "./quality-ladder.js";
+import { customIdentifierWordsSpread, prepareTitle } from "./release-meta.js";
 import type { TaskSandbox } from "./sandbox.js";
 import {
   selectResourceCandidates,
@@ -23,7 +24,39 @@ export interface RunRulesAcquisitionRequest {
   target: RulesSelectorTarget;
   policy?: QualityLadderPolicy;
   qualityUpgrade?: boolean;
+  /** MoviePilot-style identifier words from Settings; applied after built-ins. */
+  customIdentifierWords?: readonly string[];
   onProgress?: (event: AgentToolEvent) => void;
+}
+
+function titledForLadder(title: string, words: readonly string[] | undefined): string {
+  if (!words || words.length === 0) {
+    return title;
+  }
+  return prepareTitle(title, words).title;
+}
+
+function shouldReplaceTitled(
+  existingTitle: string,
+  candidateTitle: string,
+  policy: QualityLadderPolicy,
+  words: readonly string[] | undefined,
+): boolean {
+  return shouldReplaceCoverage(titledForLadder(existingTitle, words), titledForLadder(candidateTitle, words), policy);
+}
+
+function selectWithWords(
+  candidates: readonly RulesSelectorCandidate[],
+  target: RulesSelectorTarget,
+  policy: QualityLadderPolicy,
+  words: readonly string[] | undefined,
+) {
+  return selectResourceCandidates({
+    candidates,
+    target,
+    policy,
+    ...customIdentifierWordsSpread(words ? [...words] : undefined),
+  });
 }
 
 function emit(onProgress: ((event: AgentToolEvent) => void) | undefined, toolName: string, args: Record<string, unknown>): void {
@@ -214,10 +247,15 @@ async function markExistingTv(sandbox: TaskSandbox, seasons: readonly number[], 
   }
 }
 
-async function maybeReplaceOldMovieFiles(sandbox: TaskSandbox, candidateTitle: string, policy: QualityLadderPolicy): Promise<void> {
+async function maybeReplaceOldMovieFiles(
+  sandbox: TaskSandbox,
+  candidateTitle: string,
+  policy: QualityLadderPolicy,
+  words: readonly string[] | undefined,
+): Promise<void> {
   const files = await sandbox.inspectTargetDir();
   const videos = files.filter((file) => file.isVideo);
-  const worse = videos.filter((file) => shouldReplaceCoverage(file.path, candidateTitle, policy));
+  const worse = videos.filter((file) => shouldReplaceTitled(file.path, candidateTitle, policy, words));
   if (worse.length === 0 || worse.length === videos.length) {
     // Never wipe the only copies if the new file isn't distinguishable yet.
     const still = files.filter((file) => file.isVideo && !worse.some((item) => item.id === file.id));
@@ -233,6 +271,7 @@ async function maybeReplaceOldMovieFiles(sandbox: TaskSandbox, candidateTitle: s
 export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): Promise<AcquisitionAgentResult> {
   const { sandbox, target } = request;
   const policy = request.policy ?? {};
+  const words = request.customIdentifierWords;
   const onProgress = request.onProgress;
   emit(onProgress, "rulesSelectCandidates", { mode: "rules" });
 
@@ -246,13 +285,13 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
   }
 
   let candidates = snapshotsToCandidates(sandbox);
-  if (candidates.length === 0 || selectResourceCandidates({ candidates, target, policy }).selected.length === 0) {
+  if (candidates.length === 0 || selectWithWords(candidates, target, policy, words).selected.length === 0) {
     await searchAliases(sandbox, target, onProgress);
     candidates = snapshotsToCandidates(sandbox);
   }
 
   emit(onProgress, "viewResourceSnapshot", {});
-  const selection = selectResourceCandidates({ candidates, target, policy });
+  const selection = selectWithWords(candidates, target, policy, words);
   emit(onProgress, "rulesSelectCandidates", {
     selected: selection.selected.map((candidate) => candidate.candidateId),
     reason: selection.reason,
@@ -277,7 +316,7 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
       const best = selection.selected[0]!;
       const anyUpgrade = existing
         .filter((file) => file.isVideo)
-        .some((file) => shouldReplaceCoverage(file.path, best.title, policy));
+        .some((file) => shouldReplaceTitled(file.path, best.title, policy, words));
       if (!anyUpgrade) {
         emit(onProgress, "finish", {});
         const coverage = await sandbox.finish();
@@ -301,7 +340,7 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
     const videos = Array.isArray(files) ? files.filter((file) => file.isVideo) : [];
     if (videos.length > 0) {
       if (request.qualityUpgrade) {
-        await maybeReplaceOldMovieFiles(sandbox, selection.selected[0]!.title, policy);
+        await maybeReplaceOldMovieFiles(sandbox, selection.selected[0]!.title, policy, words);
       }
       const rawFallback = selection.selected[0]!.chineseScore < 0;
       emit(onProgress, "markObtained", { codes: ["MOVIE"] });

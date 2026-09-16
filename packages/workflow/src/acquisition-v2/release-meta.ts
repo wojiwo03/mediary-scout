@@ -30,6 +30,10 @@ export {
   extractExplicitMediaTags,
   BUILTIN_IDENTIFIER_WORDS,
   applyEpisodeOffsetExpr,
+  parseIdentifierWordLines,
+  validateIdentifierWord,
+  validateIdentifierWordText,
+  customIdentifierWordsSpread,
 } from "./words-matcher.js";
 
 export type VideoCodec = "h264" | "h265" | "av1" | "avc" | "hevc" | "xvid" | "unknown";

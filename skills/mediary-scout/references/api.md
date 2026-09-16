@@ -103,6 +103,7 @@ curl -H "Authorization: Bearer $TOKEN" "$BASE/api/agent/config"
 - `upgradeOnReacquire`：默认 `false`。为 true 时对已入库标题再 acquire 会排队画质升级（仅严格更高才替换）。
 - `patrolQualityUpgrade`：默认 `false`。为 true 时定时巡检在追更补集之外，还会对已入库作品寻找严格更高画质（与追更共用同一巡检时间；失败不删旧文件）。默认巡检只补缺。
 - `acquisitionSelectionMode`：片源选片方式。`auto`（默认）= 已配置 LLM 走沙箱 agent，否则规则选片；`agent` = 强制 LLM；`rules`（写入也可传 `non_agent`）= 始终用画质阶梯 + 中文标题/集数匹配，无需 LLM。活动审计会记录实际路径 `agent` / `rules`。
+- `customIdentifierWords`：自定义识别词字符串数组（MoviePilot 语法：屏蔽、`from => to`、`前 <> 后 >> EP±n`）。写入时用 `string[]`，服务端用换行拼回 `account_settings.custom_identifier_words`；无效正则会拒绝保存。读取时不含 `#` 注释行。内置词始终先生效。
 - `preferredLanguage`：如 `"zh"`。
 - `dailySweepTime`：`HH:MM`，每日巡检时间。
 

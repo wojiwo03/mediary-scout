@@ -3,7 +3,7 @@ import { maskProviderUid } from "../../lib/mask-provider-uid";
 import { connection } from "next/server";
 import { headers } from "next/headers";
 import { Suspense } from "react";
-import { Bell, Bot, Cable, CalendarClock, Clapperboard, Gauge, KeyRound, Languages, ListFilter, Radio, ShieldCheck, Subtitles, TriangleAlert, Users } from "lucide-react";
+import { Bell, Bot, Cable, CalendarClock, Clapperboard, Gauge, KeyRound, Languages, ListFilter, Radio, ShieldCheck, Subtitles, Tags, TriangleAlert, Users } from "lucide-react";
 import { AppSidebar } from "../../components/app-sidebar";
 import { AddDriveBrandTabs } from "../../components/add-drive-brand-tabs";
 import { TestConnectionButton } from "../../components/test-connection-button";
@@ -12,6 +12,7 @@ import { PushNotificationForm } from "../../components/push-notification-form";
 import { PreferredLanguageForm } from "../../components/preferred-language-form";
 import { QualityPreferenceForm } from "../../components/quality-preference-form";
 import { AcquisitionSelectionModeForm } from "../../components/acquisition-selection-mode-form";
+import { CustomIdentifierWordsForm } from "../../components/custom-identifier-words-form";
 import { LlmConfigForm } from "../../components/llm-config-form";
 import { TmdbApiKeyForm } from "../../components/tmdb-api-key-form";
 import { AssrtTokenForm } from "../../components/assrt-token-form";
@@ -48,6 +49,7 @@ import {
   getAcquisitionSelectionMode,
   PREFERRED_LANGUAGE_SETTING_KEY,
   QUALITY_PREFERENCE_SETTING_KEY,
+  CUSTOM_IDENTIFIER_WORDS_SETTING_KEY,
   LLM_BASE_URL_SETTING_KEY,
   LLM_MODEL_ID_SETTING_KEY,
   LLM_API_KEY_SETTING_KEY,
@@ -125,6 +127,9 @@ export default function SettingsPage({
                 <>
                   <Suspense fallback={<div className="skeleton skeleton-heading" />}>
                     <AcquisitionSelectionModeSection />
+                  </Suspense>
+                  <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+                    <CustomIdentifierWordsSection />
                   </Suspense>
                   <Suspense fallback={<div className="skeleton skeleton-heading" />}>
                     <PreferredLanguageSection />
@@ -262,6 +267,29 @@ async function AcquisitionSelectionModeSection() {
         </div>
       </div>
       <AcquisitionSelectionModeForm initial={initial} />
+    </section>
+  );
+}
+
+async function CustomIdentifierWordsSection() {
+  await connection();
+  const repository = getAccountScopedSettings(await getCurrentAccountId());
+  const initial = (await repository.getSetting(CUSTOM_IDENTIFIER_WORDS_SETTING_KEY)) ?? "";
+
+  return (
+    <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
+      <div className="panel-header">
+        <div>
+          <h2 className="panel-title">
+            <Tags size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
+            自定义识别词
+          </h2>
+          <p className="panel-note">
+            规则选片解析标题前套用（屏蔽 / 替换 / 集数偏移）。内置词先生效；无效正则保存时会报错。
+          </p>
+        </div>
+      </div>
+      <CustomIdentifierWordsForm initial={initial} />
     </section>
   );
 }

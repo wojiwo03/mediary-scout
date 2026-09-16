@@ -8,6 +8,7 @@ import {
   getProwlarrConfig,
   getQualityPreference,
   getAcquisitionSelectionMode,
+  getCustomIdentifierWords,
   getPreferHdrOverResolution,
   getConsiderSourceClass,
   getUpgradeOnReacquire,
@@ -176,6 +177,21 @@ describe("getAcquisitionSelectionMode", () => {
     expect(await getAcquisitionSelectionMode(repoWith("agent"))).toBe("agent");
     expect(await getAcquisitionSelectionMode(repoWith(" rules "))).toBe("rules");
     expect(await getAcquisitionSelectionMode(repoWith("non_agent"))).toBe("rules");
+  });
+});
+
+describe("getCustomIdentifierWords", () => {
+  it("unset / blank → empty list", async () => {
+    expect(await getCustomIdentifierWords(repoWith(null))).toEqual([]);
+    expect(await getCustomIdentifierWords(repoWith("   \n# only comments\n"))).toEqual([]);
+  });
+
+  it("keeps replacement lines including empty to= and drops comments", async () => {
+    expect(
+      await getCustomIdentifierWords(
+        repoWith("# 注释\n网盘乱码 => 沙丘2\n测试替换 => \n招募翻译校对\n"),
+      ),
+    ).toEqual(["网盘乱码 => 沙丘2", "测试替换 => ", "招募翻译校对"]);
   });
 });
 
