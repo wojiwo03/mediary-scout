@@ -4,6 +4,7 @@ import { mapTvCoverage } from "../src/acquisition-v2/rules-selector.js";
 import {
   isAnimeTitle,
   joinReleaseTitleParts,
+  parseAirDateFromTitle,
   parseReleaseMeta,
   parseReleaseMetaParts,
   splitReleaseTitleParts,
@@ -288,6 +289,106 @@ describe("parseReleaseMeta — MoviePilot-style golden titles", () => {
       complete: false,
     });
     expect(parseReleaseMeta("Show.S01E28v2.1080p.mkv").episodeVersion).toBe(2);
+  });
+});
+
+describe("parseReleaseMeta — variety/news air-date episode tokens", () => {
+  it("parses dotted, dashed, compact, and CJK calendar dates as YYYY-MM-DD", () => {
+    expect(parseAirDateFromTitle("快乐大本营 2024.03.15 1080p")).toBe("2024-03-15");
+    expect(parseReleaseMeta("快乐大本营 2024.03.15 1080p.WEB-DL").airDate).toBe("2024-03-15");
+    expect(parseReleaseMeta("新闻联播 2024-03-15 1080p").airDate).toBe("2024-03-15");
+    expect(parseReleaseMeta("快乐大本营 20240315 1080p").airDate).toBe("2024-03-15");
+    expect(parseReleaseMeta("快乐大本营 240315 1080p").airDate).toBe("2024-03-15");
+    expect(parseReleaseMeta("快乐大本营 2024年3月15日 1080p").airDate).toBe("2024-03-15");
+    expect(parseReleaseMeta("新闻 2024年03月15日").airDate).toBe("2024-03-15");
+    expect(parseReleaseMeta("综艺 2024.3.5 1080p").airDate).toBe("2024-03-05");
+    expect(parseReleaseMeta("快乐大本营 2024.03.15 1080p").year).toBe(2024);
+    expect(parseReleaseMeta("快乐大本营 240315 1080p").year).toBe(2024);
+    expect(parseReleaseMeta("快乐大本营 2024.03.15 1080p").episode).toBeUndefined();
+  });
+
+  it("does not treat year-only, year-span, or resolution as an air date", () => {
+    expect(parseAirDateFromTitle("2024")).toBeUndefined();
+    expect(parseReleaseMeta("Show.2024.1080p")).not.toHaveProperty("airDate");
+    expect(parseReleaseMeta("Show.2024.1080p").year).toBe(2024);
+    expect(parseReleaseMeta("沙丘2 2024 超高清").airDate).toBeUndefined();
+    expect(parseReleaseMeta("Show.2024.1080p.WEB-DL")).not.toHaveProperty("airDate");
+    expect(parseAirDateFromTitle("2160")).toBeUndefined();
+    expect(parseAirDateFromTitle("2160p")).toBeUndefined();
+    expect(parseReleaseMeta("Show.2160p.WEB-DL")).not.toHaveProperty("airDate");
+    expect(parseReleaseMeta("Movie.2023.2160p.mkv")).not.toHaveProperty("airDate");
+    expect(parseReleaseMeta("Show 2019-2020完结").airDate).toBeUndefined();
+    expect(parseReleaseMeta("Show 2019-2020完结").episode).toBeUndefined();
+    expect(parseAirDateFromTitle("2024.1080p")).toBeUndefined();
+    expect(parseAirDateFromTitle("Show.2024.13.01")).toBeUndefined();
+    expect(parseAirDateFromTitle("2024.02.30")).toBeUndefined();
+  });
+
+  it("maps coverage only when missing already embeds the same date form", () => {
+    expect(
+      mapTvCoverage({
+        title: "快乐大本营 2024.03.15 1080p",
+        seasons: [1],
+        missingEpisodes: ["S01E01", "S01E15"],
+      }),
+    ).toEqual([]);
+    expect(
+      mapTvCoverage({
+        title: "快乐大本营 2024.03.15 1080p",
+        seasons: [1],
+        missingEpisodes: ["2024-03-15", "S01E01"],
+      }),
+    ).toEqual(["2024-03-15"]);
+    expect(
+      mapTvCoverage({
+        title: "新闻联播 20240315 1080p",
+        seasons: [1],
+        missingEpisodes: ["20240315"],
+      }),
+    ).toEqual(["20240315"]);
+    expect(
+      mapTvCoverage({
+        title: "快乐大本营 240315 1080p",
+        seasons: [1],
+        missingEpisodes: ["240315"],
+      }),
+    ).toEqual(["240315"]);
+    expect(
+      mapTvCoverage({
+        title: "快乐大本营 2024年3月15日 1080p",
+        seasons: [1],
+        missingEpisodes: ["S01E20240315", "S01E15"],
+      }),
+    ).toEqual(["S01E20240315"]);
+    expect(
+      mapTvCoverage({
+        title: "快乐大本营 2024.03.15 1080p",
+        seasons: [1],
+        missingEpisodes: ["S01E240315"],
+      }),
+    ).toEqual(["S01E240315"]);
+    expect(
+      mapTvCoverage({
+        title: "快乐大本营 第二季 2024.03.15 1080p",
+        seasons: [2],
+        missingEpisodes: ["S02E01", "S02E20"],
+      }),
+    ).toEqual([]);
+  });
+
+  it("does not invent SxxExx from a dated listing filename", () => {
+    const dated = parseReleaseMeta("快乐大本营/2024.03.15.mkv");
+    expect(dated.airDate).toBe("2024-03-15");
+    expect(dated.episode).toBeUndefined();
+    expect(inferEpisodeCodeFromListingPath("快乐大本营/2024.03.15.mkv", 1, [1])).toBeNull();
+    expect(inferEpisodeCodeFromListingPath("综艺 2024年3月15日.mkv", 1, [1])).toBeNull();
+  });
+
+  it("parent folder date fills a leaf that has no episode token", () => {
+    const meta = parseReleaseMetaParts(["快乐大本营 2024.03.15 1080p", "快乐大本营.mkv"]);
+    expect(meta.airDate).toBe("2024-03-15");
+    expect(meta.resolution).toBe("1080p");
+    expect(meta.episode).toBeUndefined();
   });
 });
 

@@ -13,6 +13,7 @@ import {
   type QualityLadderPolicy,
 } from "./quality-ladder.js";
 import {
+  airDateCodeForms,
   parseEpisodeSpanFromTitle,
   parseNamedSeasons,
   parseReleaseMeta,
@@ -162,6 +163,36 @@ function codesForSeasons(seasons: number[], span: EpisodeSpan, missing: readonly
 }
 
 /**
+ * Match a parsed air date onto missing codes that already use that date
+ * (`2024-03-15`, `20240315`, `240315`) or SxxE + those digits (`S01E20240315`).
+ * Never invent SxxExx from the calendar day (2024.03.15 ≠ S01E15).
+ */
+function codesMatchingAirDate(
+  airDate: string,
+  missing: readonly string[],
+  applicableSeasons: readonly number[],
+): string[] {
+  const forms = new Set(airDateCodeForms(airDate));
+  const compact8 = airDate.replace(/-/g, "");
+  const compact6 = compact8.slice(2);
+  return missing.filter((code) => {
+    if (forms.has(code)) {
+      return true;
+    }
+    const sxe = /^S(\d+)E(\d+)$/i.exec(code);
+    if (!sxe) {
+      return false;
+    }
+    const season = Number(sxe[1]);
+    if (!applicableSeasons.includes(season)) {
+      return false;
+    }
+    const episodeDigits = sxe[2]!;
+    return episodeDigits === compact8 || episodeDigits === compact6;
+  });
+}
+
+/**
  * Map a TV/anime share title onto missing episode codes. Returns [] when the
  * title does not clearly cover anything we still need (do not transfer to look).
  */
@@ -201,6 +232,12 @@ export function mapTvCoverage(input: {
   }
   const span = meta.episode ?? null;
   if (!span) {
+    // Date-token titles (综艺/新闻) never become a season pack, and never
+    // invent SxxExx from the calendar day. Coverage only when missing already
+    // stores the same date form.
+    if (meta.airDate) {
+      return codesMatchingAirDate(meta.airDate, input.missingEpisodes, applicable);
+    }
     // Season-named pack with no episode span (e.g. "第二季 1080p") — treat as
     // that season's full missing set only when the title also looks like a pack.
     if (named.length > 0 || /全集|\bcomplete\b|季完整/i.test(input.title)) {
@@ -226,9 +263,6 @@ function leftoverAfterTitle(
   const hay = normalizeForTitleMatch(titled);
   const needle = normalizeForTitleMatch(matchedTerm);
   let rest = needle.length > 0 ? hay.replace(needle, "") : hay;
-  if (year && year > 0) {
-    rest = rest.replace(String(year), "");
-  }
   const meta = parseReleaseMeta(candidateTitle, parseOptions(customWords));
   for (const extra of [
     meta.webSource,
@@ -239,6 +273,8 @@ function leftoverAfterTitle(
     meta.resourcePix,
     meta.videoEncode,
     meta.fps !== undefined ? `${meta.fps}fps` : undefined,
+    meta.airDate,
+    ...(meta.airDate ? airDateCodeForms(meta.airDate) : []),
     ...meta.resourceEffect,
   ]) {
     if (!extra) {
@@ -248,6 +284,9 @@ function leftoverAfterTitle(
     if (token.length > 0) {
       rest = rest.replace(token, "");
     }
+  }
+  if (year && year > 0) {
+    rest = rest.replace(String(year), "");
   }
   QUALITY_NOISE_RE.lastIndex = 0;
   rest = rest.replace(QUALITY_NOISE_RE, "");

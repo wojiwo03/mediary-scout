@@ -145,11 +145,15 @@ export function inferEpisodeCodeFromListingPath(
       }
       return null;
     }
-    const bare = /(?:^|[^\d])(\d{2,3})(?:v\d+)?\.(mkv|mp4|ts|m2ts|avi)$/i.exec(leaf);
-    if (bare) {
-      const n = Number(bare[1]);
-      if (n >= 1 && n <= 2000) {
-        episode = n;
+    // Date-named leaves (`2024.03.15.mkv`) must not become E15 via the trailing
+    // `\d{2,3}.ext` heuristic. Library identity stays SxxExx; we do not invent it.
+    if (!meta.airDate) {
+      const bare = /(?:^|[^\d])(\d{2,3})(?:v\d+)?\.(mkv|mp4|ts|m2ts|avi)$/i.exec(leaf);
+      if (bare) {
+        const n = Number(bare[1]);
+        if (n >= 1 && n <= 2000) {
+          episode = n;
+        }
       }
     }
   }

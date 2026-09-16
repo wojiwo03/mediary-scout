@@ -75,6 +75,12 @@ export interface ReleaseMeta extends ParsedReleaseQuality {
   /** Calendar year when the title clearly names one. */
   year?: number;
   /**
+   * Variety / news air-date token as `YYYY-MM-DD` (`2024.03.15`, `240315`,
+   * `2024年3月15日`). Not episode identity — library codes stay SxxExx;
+   * coverage mapping only hits a missing code that already embeds this date.
+   */
+  airDate?: string;
+  /**
    * Named seasons. `-1` means “complete series” (intersect with tracked seasons).
    * Empty = unspecified (TV season-1 default at the coverage mapper).
    */
@@ -381,6 +387,125 @@ export function parseEpisodeSpanFromTitle(title: string): ReleaseEpisodeSpan | n
   return parseEpisodeToken(title)?.span ?? null;
 }
 
+const AIR_DATE_YEAR_MIN = 1970;
+const AIR_DATE_YEAR_MAX = 2049;
+
+function isValidAirDateParts(year: number, month: number, day: number): boolean {
+  if (year < AIR_DATE_YEAR_MIN || year > AIR_DATE_YEAR_MAX) {
+    return false;
+  }
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return false;
+  }
+  const utc = new Date(Date.UTC(year, month - 1, day));
+  return utc.getUTCFullYear() === year && utc.getUTCMonth() === month - 1 && utc.getUTCDate() === day;
+}
+
+function formatAirDate(year: number, month: number, day: number): string | undefined {
+  if (!isValidAirDateParts(year, month, day)) {
+    return undefined;
+  }
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function expandAirDateYear(yy: number): number {
+  return yy <= 69 ? 2000 + yy : 1900 + yy;
+}
+
+interface ParsedAirDate {
+  iso: string;
+  raw: string;
+  index: number;
+  rank: number;
+}
+
+function pushAirDate(
+  out: ParsedAirDate[],
+  raw: string,
+  index: number,
+  rank: number,
+  year: number,
+  month: number,
+  day: number,
+): void {
+  const iso = formatAirDate(year, month, day);
+  if (!iso) {
+    return;
+  }
+  out.push({ iso, raw, index, rank });
+}
+
+function matchAirDate(title: string): ParsedAirDate | undefined {
+  const hits: ParsedAirDate[] = [];
+
+  const cjkRe = /((?:19|20)\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?/g;
+  let match: RegExpExecArray | null;
+  while ((match = cjkRe.exec(title)) !== null) {
+    pushAirDate(hits, match[0], match.index, 0, Number(match[1]), Number(match[2]), Number(match[3]));
+  }
+
+  const sepRe = /(?<![A-Za-z0-9])((?:19|20)\d{2})[\s._-](\d{1,2})[\s._-](\d{1,2})(?![A-Za-z0-9])/g;
+  while ((match = sepRe.exec(title)) !== null) {
+    pushAirDate(hits, match[0], match.index, 1, Number(match[1]), Number(match[2]), Number(match[3]));
+  }
+
+  const ymd8Re = /(?<![A-Za-z0-9])((?:19|20)\d{2})(\d{2})(\d{2})(?![A-Za-z0-9])/g;
+  while ((match = ymd8Re.exec(title)) !== null) {
+    pushAirDate(hits, match[0], match.index, 2, Number(match[1]), Number(match[2]), Number(match[3]));
+  }
+
+  const ymd6Re = /(?<![A-Za-z0-9])(\d{2})(\d{2})(\d{2})(?![A-Za-z0-9])/g;
+  while ((match = ymd6Re.exec(title)) !== null) {
+    pushAirDate(
+      hits,
+      match[0],
+      match.index,
+      3,
+      expandAirDateYear(Number(match[1])),
+      Number(match[2]),
+      Number(match[3]),
+    );
+  }
+
+  if (hits.length === 0) {
+    return undefined;
+  }
+  hits.sort((a, b) => a.index - b.index || a.rank - b.rank);
+  return hits[0];
+}
+
+/**
+ * Calendar date used as a variety/news episode token. Rejects year-only,
+ * year-span (`2019-2020`), and resolution (`2160` / `1080p`) tokens.
+ */
+export function parseAirDateFromTitle(title: string): string | undefined {
+  return matchAirDate(title)?.iso;
+}
+
+/** Identity strings a missing-episode code may equal when it embeds this air date. */
+export function airDateCodeForms(iso: string): string[] {
+  const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!parts) {
+    return [];
+  }
+  const year = parts[1]!;
+  const month = parts[2]!;
+  const day = parts[3]!;
+  const monthNum = String(Number(month));
+  const dayNum = String(Number(day));
+  return [
+    iso,
+    `${year}${month}${day}`,
+    `${year.slice(2)}${month}${day}`,
+    `${year}.${month}.${day}`,
+    `${year}.${monthNum}.${dayNum}`,
+    `${year}-${month}-${day}`,
+    `${year}-${monthNum}-${dayNum}`,
+    `${year}年${monthNum}月${dayNum}日`,
+    `${year}年${month}月${day}日`,
+  ];
+}
+
 function mapVideoCodec(title: string): VideoCodec {
   const text = normalizeQualityText(title);
   if (/\b(?:h[\s._-]*265|x265|hevc)\b/i.test(text)) {
@@ -610,6 +735,10 @@ function stripForNames(title: string): string {
   rest = rest.replace(FANSUB_BRACKET_RE, " ");
   rest = rest.replace(RELEASE_GROUP_RE, " ");
   rest = rest.replace(MEDIA_EXT_RE, " ");
+  const dated = matchAirDate(rest);
+  if (dated) {
+    rest = rest.replace(dated.raw, " ");
+  }
   rest = rest.replace(/\(\s*(?:19|20)\d{2}\s*\)/g, " ");
   rest = rest.replace(/\b(?:19|20)\d{2}\b/g, " ");
   rest = rest.replace(/第\s*[一二三四五六七八九十两\dIVXⅠ-Ⅻ]{1,4}\s*[季集话話期幕]/g, " ");
@@ -796,6 +925,11 @@ function mergeReleaseMeta(leaf: ReleaseMeta, parent: ReleaseMeta): ReleaseMeta {
           }
         : {}),
     ...(leaf.year !== undefined ? { year: leaf.year } : parent.year !== undefined ? { year: parent.year } : {}),
+    ...(leaf.airDate
+      ? { airDate: leaf.airDate }
+      : parent.airDate
+        ? { airDate: parent.airDate }
+        : {}),
     ...(leaf.part ? { part: leaf.part } : parent.part ? { part: parent.part } : {}),
     ...(leaf.webSource ? { webSource: leaf.webSource } : parent.webSource ? { webSource: parent.webSource } : {}),
     ...(leaf.releaseGroup ? { releaseGroup: leaf.releaseGroup } : parent.releaseGroup ? { releaseGroup: parent.releaseGroup } : {}),
@@ -851,7 +985,8 @@ function parseReleaseMetaFlat(title: string, options: ParseReleaseMetaOptions = 
       : namedSeasons;
   const videoBit = mapVideoBit(stem);
   const audioCodec = detectAudioCodec(stem);
-  const year = detectYear(stem);
+  const airDate = parseAirDateFromTitle(stem);
+  const year = detectYear(stem) ?? (airDate ? Number(airDate.slice(0, 4)) : undefined);
   const part = detectPart(stem);
   const webSource = detectWebSource(stem);
   const releaseGroup = detectReleaseGroup(title) ?? detectReleaseGroup(stem);
@@ -871,6 +1006,7 @@ function parseReleaseMetaFlat(title: string, options: ParseReleaseMetaOptions = 
     ...(episode ? { episode } : {}),
     ...(episodeVersion === undefined ? {} : { episodeVersion }),
     ...(year === undefined ? {} : { year }),
+    ...(airDate === undefined ? {} : { airDate }),
     ...(part === undefined ? {} : { part }),
     ...(webSource === undefined ? {} : { webSource }),
     ...(releaseGroup === undefined ? {} : { releaseGroup }),
