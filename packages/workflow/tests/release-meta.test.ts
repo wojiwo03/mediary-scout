@@ -12,6 +12,7 @@ import {
   validateIdentifierWordText,
 } from "../src/acquisition-v2/release-meta.js";
 import { inferEpisodeCodeFromListingPath } from "../src/acquisition-v2/rules-task.js";
+import { RELEASE_GROUP_PATTERNS, STREAMING_PLATFORMS } from "../src/acquisition-v2/release-catalog.js";
 
 /**
  * Golden titles shaped like MoviePilot MetaInfo inputs (PT / WEB / 网盘分享 /
@@ -46,6 +47,7 @@ describe("parseReleaseMeta — MoviePilot-style golden titles", () => {
     expect(meta.videoCodec).toBe("h265");
     expect(meta.audio).toBe("atmos");
     expect(meta.audioCodec).toMatch(/ddp|atmos/i);
+    expect(meta.releaseGroup).toMatch(/FLUX/i);
     expect(meta.seasons).toEqual([1]);
     expect(meta.episode?.from).toBe(3);
   });
@@ -369,6 +371,36 @@ describe("identifier word parse / validate", () => {
   it("validateIdentifierWordText points at the first bad line", () => {
     expect(validateIdentifierWordText("ok\n(unclosed")).toMatch(/^第 2 行：/);
     expect(validateIdentifierWordText("ok")).toBeNull();
+  });
+});
+
+describe("parseReleaseMeta — expanded groups and platforms", () => {
+  it("catalog is a full table, not the old short regex subset", () => {
+    expect(RELEASE_GROUP_PATTERNS.length).toBeGreaterThan(90);
+    expect(STREAMING_PLATFORMS.length).toBeGreaterThan(200);
+    expect(STREAMING_PLATFORMS.some((p) => p.cjk && p.cjk.length > 0)).toBe(true);
+  });
+
+  it("hits groups the old regex missed: FLUX / HaresWEB / PTer / 氢气烤肉架 / Nekomoe", () => {
+    expect(parseReleaseMeta("Movie.2024.1080p.WEB-DL-HaresWEB").releaseGroup).toMatch(/HaresWEB/i);
+    expect(parseReleaseMeta("Show.S01E01.1080p.WEB-DL-PTer").releaseGroup).toMatch(/PTer/i);
+    expect(parseReleaseMeta("Show.S01E01.2160p.UHD.BluRay.REMUX-Ctrlhd").releaseGroup).toMatch(/Ctrlhd/i);
+    expect(parseReleaseMeta("【氢气烤肉架】葬送的芙莉莲 - 12 [1080p]").releaseGroup).toMatch(/氢气烤肉架/);
+    expect(parseReleaseMeta("[Nekomoe kissaten] Show - 08 [WebRip 1080p]").releaseGroup).toMatch(
+      /Nekomoe kissaten/i,
+    );
+    expect(parseReleaseMeta("【喵萌奶茶屋】[鬼灭之刃][08][1080p]").releaseGroup).toMatch(/喵萌奶茶屋/);
+  });
+
+  it("hits platforms the old table missed; Latin still needs WEB, CJK does not", () => {
+    expect(parseReleaseMeta("Show.S01E01.2160p.HS.WEB-DL.DDP.H265-FLUX").webSource).toBe("Hotstar");
+    expect(parseReleaseMeta("Show.S01E01.WAVVE.WEB-DL.1080p").webSource).toBe("Wavve");
+    expect(parseReleaseMeta("Show.S01E01.AT-X.WEB-DL.1080p").webSource).toBe("AT-X");
+    expect(parseReleaseMeta("Show.S01E01.PCOK.WEB-DL.1080p").webSource).toBe("Peacock");
+    expect(parseReleaseMeta("沙丘2 2024 奈飞 中字").webSource).toBe("Netflix");
+    expect(parseReleaseMeta("狂飙 优酷 1080p 中字").webSource).toBe("Youku");
+    expect(parseReleaseMeta("A Random Title Without Web Tags HS")).not.toHaveProperty("webSource");
+    expect(parseReleaseMeta("A Random Title Without Web Tags NF")).not.toHaveProperty("webSource");
   });
 });
 

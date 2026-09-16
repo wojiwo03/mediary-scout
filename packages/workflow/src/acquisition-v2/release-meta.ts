@@ -19,6 +19,10 @@ import {
   type SourceClass,
 } from "./quality-ladder.js";
 import {
+  compileReleaseGroupRegExp,
+  compileStreamingPlatforms,
+} from "./release-catalog.js";
+import {
   extractExplicitMediaTags,
   prepareTitle,
   type MediaBinding,
@@ -118,43 +122,16 @@ const VIDEO_SEASON_EP_RE =
 const PIX_AS_EPISODE = new Set([480, 576, 720, 1080, 2160, 4320]);
 
 /**
- * Common WEB/PT streaming tags. Subset of MoviePilot StreamingPlatforms —
- * codes that actually show up on Chinese cloud-share / PT titles.
+ * WEB/PT streaming tags. Codes/names from MoviePilot StreamingPlatforms
+ * (see `release-catalog.ts`); CJK pan names are extra aliases.
  */
-const WEB_PLATFORMS: Array<{ re: RegExp; name: string }> = [
-  { re: /\bAMZN\b|Amazon/i, name: "Amazon" },
-  { re: /\bNF\b|Netflix/i, name: "Netflix" },
-  { re: /\bATVP\b|Apple\s*TV\+?/i, name: "Apple TV+" },
-  { re: /\bDSNP\b|Disney\+/i, name: "Disney+" },
-  { re: /\biT\b|\biTunes\b/i, name: "iTunes" },
-  { re: /\bHMAX\b|\bHBO\s*Max\b/i, name: "Max" },
-  { re: /\bHBO(?:GO)?\b/i, name: "HBO" },
-  { re: /\bHULU\b/i, name: "Hulu" },
-  { re: /\bPMTP\b|Paramount\+/i, name: "Paramount+" },
-  { re: /\bPCOK\b|Peacock/i, name: "Peacock" },
-  { re: /\bIQ\b|iQIYI|爱奇艺/i, name: "iQIYI" },
-  { re: /\bWeTV\b|腾讯视频|腾讯/i, name: "WeTV" },
-  { re: /优酷|\bYouku\b/i, name: "Youku" },
-  { re: /芒果|\bMango\b/i, name: "Mango" },
-  { re: /\bBaha\b/i, name: "Baha" },
-  { re: /\bCR\b|Crunchyroll/i, name: "Crunchyroll" },
-  { re: /\bBG\b|B-Global|Bilibili|哔哩哔哩/i, name: "Bilibili" },
-  { re: /\bVIU\b/i, name: "Viu" },
-  { re: /\bTVING\b/i, name: "TVING" },
-  { re: /\bHami(?:Video)?\b/i, name: "Hami Video" },
-  { re: /\bKKTV\b/i, name: "KKTV" },
-  { re: /\bHIDI\b|HIDIVE/i, name: "HIDIVE" },
-  { re: /\bFUNi\b|Funimation/i, name: "Funimation" },
-  { re: /\bSTAN\b/i, name: "Stan" },
-  { re: /\bDSCP\b|Discovery\+/i, name: "Discovery+" },
-];
+const WEB_PLATFORMS = compileStreamingPlatforms();
 
 const WEB_NEAR_RE =
   /\bWEB[\s._-]?DL\b|\bWEB[\s._-]?RIP\b|\bWEBDL\b|\bWEBRIP\b|(?:^|[.\[_-])WEB(?:[.\]_-]|$)|官源/i;
 
 /** Built-in groups MoviePilot matches around - @ [ 】 (Chinese fansubs + PT). */
-const RELEASE_GROUP_RE =
-  /(?<=[-@\[￡【&])(?:ANi|HYSUB|KTXP|LoliHouse|MCE|SweetSub|MingY|(?:Lilith|NC|AI)-Raws|FRDS|TTG|WiKi|NGB|CMCTV?|Our(?:Bits|TV)|HHWEB|HDH(?:ome|WEB)|PTHWEB|HDSWEB|MWeb|PTerWEB|Audies|beAst|FLTTH|Yumi|cXcY|ADWeb|LeagueWEB|EPiC|GM-Team|AnimeS)(?=$|[@.\s\]\[】&])/i;
+const RELEASE_GROUP_RE = compileReleaseGroupRegExp();
 
 const FANSUB_BRACKET_RE =
   /[【\[]([^\]】]{2,24}(?:字幕组|字幕社|字幕|Raws|House|Sub|手抄部|奶茶屋|发布组|压制组))[】\]]/;
@@ -381,14 +358,23 @@ function detectWebSource(title: string): string | undefined {
   const text = normalizeQualityText(title);
   const nearWeb = WEB_NEAR_RE.test(text);
   for (const platform of WEB_PLATFORMS) {
-    platform.re.lastIndex = 0;
-    const hit = platform.re.exec(text);
-    if (!hit) {
+    if (!platform.cjkRe) {
       continue;
     }
-    const matched = hit[0];
-    const cjk = /[\u4e00-\u9fff]/.test(matched);
-    if (cjk || nearWeb) {
+    platform.cjkRe.lastIndex = 0;
+    if (platform.cjkRe.test(text)) {
+      return platform.name;
+    }
+  }
+  if (!nearWeb) {
+    return undefined;
+  }
+  for (const platform of WEB_PLATFORMS) {
+    if (!platform.latinRe) {
+      continue;
+    }
+    platform.latinRe.lastIndex = 0;
+    if (platform.latinRe.test(text)) {
       return platform.name;
     }
   }
