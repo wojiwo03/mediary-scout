@@ -815,6 +815,11 @@ export class TaskSandbox {
     return [...this.auditEvents];
   }
 
+  /** Snapshots observed this task (prime + searches) — rules selector ranks these. */
+  listObservedSnapshots(): ResourceSnapshotV2[] {
+    return [...this.observedSnapshots.values()];
+  }
+
   /** Pre-warm a raw search (system-initiated, does NOT consume agent's distinct
    *  search budget). The snapshot is recorded in dedup/registry/observedSnapshots
    *  just like an agent search, so agent can later transferCandidate by id. Calling

@@ -65,6 +65,13 @@ describe("interpretTool — real agent tool names → cleaned 中文 + phase", (
     expect(interpretTool("readSkill", { section: "protocol" }).activity).toBe("正在查阅操作手册…");
   });
 
+  it("rulesSelectCandidates is the deterministic pick phase", () => {
+    expect(interpretTool("rulesSelectCandidates", {})).toEqual({
+      activity: "正在按规则筛选候选…",
+      phase: "pick",
+    });
+  });
+
   it("viewResourceSnapshot is the pre-warmed 活期文档 review → mapped (not the generic 处理中 fallback)", () => {
     const r = interpretTool("viewResourceSnapshot", {});
     expect(r.activity).not.toBe("处理中…");

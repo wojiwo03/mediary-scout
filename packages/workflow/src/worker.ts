@@ -40,6 +40,7 @@ import {
 } from "./runner-v2.js";
 import { syncSeasonAgainstMetadata } from "./season-sync.js";
 import { isTianyiAuthError } from "./tianyi-client.js";
+import type { AcquisitionSelectionPath } from "./acquisition-v2/selection-mode.js";
 
 /** Brand netdisk auth failures only — never LLM Unauthorized / plain Errors. */
 function isBrandStorageAuthError(error: unknown): boolean {
@@ -115,6 +116,7 @@ async function resolveWorkerDeps(
   storageParentDirectoryId: string | undefined;
   animeStorageParentDirectoryId: string | undefined;
   moviesParentDirectoryId: string | undefined;
+  acquisitionSelectionPath: AcquisitionSelectionPath;
 }> {
   const ctx = resolve ? await resolve(accountId, connectedStorageId) : {};
   return {
@@ -134,6 +136,7 @@ async function resolveWorkerDeps(
       ctx.animeStorageParentDirectoryId ?? base.animeStorageParentDirectoryId,
     moviesParentDirectoryId:
       ctx.moviesParentDirectoryId ?? base.moviesParentDirectoryId,
+    acquisitionSelectionPath: ctx.acquisitionSelectionPath ?? base.acquisitionSelectionPath ?? "agent",
   };
 }
 
@@ -171,6 +174,7 @@ export interface AccountWorkerContext {
   storageParentDirectoryId?: string;
   animeStorageParentDirectoryId?: string;
   moviesParentDirectoryId?: string;
+  acquisitionSelectionPath?: AcquisitionSelectionPath;
 }
 
 export type ResolveAccountWorkerContext = (
@@ -318,6 +322,7 @@ export async function runQueuedType2Workflow(input: {
   preferHdrOverResolution?: boolean;
   considerSourceClass?: boolean;
   patrolQualityUpgrade?: boolean;
+  acquisitionSelectionPath?: AcquisitionSelectionPath;
   now?: () => string;
   storageParentDirectoryId?: string;
   /** Separate landing parent for anime (see runQueuedSeriesInitialization). */
@@ -378,6 +383,7 @@ export async function runQueuedType2Workflow(input: {
       ...(deps.assrtToken === undefined
         ? {}
         : { assrtToken: deps.assrtToken }),
+      acquisitionSelectionPath: deps.acquisitionSelectionPath,
       // finishedAt is stamped post-run inside the persist step (see runner-v2),
       // so it reflects actual completion, not the claim time.
       workflowRun: {
@@ -447,6 +453,7 @@ export async function runScheduledType3Monitoring(input: {
   preferHdrOverResolution?: boolean;
   considerSourceClass?: boolean;
   patrolQualityUpgrade?: boolean;
+  acquisitionSelectionPath?: AcquisitionSelectionPath;
   storageParentDirectoryId: string;
   /** Separate landing parent for anime, so anime patrol verify-or-creates under
    *  its own tree (see runQueuedSeriesInitialization). */
@@ -612,6 +619,7 @@ export async function runScheduledType3Monitoring(input: {
         ...(deps.assrtToken === undefined
           ? {}
           : { assrtToken: deps.assrtToken }),
+        acquisitionSelectionPath: deps.acquisitionSelectionPath,
         workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
         now,
       });
@@ -693,6 +701,7 @@ async function patrolMovie(args: {
     storageProvider: string | undefined;
     assrtToken: string | undefined;
     moviesParentDirectoryId: string | undefined;
+    acquisitionSelectionPath: AcquisitionSelectionPath;
   };
   state: {
     accountId: string;
@@ -802,6 +811,7 @@ async function patrolMovie(args: {
       ...(deps.assrtToken === undefined
         ? {}
         : { assrtToken: deps.assrtToken }),
+      acquisitionSelectionPath: deps.acquisitionSelectionPath,
       workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
       now,
     });
@@ -954,6 +964,7 @@ export async function runQueuedMovieAcquisition(input: {
   preferHdrOverResolution?: boolean;
   considerSourceClass?: boolean;
   patrolQualityUpgrade?: boolean;
+  acquisitionSelectionPath?: AcquisitionSelectionPath;
   moviesParentDirectoryId: string;
   now?: () => string;
   /** §7: resolve the claimed run's per-account 115 creds + landing CIDs. */
@@ -1002,6 +1013,7 @@ export async function runQueuedMovieAcquisition(input: {
       ...(deps.assrtToken === undefined
         ? {}
         : { assrtToken: deps.assrtToken }),
+      acquisitionSelectionPath: deps.acquisitionSelectionPath,
       workflowRun: {
         id: claimed.workflowRun.id,
         startedAt: claimed.workflowRun.startedAt,
@@ -1039,6 +1051,7 @@ export async function runQueuedSeriesInitialization(input: {
   qualityPreference?: "high" | "medium";
   preferHdrOverResolution?: boolean;
   considerSourceClass?: boolean;
+  acquisitionSelectionPath?: AcquisitionSelectionPath;
   storageParentDirectoryId: string;
   /** Separate landing parent for anime, so the 动漫 shelf is physically its own
    *  tree on 115 and never mixed into the TV shows directory. */
@@ -1106,6 +1119,7 @@ export async function runQueuedSeriesInitialization(input: {
       ...(deps.assrtToken === undefined
         ? {}
         : { assrtToken: deps.assrtToken }),
+      acquisitionSelectionPath: deps.acquisitionSelectionPath,
       workflowRun: {
         id: claimed.workflowRun.id,
         startedAt: claimed.workflowRun.startedAt,

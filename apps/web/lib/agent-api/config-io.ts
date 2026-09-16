@@ -12,6 +12,7 @@ import {
   getConsiderSourceClass,
   getUpgradeOnReacquire,
   getPatrolQualityUpgrade,
+  getAcquisitionSelectionMode,
   getDailySweepTime,
   getProwlarrConfig,
   LLM_BASE_URL_SETTING_KEY,
@@ -22,6 +23,7 @@ import {
   CONSIDER_SOURCE_CLASS_SETTING_KEY,
   UPGRADE_ON_REACQUIRE_SETTING_KEY,
   PATROL_QUALITY_UPGRADE_SETTING_KEY,
+  ACQUISITION_SELECTION_MODE_SETTING_KEY,
   PREFERRED_LANGUAGE_SETTING_KEY,
   DAILY_SWEEP_TIME_SETTING_KEY,
   PANSOU_BASE_URL_SETTING_KEY,
@@ -41,6 +43,8 @@ export interface AgentConfigView {
   considerSourceClass: boolean;
   upgradeOnReacquire: boolean;
   patrolQualityUpgrade: boolean;
+  /** How to select resource candidates after search. Default auto. */
+  acquisitionSelectionMode: "auto" | "agent" | "rules";
   /** Read-only human summary of the active post-recall ladder. */
   qualityLadderSummary: string;
   preferredLanguage: string | undefined;
@@ -69,7 +73,7 @@ export function isMaskedPlaceholder(value: string): boolean {
 export async function readAgentConfig(accountId: string): Promise<AgentConfigView> {
   const settings = getAccountScopedSettings(accountId);
   const repository = getWorkflowRepository();
-  const [llm, quality, language, sweepTime, prowlarr, storageRows, preferHdr, considerSource, upgradeOnReacquire, patrolUpgrade] =
+  const [llm, quality, language, sweepTime, prowlarr, storageRows, preferHdr, considerSource, upgradeOnReacquire, patrolUpgrade, selectionMode] =
     await Promise.all([
       getLlmConfig(settings),
       getQualityPreference(settings),
@@ -81,6 +85,7 @@ export async function readAgentConfig(accountId: string): Promise<AgentConfigVie
       getConsiderSourceClass(settings),
       getUpgradeOnReacquire(settings),
       getPatrolQualityUpgrade(settings),
+      getAcquisitionSelectionMode(settings),
     ]);
   const pansou = (await settings.getSetting(PANSOU_BASE_URL_SETTING_KEY))?.trim() || null;
   const tmdbKey = (await settings.getSetting(TMDB_API_KEY_SETTING_KEY))?.trim() || null;
@@ -107,6 +112,7 @@ export async function readAgentConfig(accountId: string): Promise<AgentConfigVie
     considerSourceClass: considerSource,
     upgradeOnReacquire,
     patrolQualityUpgrade: patrolUpgrade,
+    acquisitionSelectionMode: selectionMode,
     qualityLadderSummary: formatQualityLadderSummary(
       qualityLadderPolicyFromFlags({
         ...(quality === undefined ? {} : { resolutionPreference: quality }),
@@ -137,6 +143,7 @@ export interface AgentConfigWriteInput {
   considerSourceClass?: boolean;
   upgradeOnReacquire?: boolean;
   patrolQualityUpgrade?: boolean;
+  acquisitionSelectionMode?: "auto" | "agent" | "rules" | "non_agent";
   preferredLanguage?: string;
   dailySweepTime?: string;
   pansouBaseUrl?: string;
@@ -207,6 +214,23 @@ export async function writeAgentConfig(
       await setAccount(key, value ? "true" : "false");
       updated.push(field);
     }
+  }
+
+  if (input.acquisitionSelectionMode !== undefined) {
+    const { parseAcquisitionSelectionMode } = await import("@media-track/workflow");
+    const allowed = ["auto", "agent", "rules", "non_agent"];
+    if (!allowed.includes(input.acquisitionSelectionMode.trim().toLowerCase())) {
+      return {
+        ok: false,
+        field: "acquisitionSelectionMode",
+        message: "无效选片方式，可选：auto / agent / rules",
+      };
+    }
+    await setAccount(
+      ACQUISITION_SELECTION_MODE_SETTING_KEY,
+      parseAcquisitionSelectionMode(input.acquisitionSelectionMode),
+    );
+    updated.push("acquisitionSelectionMode");
   }
 
   if (input.preferredLanguage !== undefined) {

@@ -21,6 +21,7 @@ import {
   getAccountScopedSettings,
   getCurrentAccountId,
   getLlmConfig,
+  getAcquisitionSelectionMode,
   getWorkflowRepository,
   isMultiUserEnabled,
   PANSOU_BASE_URL_SETTING_KEY,
@@ -87,9 +88,10 @@ export async function loadSettingsAttentionSummary(options?: {
     options?.w ?? undefined,
   );
 
-  const [llm, isOwner] = await Promise.all([
+  const [llm, isOwner, selectionMode] = await Promise.all([
     getLlmConfig(getAccountScopedSettings(accountId)),
     resolveIsOwner(repository, accountId),
+    getAcquisitionSelectionMode(getAccountScopedSettings(accountId)),
   ]);
 
   // 自建搜索源:**只读 DB,绝不探活**。这个函数在徽章轮询路径上(每 8s 一次),
@@ -127,6 +129,7 @@ export async function loadSettingsAttentionSummary(options?: {
     })),
     brandLabel,
     llmConfigured: Boolean(llm.baseURL && llm.modelId),
+    acquisitionSelectionMode: selectionMode,
     searchSource: { custom: customSearchSource, reachable: searchSourceReachable },
     update,
     origin: options?.origin ?? DEFAULT_LOCAL_ORIGIN,

@@ -3,7 +3,7 @@ import { maskProviderUid } from "../../lib/mask-provider-uid";
 import { connection } from "next/server";
 import { headers } from "next/headers";
 import { Suspense } from "react";
-import { Bell, Bot, Cable, CalendarClock, Clapperboard, Gauge, KeyRound, Languages, Radio, ShieldCheck, Subtitles, TriangleAlert, Users } from "lucide-react";
+import { Bell, Bot, Cable, CalendarClock, Clapperboard, Gauge, KeyRound, Languages, ListFilter, Radio, ShieldCheck, Subtitles, TriangleAlert, Users } from "lucide-react";
 import { AppSidebar } from "../../components/app-sidebar";
 import { AddDriveBrandTabs } from "../../components/add-drive-brand-tabs";
 import { TestConnectionButton } from "../../components/test-connection-button";
@@ -11,6 +11,7 @@ import { UnbindStorageButton } from "../../components/unbind-storage-button";
 import { PushNotificationForm } from "../../components/push-notification-form";
 import { PreferredLanguageForm } from "../../components/preferred-language-form";
 import { QualityPreferenceForm } from "../../components/quality-preference-form";
+import { AcquisitionSelectionModeForm } from "../../components/acquisition-selection-mode-form";
 import { LlmConfigForm } from "../../components/llm-config-form";
 import { TmdbApiKeyForm } from "../../components/tmdb-api-key-form";
 import { AssrtTokenForm } from "../../components/assrt-token-form";
@@ -44,6 +45,7 @@ import {
   getConsiderSourceClass,
   getUpgradeOnReacquire,
   getPatrolQualityUpgrade,
+  getAcquisitionSelectionMode,
   PREFERRED_LANGUAGE_SETTING_KEY,
   QUALITY_PREFERENCE_SETTING_KEY,
   LLM_BASE_URL_SETTING_KEY,
@@ -121,6 +123,9 @@ export default function SettingsPage({
               }
               preferences={
                 <>
+                  <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+                    <AcquisitionSelectionModeSection />
+                  </Suspense>
                   <Suspense fallback={<div className="skeleton skeleton-heading" />}>
                     <PreferredLanguageSection />
                   </Suspense>
@@ -238,6 +243,29 @@ async function AccountManagementSection() {
   );
 }
 
+async function AcquisitionSelectionModeSection() {
+  await connection();
+  const repository = getAccountScopedSettings(await getCurrentAccountId());
+  const initial = await getAcquisitionSelectionMode(repository);
+
+  return (
+    <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
+      <div className="panel-header">
+        <div>
+          <h2 className="panel-title">
+            <ListFilter size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
+            片源选片方式
+          </h2>
+          <p className="panel-note">
+            搜索之后如何选出要转存的候选。规则模式无需 LLM，按画质阶梯与中文标题/集数匹配。
+          </p>
+        </div>
+      </div>
+      <AcquisitionSelectionModeForm initial={initial} />
+    </section>
+  );
+}
+
 async function PreferredLanguageSection() {
   await connection();
   const repository = getAccountScopedSettings(await getCurrentAccountId());
@@ -308,7 +336,7 @@ async function LlmConfigSection() {
             AI 模型
           </h2>
           <p className="panel-note">
-            获取 agent 用的大模型(任意 OpenAI 兼容服务,自带);<strong>必填</strong>,未配置时获取会失败。本地模型 Key 可留空。只存你本机
+            智能选片时用的大模型（任意 OpenAI 兼容服务，自带）。选「规则」或「自动」且未配置时，获取仍可按画质阶梯匹配候选。本地模型 Key 可留空。只存你本机。
           </p>
         </div>
       </div>

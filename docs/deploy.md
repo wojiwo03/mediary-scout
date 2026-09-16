@@ -112,7 +112,7 @@ docker compose up -d        # 首次会构建 web 镜像,几分钟
 
 > ⚠️ **v1 仅支持磁力 / 离线。** 光鸭目前**不**转存 115 / 夸克 / 光鸭自己的**分享链**(这类候选会按设计明确报错 `GUANGYA_ONLY_MAGNET`,不静默失败)。所以光鸭和 **Prowlarr 搭配最好**(磁力覆盖更全)。
 >
-> 和所有获取一样,光鸭也需要先配好 **AI 模型(LLM)**,见下文「[想跑真实获取还需要](#想跑真实获取还需要)」。
+> 真实获取需要网盘凭证；AI 模型可选（不配则走规则选片），见下文「[想跑真实获取还需要](#想跑真实获取还需要)」。
 
 光鸭用 **`access_token` + `refresh_token`** 鉴权(不是 cookie、不是扫码)。`access_token` 约 2 小时过期,`refresh_token` 会在过期时自动续期,续期后的新 token 自动写回该盘,无需你手动重粘。
 
@@ -168,7 +168,7 @@ docker compose up -d        # 首次会构建 web 镜像,几分钟
 
 ## 想跑真实获取还需要
 
-- **AI 模型**(设置 → AI 模型):填一个 OpenAI 兼容的 `baseURL / apiKey / modelId`——agent 靠它决策。不填则获取流程无法规划。
+- **AI 模型**(设置 → AI 模型,可选):填一个 OpenAI 兼容的 `baseURL / apiKey / modelId`——智能 agent 靠它决策。默认「自动」：配了 LLM 走 agent，没配则用规则选片（画质阶梯 + 标题/集数匹配），获取仍可进行。设置 → 获取偏好 → 片源选片方式 可强制 `agent` 或 `rules`。
 - **115 目录 CID**(`.env` 或环境变量):`TV_SHOWS_CID` / `MOVIES_CID` / `ANIME_CID` 等落盘父目录。
 
 ## 可选增强

@@ -66,6 +66,34 @@ describe("buildSettingsAttentionItems", () => {
     expect(items.map((i) => i.kind)).toEqual(["missing_llm"]);
     expect(items[0]?.severity).toBe("warning");
     expect(items[0]?.href).toBe("/settings?tab=services");
+    expect(items[0]?.title).toContain("规则选片");
+  });
+
+  it("does not flag missing LLM when selection mode is rules", () => {
+    const items = buildSettingsAttentionItems({
+      demo: false,
+      isOwner: true,
+      drives: [],
+      brandLabel, origin: ORIGIN,
+      llmConfigured: false,
+      acquisitionSelectionMode: "rules",
+      update: null,
+    });
+    expect(items.map((i) => i.kind)).not.toContain("missing_llm");
+  });
+
+  it("keeps a stricter LLM warning when mode is agent", () => {
+    const items = buildSettingsAttentionItems({
+      demo: false,
+      isOwner: true,
+      drives: [],
+      brandLabel, origin: ORIGIN,
+      llmConfigured: false,
+      acquisitionSelectionMode: "agent",
+      update: null,
+    });
+    expect(items[0]?.title).toBe("还没配置 AI 模型");
+    expect(items[0]?.body).toContain("强制智能 agent");
   });
 
   /** 事故复盘:自建源挂了 6 天,产品从头到尾只说「暂未找到可用资源」。

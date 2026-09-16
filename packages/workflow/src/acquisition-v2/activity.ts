@@ -34,6 +34,8 @@ export function interpretTool(toolName: string, args: Record<string, unknown> = 
   switch (toolName) {
     case "readSkill":
       return { activity: "正在查阅操作手册…", phase: "search" };
+    case "rulesSelectCandidates":
+      return { activity: "正在按规则筛选候选…", phase: "pick" };
     case "viewResourceSnapshot":
       // The pre-warmed 活期文档 review: the agent is browsing the system's
       // already-searched raw candidates (free, read-only) before deciding. It is

@@ -599,6 +599,34 @@ export async function requestQualityUpgradeAction(input: {
   return { status: "requested", message: "已排队画质升级：仅当候选严格更高时才会替换。" };
 }
 
+export async function saveAcquisitionSelectionModeAction(
+  mode: string,
+): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const { parseAcquisitionSelectionMode } = await import("@media-track/workflow");
+    const {
+      getWorkflowRepository,
+      getCurrentAccountId,
+      ACQUISITION_SELECTION_MODE_SETTING_KEY,
+    } = await import("../lib/workflow-runtime");
+    const parsed = parseAcquisitionSelectionMode(mode);
+    const allowed = ["auto", "agent", "rules", "non_agent"];
+    if (!allowed.includes(mode.trim().toLowerCase())) {
+      return { success: false, message: "无效选片方式，可选：auto / agent / rules" };
+    }
+    const repository = getWorkflowRepository();
+    await repository.setAccountSetting(
+      await getCurrentAccountId(),
+      ACQUISITION_SELECTION_MODE_SETTING_KEY,
+      parsed,
+    );
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
 export async function saveLlmConfigAction(input: {
   baseURL: string;
   modelId: string;

@@ -1,6 +1,7 @@
 import {
   landedSize,
   isQualityUpgradeAudit,
+  selectionPathFromAudit,
   type MediaType,
   type NotificationReportStatus,
   type WorkflowRepository,
@@ -40,6 +41,8 @@ export interface ActivityActiveRun {
   progress: WorkflowRunProgress | null;
   /** True when this run is a quality-upgrade (manual or scheduled). */
   qualityUpgrade: boolean;
+  /** Which selector picked candidates this run (`agent` / `rules`); null if not yet recorded. */
+  selectionPath: "agent" | "rules" | null;
 }
 
 /** A recently-finished run. The client session-scopes 已完成 by matching these
@@ -125,6 +128,7 @@ export async function getActivityView(input: {
       missingCount,
       progress: snapshot.workflowRun.progress ?? null,
       qualityUpgrade: isQualityUpgradeAudit(snapshot.workflowRun.auditEvents),
+      selectionPath: selectionPathFromAudit(snapshot.workflowRun.auditEvents),
     };
   });
 

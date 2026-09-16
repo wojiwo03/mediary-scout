@@ -24,6 +24,7 @@ import { runAcquisitionV2 } from "./acquisition-v2/orchestrator.js";
 import { QUALITY_UPGRADE_AUDIT_TYPE, qualityLadderPolicyFromFlags } from "./acquisition-v2/quality-ladder.js";
 import { getAcquisitionQualityGuidance, getSearchRecipe } from "./acquisition-v2/search-profile.js";
 import { ensureMediaLibraryDirectory } from "./media-library-folder.js";
+import type { AcquisitionSelectionPath } from "./acquisition-v2/selection-mode.js";
 
 function defaultNowIso(): string {
   return new Date().toISOString();
@@ -61,6 +62,7 @@ export interface RunMovieAcquisitionV2Request {
   deadLinkStore?: DeadLinkStore;
   onProgress?: (event: AgentToolEvent) => void;
   now?: () => string;
+  acquisitionSelectionPath?: AcquisitionSelectionPath;
 }
 
 export async function runMovieAcquisitionV2(
@@ -81,14 +83,15 @@ export async function runMovieAcquisitionV2(
     tmdbId: request.title.tmdbId,
   });
 
+  const qualityPolicy = qualityLadderPolicyFromFlags({
+    ...(request.qualityPreference === undefined ? {} : { resolutionPreference: request.qualityPreference }),
+    ...(request.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+    ...(request.considerSourceClass === false ? { considerSourceClass: false } : {}),
+  });
   const qualityGuidance = getAcquisitionQualityGuidance({
     profile: "movie",
     preference: request.qualityPreference,
-    policy: qualityLadderPolicyFromFlags({
-      ...(request.qualityPreference === undefined ? {} : { resolutionPreference: request.qualityPreference }),
-      ...(request.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
-      ...(request.considerSourceClass === false ? { considerSourceClass: false } : {}),
-    }),
+    policy: qualityPolicy,
     ...(request.qualityUpgrade ? { qualityUpgrade: true } : {}),
   });
 
@@ -108,6 +111,7 @@ export async function runMovieAcquisitionV2(
     targetMovieDirectoryId: movieDirectoryId,
     searchHints: getSearchRecipe("movie"), // movie search is origin-independent
     searchProfile: "movie",
+    qualityPolicy,
     ...(qualityGuidance === "" ? {} : { qualityGuidance }),
     ...(request.qualityUpgrade ? { qualityUpgrade: true } : {}),
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
@@ -119,6 +123,9 @@ export async function runMovieAcquisitionV2(
     ...(request.assrtToken === undefined ? {} : { assrtToken: request.assrtToken }),
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
+    ...(request.acquisitionSelectionPath === undefined
+      ? {}
+      : { acquisitionSelectionPath: request.acquisitionSelectionPath }),
   });
 
   // Truth = the AGENT'S coverage (its markObtained), NOT a mechanical file scan

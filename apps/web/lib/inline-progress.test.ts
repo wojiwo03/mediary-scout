@@ -23,6 +23,7 @@ function run(over: Partial<ActivityActiveRun>): ActivityActiveRun {
     missingCount: 0,
     progress: null,
     qualityUpgrade: false,
+    selectionPath: null,
     ...over,
   };
 }
