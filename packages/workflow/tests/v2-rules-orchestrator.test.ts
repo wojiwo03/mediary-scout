@@ -275,3 +275,119 @@ describe("runAcquisitionV2 — rules selector (no LLM)", () => {
     ).rejects.toThrow(/LLM must not be called/);
   });
 });
+
+describe("runAcquisitionV2 — auto path confidence fallback", () => {
+  it("auto + high-confidence movie stays on rules and never calls the model", async () => {
+    const snapId = "snap_auto_high";
+    const provider: ResourceProvider = {
+      search: async ({ keyword }) =>
+        snapshot(snapId, keyword, [
+          candidate({ id: "dv", snapshotId: snapId, index: 0, title: "盗梦空间 2010 2160p DV REMUX 中字" }),
+        ]),
+    };
+    const executor = new FakeStorageExecutor({
+      directories: { staging: [], movie: [] },
+      transferOutcomes: {
+        dv: {
+          status: "succeeded",
+          providerMessage: "ok",
+          files: [videoFile("film", "盗梦空间.2010.2160p.mkv", null)],
+        },
+      },
+    });
+
+    const result = await runAcquisitionV2({
+      provider,
+      executor,
+      model: throwingModel(),
+      workflowRunId: "run-auto-high",
+      target: {
+        kind: "movie",
+        title: "盗梦空间",
+        aliases: ["Inception"],
+        year: 2010,
+        qualityPreference: "1080p",
+      },
+      stagingDirectoryId: "staging",
+      targetMovieDirectoryId: "movie",
+      acquisitionSelectionPath: "auto",
+    });
+
+    expect(result.coverage.coverageMet).toBe(true);
+    expect(result.outcome.transferAttempts.map((attempt) => attempt.candidateId)).toEqual(["dv"]);
+    expect(result.outcome.decisions[0]?.node).toBe(RULES_DECISION_NODE);
+    expect(
+      result.auditEvents.some(
+        (event) => event.type === ACQUISITION_SELECTION_PATH_AUDIT_TYPE && event.data?.["path"] === "rules",
+      ),
+    ).toBe(true);
+  });
+
+  it("auto + low-confidence empty TV coverage falls back to the agent", async () => {
+    const snapId = "snap_auto_low";
+    const provider: ResourceProvider = {
+      search: async ({ keyword }) =>
+        snapshot(snapId, keyword, [
+          candidate({ id: "date", snapshotId: snapId, index: 0, title: "快乐大本营 2024.03.15 1080p" }),
+        ]),
+    };
+    const executor = new FakeStorageExecutor({ directories: { staging: [], season: [] } });
+
+    await expect(
+      runAcquisitionV2({
+        provider,
+        executor,
+        model: throwingModel(),
+        workflowRunId: "run-auto-low",
+        target: {
+          kind: "tv",
+          title: "快乐大本营",
+          aliases: [],
+          seasons: [1],
+          missingEpisodes: ["S01E01"],
+          qualityPreference: "1080p",
+        },
+        stagingDirectoryId: "staging",
+        targetSeasonDirectoryIds: { 1: "season" },
+        acquisitionSelectionPath: "auto",
+      }),
+    ).rejects.toThrow(/LLM must not be called/);
+  });
+
+  it("forced rules never escalates to the agent on low confidence", async () => {
+    const snapId = "snap_rules_low";
+    const provider: ResourceProvider = {
+      search: async ({ keyword }) =>
+        snapshot(snapId, keyword, [
+          candidate({ id: "date", snapshotId: snapId, index: 0, title: "快乐大本营 2024.03.15 1080p" }),
+        ]),
+    };
+    const executor = new FakeStorageExecutor({ directories: { staging: [], season: [] } });
+
+    const result = await runAcquisitionV2({
+      provider,
+      executor,
+      model: throwingModel(),
+      workflowRunId: "run-rules-no-escalate",
+      target: {
+        kind: "tv",
+        title: "快乐大本营",
+        aliases: [],
+        seasons: [1],
+        missingEpisodes: ["S01E01"],
+        qualityPreference: "1080p",
+      },
+      stagingDirectoryId: "staging",
+      targetSeasonDirectoryIds: { 1: "season" },
+      acquisitionSelectionPath: "rules",
+    });
+
+    expect(result.coverage.coverageMet).toBe(false);
+    expect(result.outcome.transferAttempts).toEqual([]);
+    expect(
+      result.auditEvents.some(
+        (event) => event.type === ACQUISITION_SELECTION_PATH_AUDIT_TYPE && event.data?.["path"] === "rules",
+      ),
+    ).toBe(true);
+  });
+});

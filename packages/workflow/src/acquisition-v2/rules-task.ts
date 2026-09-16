@@ -12,6 +12,7 @@ import {
 import type { TaskSandbox } from "./sandbox.js";
 import {
   selectResourceCandidates,
+  assessRulesConfidence,
   type RankedRulesCandidate,
   type RulesSelectorCandidate,
   type RulesSelectorTarget,
@@ -32,6 +33,12 @@ export interface RunRulesAcquisitionRequest {
   /** MoviePilot-style identifier words from Settings; applied after built-ins. */
   customIdentifierWords?: readonly string[];
   onProgress?: (event: AgentToolEvent) => void;
+  /**
+   * `auto` mode: after ranking, if parse/coverage confidence is low, return
+   * without transferring or reporting no-coverage so the orchestrator can run
+   * the sandbox agent on the same primed snapshots. Forced `rules` omits this.
+   */
+  escalateOnLowConfidence?: boolean;
 }
 
 function parseOptions(words: readonly string[] | undefined): ParseReleaseMetaOptions {
@@ -321,12 +328,16 @@ async function maybeReplaceOldMovieFiles(
   }
 }
 
-export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): Promise<AcquisitionAgentResult> {
+export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): Promise<
+  AcquisitionAgentResult & { escalateToAgent?: string[] }
+> {
   const { sandbox, target } = request;
   const policy = request.policy ?? {};
   const words = request.customIdentifierWords;
   const onProgress = request.onProgress;
-  emit(onProgress, "rulesSelectCandidates", { mode: "rules" });
+  emit(onProgress, "rulesSelectCandidates", {
+    mode: request.escalateOnLowConfidence ? "auto" : "rules",
+  });
 
   if (target.kind === "tv" && (target.seasons?.length ?? 0) > 0) {
     await markExistingTv(sandbox, target.seasons ?? [], target.missingEpisodes ?? [], onProgress, words);
@@ -345,6 +356,30 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
 
   emit(onProgress, "viewResourceSnapshot", {});
   const selection = selectWithWords(candidates, target, policy, words);
+
+  if (request.escalateOnLowConfidence) {
+    const report = assessRulesConfidence({
+      target,
+      selection,
+      candidateCount: candidates.length,
+      ...(words && words.length > 0 ? { customWords: words } : {}),
+    });
+    if (report.confidence === "low") {
+      emit(onProgress, "rulesSelectCandidates", {
+        mode: "auto",
+        fallback: "agent",
+        reasons: report.reasons,
+        reason: `规则选片置信度低（${report.reasons.join("、")}），改走 agent`,
+      });
+      return {
+        text: `规则选片置信度低，改走 agent：${report.reasons.join("、")}`,
+        steps: 1,
+        coverage: { coverageMet: false, obtained: [], missing: [], subtitleFallback: false },
+        escalateToAgent: report.reasons,
+      };
+    }
+  }
+
   emit(onProgress, "rulesSelectCandidates", {
     selected: selection.selected.map((candidate) => candidate.candidateId),
     reason: selection.reason,

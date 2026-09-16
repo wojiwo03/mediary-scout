@@ -21,8 +21,8 @@ describe("parseAcquisitionSelectionMode", () => {
 });
 
 describe("resolveAcquisitionSelectionPath", () => {
-  it("auto uses agent when LLM is configured, otherwise rules", () => {
-    expect(resolveAcquisitionSelectionPath("auto", true)).toBe("agent");
+  it("auto uses rules-first (auto) when LLM is configured, otherwise rules", () => {
+    expect(resolveAcquisitionSelectionPath("auto", true)).toBe("auto");
     expect(resolveAcquisitionSelectionPath("auto", false)).toBe("rules");
   });
 
@@ -36,6 +36,9 @@ describe("selectionPath audit", () => {
   it("round-trips agent vs rules", () => {
     expect(selectionPathFromAudit([selectionPathAuditEvent("rules")])).toBe("rules");
     expect(selectionPathFromAudit([selectionPathAuditEvent("agent")])).toBe("agent");
+    expect(selectionPathFromAudit([selectionPathAuditEvent("agent", { fallbackFrom: "rules", reasons: ["no-episode-coverage"] })])).toBe(
+      "agent",
+    );
     expect(selectionPathFromAudit([])).toBeNull();
   });
 });

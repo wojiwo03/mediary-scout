@@ -70,6 +70,10 @@ describe("interpretTool — real agent tool names → cleaned 中文 + phase", (
       activity: "正在按规则筛选候选…",
       phase: "pick",
     });
+    expect(interpretTool("rulesSelectCandidates", { fallback: "agent" })).toEqual({
+      activity: "规则拿不准，改走智能选片…",
+      phase: "pick",
+    });
   });
 
   it("viewResourceSnapshot is the pre-warmed 活期文档 review → mapped (not the generic 处理中 fallback)", () => {

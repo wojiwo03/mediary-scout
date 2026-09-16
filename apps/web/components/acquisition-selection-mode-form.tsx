@@ -10,7 +10,7 @@ const MODES: Array<{ key: AcquisitionSelectionMode; label: string; hint: string 
   {
     key: "auto",
     label: "自动（推荐）",
-    hint: "已配置 AI 模型时走智能 agent；否则用规则选片，没有 LLM key 也能获取。",
+    hint: "已配置 AI 时：解析明确走规则，拿不准再走 agent；没有 LLM 则只用规则选片。",
   },
   {
     key: "agent",

@@ -2509,11 +2509,10 @@ async function getAgentModel(repository: {
   const llmConfigured = llmConfigError(resolved) === null;
   const acquisitionSelectionPath = resolveAcquisitionSelectionPath(selectionMode, llmConfigured);
 
-  // Fail-fast pre-check (issue #49): on the live (vercel-ai) *agent* path, if
-  // baseURL or modelId is missing the run would die on its first model call.
-  // Rules / auto-fallback never need a model — skip the throw so acquire still
-  // works without an LLM key.
-  if (adapter === "vercel-ai" && acquisitionSelectionPath === "agent") {
+  // Fail-fast pre-check (issue #49): live vercel-ai *agent* and *auto* (may
+  // fall back to agent) need baseURL + modelId. Forced rules / auto-without-LLM
+  // never call the model — skip the throw so acquire still works without a key.
+  if (adapter === "vercel-ai" && acquisitionSelectionPath !== "rules") {
     const configError = llmConfigError(resolved);
     if (configError) {
       throw new Error(configError);

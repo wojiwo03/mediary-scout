@@ -101,7 +101,7 @@ export function buildSettingsAttentionItems(input: {
       severity: "warning",
       title: auto ? "还没配置 AI 模型（将走规则选片）" : "还没配置 AI 模型",
       body: auto
-        ? "当前是「自动」：没有 LLM 时按画质阶梯与标题匹配选片，获取仍可进行。配置模型后会改用智能 agent。"
+        ? "当前是「自动」：没有 LLM 时按画质阶梯与标题匹配选片，获取仍可进行。配置模型后解析明确仍走规则，拿不准再改用智能 agent。"
         : "当前强制智能 agent，填写 Base URL 和模型名后才能搜索与获取。",
       actionLabel: "去填写",
       href: href("services"),

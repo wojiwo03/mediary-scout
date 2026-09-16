@@ -7,9 +7,16 @@ import type { AuditEvent } from "../domain.js";
 export const ACQUISITION_SELECTION_MODES = ["auto", "agent", "rules"] as const;
 export type AcquisitionSelectionMode = (typeof ACQUISITION_SELECTION_MODES)[number];
 
-/** The path that actually selected candidates this run. */
-export const ACQUISITION_SELECTION_PATHS = ["agent", "rules"] as const;
+/**
+ * Requested selector for this run. `auto` tries deterministic rules first and
+ * falls back to the sandbox agent when parse/coverage confidence is low
+ * (only when an LLM is configured). Audit records the path that actually ran.
+ */
+export const ACQUISITION_SELECTION_PATHS = ["agent", "rules", "auto"] as const;
 export type AcquisitionSelectionPath = (typeof ACQUISITION_SELECTION_PATHS)[number];
+
+/** Path that actually selected candidates (never `auto`). */
+export type ResolvedAcquisitionSelectionPath = "agent" | "rules";
 
 export const AGENT_DECISION_NODE = "acquisition_v2_sandbox_agent";
 export const RULES_DECISION_NODE = "acquisition_v2_rules_selector";
@@ -30,9 +37,11 @@ export function parseAcquisitionSelectionMode(
 }
 
 /**
- * Resolve which selector runs this acquisition.
- * `auto` uses the agent when an LLM is configured (baseURL + modelId); otherwise
- * falls back to deterministic rules so acquire/patrol still work without a key.
+ * Resolve which selector this acquisition should start with.
+ * - `rules` / `agent`: forced, ignore LLM health.
+ * - `auto` + no LLM: rules (acquire still works).
+ * - `auto` + LLM: `auto` — orchestrator prefers rules when parse confidence is
+ *   high, otherwise falls back to the agent.
  */
 export function resolveAcquisitionSelectionPath(
   mode: AcquisitionSelectionMode,
@@ -44,23 +53,34 @@ export function resolveAcquisitionSelectionPath(
   if (mode === "agent") {
     return "agent";
   }
-  return llmConfigured ? "agent" : "rules";
+  return llmConfigured ? "auto" : "rules";
 }
 
-export function selectionPathAuditEvent(path: AcquisitionSelectionPath): AuditEvent {
+export function selectionPathAuditEvent(
+  path: ResolvedAcquisitionSelectionPath,
+  extras?: { fallbackFrom?: "rules"; reasons?: readonly string[] },
+): AuditEvent {
+  const fromRules = extras?.fallbackFrom === "rules";
+  const reasonText = extras?.reasons && extras.reasons.length > 0 ? extras.reasons.join("、") : "";
   return {
     type: ACQUISITION_SELECTION_PATH_AUDIT_TYPE,
     message:
       path === "rules"
         ? "片源候选由规则选片器选出（画质阶梯 + 标题/集数匹配，无需 LLM）"
-        : "片源候选由沙箱 agent 选出",
-    data: { path },
+        : fromRules
+          ? `规则选片置信度低${reasonText ? `（${reasonText}）` : ""}，改走沙箱 agent`
+          : "片源候选由沙箱 agent 选出",
+    data: {
+      path,
+      ...(fromRules ? { fallbackFrom: "rules" } : {}),
+      ...(extras?.reasons && extras.reasons.length > 0 ? { reasons: [...extras.reasons] } : {}),
+    },
   };
 }
 
 export function selectionPathFromAudit(
   events: ReadonlyArray<{ type: string; data?: Record<string, unknown> }>,
-): AcquisitionSelectionPath | null {
+): ResolvedAcquisitionSelectionPath | null {
   const hit = events.find((event) => event.type === ACQUISITION_SELECTION_PATH_AUDIT_TYPE);
   const path = hit?.data?.["path"];
   return path === "agent" || path === "rules" ? path : null;

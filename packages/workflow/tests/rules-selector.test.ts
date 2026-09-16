@@ -7,6 +7,7 @@ import {
   parseEpisodeSpan,
   parseSeasonMarkers,
   selectResourceCandidates,
+  assessRulesConfidence,
 } from "../src/acquisition-v2/rules-selector.js";
 import { joinReleaseTitleParts } from "../src/acquisition-v2/release-meta.js";
 import { movieTargetToRules, tvTargetToRules } from "../src/acquisition-v2/rules-task.js";
@@ -505,5 +506,113 @@ describe("chineseSubtitleScore — finer language tiers", () => {
       policy: high,
     });
     expect(selection.selected.map((c) => c.candidateId)).toEqual(["dv"]);
+  });
+});
+
+describe("assessRulesConfidence", () => {
+  it("is high for an explicit movie pick and a TV SxxExx / 全集 pack", () => {
+    const movie = selectResourceCandidates({
+      candidates: [cand("dv", "盗梦空间 2010 2160p DV REMUX 中字")],
+      target: { kind: "movie", title: "盗梦空间", aliases: ["Inception"], year: 2010 },
+      policy: high,
+    });
+    expect(
+      assessRulesConfidence({ target: { kind: "movie", title: "盗梦空间", aliases: [], year: 2010 }, selection: movie, candidateCount: 1 })
+        .confidence,
+    ).toBe("high");
+
+    const tv = selectResourceCandidates({
+      candidates: [cand("ep", "庆余年 S01E01 1080p")],
+      target: {
+        kind: "tv",
+        title: "庆余年",
+        aliases: [],
+        seasons: [1],
+        missingEpisodes: ["S01E01"],
+      },
+    });
+    expect(
+      assessRulesConfidence({
+        target: { kind: "tv", title: "庆余年", aliases: [], seasons: [1], missingEpisodes: ["S01E01"] },
+        selection: tv,
+        candidateCount: 1,
+      }).confidence,
+    ).toBe("high");
+  });
+
+  it("is low when TV titles match but have no episode coverage", () => {
+    const selection = selectResourceCandidates({
+      candidates: [cand("date", "快乐大本营 2024.03.15 1080p")],
+      target: {
+        kind: "tv",
+        title: "快乐大本营",
+        aliases: [],
+        seasons: [1],
+        missingEpisodes: ["S01E01"],
+      },
+    });
+    expect(selection.selected).toEqual([]);
+    const report = assessRulesConfidence({
+      target: {
+        kind: "tv",
+        title: "快乐大本营",
+        aliases: [],
+        seasons: [1],
+        missingEpisodes: ["S01E01"],
+      },
+      selection,
+      candidateCount: 1,
+    });
+    expect(report.confidence).toBe("low");
+    expect(report.reasons).toContain("no-episode-coverage");
+  });
+
+  it("is low for sequel-or-year-only leftovers and for an empty pool", () => {
+    const sequels = selectResourceCandidates({
+      candidates: [cand("rises", "蝙蝠侠：黑暗骑士崛起 2012 1080p")],
+      target: { kind: "movie", title: "蝙蝠侠：黑暗骑士", aliases: [], year: 2008 },
+    });
+    expect(
+      assessRulesConfidence({
+        target: { kind: "movie", title: "蝙蝠侠：黑暗骑士", aliases: [], year: 2008 },
+        selection: sequels,
+        candidateCount: 1,
+      }).reasons,
+    ).toContain("sequel-or-year");
+
+    expect(
+      assessRulesConfidence({
+        target: { kind: "movie", title: "盗梦空间", aliases: [], year: 2010 },
+        selection: { selected: [], rejected: [], reason: "none" },
+        candidateCount: 0,
+      }).reasons,
+    ).toContain("no-candidates");
+  });
+
+  it("is low for a season-named pack with no episode span", () => {
+    const selection = selectResourceCandidates({
+      candidates: [cand("s2", "Show 第二季 1080p")],
+      target: {
+        kind: "tv",
+        title: "Show",
+        aliases: [],
+        seasons: [2],
+        missingEpisodes: ["S02E01", "S02E10"],
+      },
+    });
+    expect(selection.selected.length).toBeGreaterThan(0);
+    const report = assessRulesConfidence({
+      target: {
+        kind: "tv",
+        title: "Show",
+        aliases: [],
+        seasons: [2],
+        missingEpisodes: ["S02E01", "S02E10"],
+      },
+      selection,
+      candidateCount: 1,
+    });
+    expect(report.confidence).toBe("low");
+    expect(report.reasons).toContain("season-pack-without-span");
   });
 });

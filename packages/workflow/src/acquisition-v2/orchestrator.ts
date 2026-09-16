@@ -23,6 +23,7 @@ import {
   RULES_DECISION_NODE,
   selectionPathAuditEvent,
   type AcquisitionSelectionPath,
+  type ResolvedAcquisitionSelectionPath,
 } from "./selection-mode.js";
 import {
   needForMovie,
@@ -235,31 +236,56 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(prefetchedCandidateCount === undefined ? {} : { prefetchedCandidateCount }),
   };
 
-  const selectionPath: AcquisitionSelectionPath = request.acquisitionSelectionPath ?? "agent";
-  const result =
-    selectionPath === "rules"
-      ? await runRulesAcquisition({
-          sandbox,
-          target:
-            request.target.kind === "tv"
-              ? tvTargetToRules(stripKind(request.target), {
-                  ...(request.originCountries === undefined ? {} : { originCountries: request.originCountries }),
-                  ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
-                })
-              : movieTargetToRules(stripKind(request.target), {
-                  ...(request.originCountries === undefined ? {} : { originCountries: request.originCountries }),
-                  ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
-                }),
-          ...(request.qualityPolicy === undefined ? {} : { policy: request.qualityPolicy }),
-          ...(request.qualityUpgrade ? { qualityUpgrade: true } : {}),
-          ...customIdentifierWordsSpread(
-            request.customIdentifierWords ? [...request.customIdentifierWords] : undefined,
-          ),
-          ...(request.onProgress ? { onProgress: request.onProgress } : {}),
-        })
-      : request.target.kind === "tv"
-        ? await runTvAnimeTaskAgent({ ...common, target: stripKind(request.target) })
-        : await runMovieTaskAgent({ ...common, target: stripKind(request.target) });
+  const requestedPath: AcquisitionSelectionPath = request.acquisitionSelectionPath ?? "agent";
+  const rulesRequest = {
+    sandbox,
+    target:
+      request.target.kind === "tv"
+        ? tvTargetToRules(stripKind(request.target), {
+            ...(request.originCountries === undefined ? {} : { originCountries: request.originCountries }),
+            ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
+          })
+        : movieTargetToRules(stripKind(request.target), {
+            ...(request.originCountries === undefined ? {} : { originCountries: request.originCountries }),
+            ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
+          }),
+    ...(request.qualityPolicy === undefined ? {} : { policy: request.qualityPolicy }),
+    ...(request.qualityUpgrade ? { qualityUpgrade: true } : {}),
+    ...customIdentifierWordsSpread(
+      request.customIdentifierWords ? [...request.customIdentifierWords] : undefined,
+    ),
+    ...(request.onProgress ? { onProgress: request.onProgress } : {}),
+  };
+
+  const runAgent = () =>
+    request.target.kind === "tv"
+      ? runTvAnimeTaskAgent({ ...common, target: stripKind(request.target) })
+      : runMovieTaskAgent({ ...common, target: stripKind(request.target) });
+
+  let usedPath: ResolvedAcquisitionSelectionPath;
+  let fallbackReasons: string[] | undefined;
+  let result: AcquisitionAgentResult;
+
+  if (requestedPath === "agent") {
+    usedPath = "agent";
+    result = await runAgent();
+  } else if (requestedPath === "rules") {
+    usedPath = "rules";
+    result = await runRulesAcquisition(rulesRequest);
+  } else {
+    const rulesResult = await runRulesAcquisition({
+      ...rulesRequest,
+      escalateOnLowConfidence: true,
+    });
+    if (rulesResult.escalateToAgent && rulesResult.escalateToAgent.length > 0) {
+      usedPath = "agent";
+      fallbackReasons = rulesResult.escalateToAgent;
+      result = await runAgent();
+    } else {
+      usedPath = "rules";
+      result = rulesResult;
+    }
+  }
 
   // The agent transferred candidates by id; the storage adapter recorded the
   // domain attempts and the provider adapter the domain snapshots. Assemble the
@@ -272,7 +298,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     transferAttempts,
     resourceSnapshots,
     coverageMet: result.coverage.coverageMet,
-    node: selectionPath === "rules" ? RULES_DECISION_NODE : AGENT_DECISION_NODE,
+    node: usedPath === "rules" ? RULES_DECISION_NODE : AGENT_DECISION_NODE,
     // The finish terminal stop ends the loop AT the finish step, so a SUCCESSFUL
     // run has no closing free-text turn — fall back to the honest coverage summary
     // for that case. Other mechanical stops (systemic block / no-coverage) also
@@ -288,7 +314,13 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
   return {
     ...result,
     outcome: { resourceSnapshots, decisions, transferAttempts },
-    auditEvents: [...sandbox.auditTrail(), selectionPathAuditEvent(selectionPath)],
+    auditEvents: [
+      ...sandbox.auditTrail(),
+      selectionPathAuditEvent(
+        usedPath,
+        fallbackReasons ? { fallbackFrom: "rules", reasons: fallbackReasons } : {},
+      ),
+    ],
   };
 }
 

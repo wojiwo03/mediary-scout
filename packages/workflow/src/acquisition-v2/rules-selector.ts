@@ -512,6 +512,76 @@ function greedyCover(ranked: RankedRulesCandidate[], missing: readonly string[])
   return picked;
 }
 
+export interface RulesConfidenceReport {
+  confidence: "high" | "low";
+  reasons: string[];
+}
+
+/**
+ * Whether the deterministic selector's pick (or empty result) is safe to
+ * transfer without an LLM. Used by `auto` mode; forced `rules` ignores this.
+ *
+ * Low-confidence signals:
+ * - empty eligible set (no candidates, or every title filtered)
+ * - TV title matched but no episode/air-date coverage (`no-episode-coverage`)
+ * - sequel/year rejects (wrong-film risk)
+ * - season-named pack with no episode span / 全集 (guessing a whole season)
+ * - named seasons that do not intersect the tracked seasons
+ *
+ * High (stay on rules): explicit SxxExx / 第N集 / 全集, movie with a clear
+ * title or tmdbid hit — including a lone CD1 when it is the only disc.
+ */
+export function assessRulesConfidence(input: {
+  target: RulesSelectorTarget;
+  selection: RulesSelection;
+  candidateCount: number;
+  customWords?: readonly string[];
+}): RulesConfidenceReport {
+  const reasons: string[] = [];
+  const rejected = input.selection.rejected.map((row) => row.reason);
+  const count = (reason: string) => rejected.filter((value) => value === reason).length;
+
+  if (input.selection.selected.length === 0) {
+    if (count("no-episode-coverage") > 0) {
+      reasons.push("no-episode-coverage");
+    }
+    if (count("sequel-or-year") > 0) {
+      reasons.push("sequel-or-year");
+    }
+    if (input.candidateCount === 0) {
+      reasons.push("no-candidates");
+    } else if (reasons.length === 0) {
+      reasons.push("empty-selection");
+    }
+    return { confidence: "low", reasons };
+  }
+
+  const words = input.customWords;
+  const parseOpts = !words || words.length === 0 ? {} : { customWords: words };
+  for (const picked of input.selection.selected) {
+    if (input.target.kind !== "tv") {
+      continue;
+    }
+    const meta = parseReleaseMeta(picked.title, parseOpts);
+    const tracked = (input.target.seasons ?? [1]).filter((season) => season >= 1);
+    const named = meta.seasons.filter((season) => season > 0);
+    if (named.length > 0 && tracked.length > 0 && named.every((season) => !tracked.includes(season))) {
+      reasons.push("season-conflict");
+    }
+    const pack = /全集|\bcomplete\b|季完整/i.test(picked.title) || meta.episode?.complete === true;
+    if (named.length > 0 && !meta.episode && !meta.airDate && !pack) {
+      reasons.push("season-pack-without-span");
+    }
+    const missing = input.target.missingEpisodes ?? [];
+    if (missing.length > 0 && !meta.episode && !meta.airDate && !pack && named.length === 0) {
+      reasons.push("weak-episode-parse");
+    }
+  }
+
+  const unique = [...new Set(reasons)];
+  return unique.length > 0 ? { confidence: "low", reasons: unique } : { confidence: "high", reasons: [] };
+}
+
 export function selectResourceCandidates(input: {
   candidates: readonly RulesSelectorCandidate[];
   target: RulesSelectorTarget;
