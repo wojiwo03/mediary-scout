@@ -560,7 +560,11 @@ export async function savePatrolQualityUpgradeAction(enabled: boolean): Promise<
 
 export async function requestQualityUpgradeAction(input: {
   candidateId: string;
-  storageId?: string;
+  // Tree model: the active workspace drive — REQUIRED (value may be undefined =
+  // primary) so a non-primary acquisition can't silently mis-route. See note on
+  // requestSeasonAction. Do not use `storageId?: string`: exactOptionalPropertyTypes
+  // rejects passing explicit undefined from the client buttons.
+  storageId: string | undefined;
 }): Promise<RequestTrackingActionResult> {
   assertNotDemo();
   const preflight = await acquireLlmNotConfigured();
