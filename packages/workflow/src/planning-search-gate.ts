@@ -42,7 +42,7 @@ export function normalizeSearchKeyword(keyword: string): string {
  *  common separators that differ between a title and a search keyword, so
  *  "Citizen Vigilante 2026" contains "citizen vigilante" and "公民义警 电影"
  *  contains "公民义警". */
-function normalizeForTitleMatch(value: string): string {
+export function normalizeForTitleMatch(value: string): string {
   return value.toLowerCase().replace(/[\s·:：\-_.,，、。]/g, "");
 }
 

@@ -22,7 +22,7 @@
 
 ---
 
-You ask for a movie, show, or anime; an LLM agent scouts resources across your indexers, transfers the best match into your own 115 / Quark / 光鸭 drive, verifies what landed, and keeps tracking what's still missing.
+You ask for a movie, show, or anime; Mediary Scout searches your indexers, picks the best match (LLM agent when configured, otherwise a deterministic quality-ladder selector), transfers it into your own 115 / Quark / 光鸭 drive, verifies what landed, and keeps tracking what's still missing.
 
 ![Mediary Scout — search a title, hit 获取, and the agent searches, transfers, and verifies it into your drive](docs/images/demo.gif)
 
@@ -39,7 +39,7 @@ You ask for a movie, show, or anime; an LLM agent scouts resources across your i
 
 1. Download and install
 2. Open the app
-3. Go to **Settings** — connect a drive, add an LLM endpoint
+3. Go to **Settings** — connect a drive. Add an LLM endpoint for agent picking, or leave it empty to use rules-based selection.
 4. Search a title, hit 获取 — that's it
 
 No Docker, no Postgres, no terminal. The app bundles its own SQLite data layer and runs the full engine inside an Electron shell.

@@ -40,6 +40,8 @@ import {
 } from "./runner-v2.js";
 import { syncSeasonAgainstMetadata } from "./season-sync.js";
 import { isTianyiAuthError } from "./tianyi-client.js";
+import type { AcquisitionSelectionPath } from "./acquisition-v2/selection-mode.js";
+import { customIdentifierWordsSpread, prepareTitle } from "./acquisition-v2/release-meta.js";
 
 /** Brand netdisk auth failures only — never LLM Unauthorized / plain Errors. */
 function isBrandStorageAuthError(error: unknown): boolean {
@@ -115,6 +117,8 @@ async function resolveWorkerDeps(
   storageParentDirectoryId: string | undefined;
   animeStorageParentDirectoryId: string | undefined;
   moviesParentDirectoryId: string | undefined;
+  acquisitionSelectionPath: AcquisitionSelectionPath;
+  customIdentifierWords: string[] | undefined;
 }> {
   const ctx = resolve ? await resolve(accountId, connectedStorageId) : {};
   return {
@@ -134,6 +138,8 @@ async function resolveWorkerDeps(
       ctx.animeStorageParentDirectoryId ?? base.animeStorageParentDirectoryId,
     moviesParentDirectoryId:
       ctx.moviesParentDirectoryId ?? base.moviesParentDirectoryId,
+    acquisitionSelectionPath: ctx.acquisitionSelectionPath ?? base.acquisitionSelectionPath ?? "agent",
+    customIdentifierWords: ctx.customIdentifierWords ?? base.customIdentifierWords,
   };
 }
 
@@ -171,6 +177,8 @@ export interface AccountWorkerContext {
   storageParentDirectoryId?: string;
   animeStorageParentDirectoryId?: string;
   moviesParentDirectoryId?: string;
+  acquisitionSelectionPath?: AcquisitionSelectionPath;
+  customIdentifierWords?: string[];
 }
 
 export type ResolveAccountWorkerContext = (
@@ -318,6 +326,8 @@ export async function runQueuedType2Workflow(input: {
   preferHdrOverResolution?: boolean;
   considerSourceClass?: boolean;
   patrolQualityUpgrade?: boolean;
+  acquisitionSelectionPath?: AcquisitionSelectionPath;
+  customIdentifierWords?: string[];
   now?: () => string;
   storageParentDirectoryId?: string;
   /** Separate landing parent for anime (see runQueuedSeriesInitialization). */
@@ -378,6 +388,8 @@ export async function runQueuedType2Workflow(input: {
       ...(deps.assrtToken === undefined
         ? {}
         : { assrtToken: deps.assrtToken }),
+      acquisitionSelectionPath: deps.acquisitionSelectionPath,
+      ...customIdentifierWordsSpread(deps.customIdentifierWords),
       // finishedAt is stamped post-run inside the persist step (see runner-v2),
       // so it reflects actual completion, not the claim time.
       workflowRun: {
@@ -447,6 +459,8 @@ export async function runScheduledType3Monitoring(input: {
   preferHdrOverResolution?: boolean;
   considerSourceClass?: boolean;
   patrolQualityUpgrade?: boolean;
+  acquisitionSelectionPath?: AcquisitionSelectionPath;
+  customIdentifierWords?: string[];
   storageParentDirectoryId: string;
   /** Separate landing parent for anime, so anime patrol verify-or-creates under
    *  its own tree (see runQueuedSeriesInitialization). */
@@ -528,6 +542,7 @@ export async function runScheduledType3Monitoring(input: {
         qualityPreference: deps.qualityPreference,
         preferHdrOverResolution: deps.preferHdrOverResolution,
         considerSourceClass: deps.considerSourceClass,
+        ...customIdentifierWordsSpread(deps.customIdentifierWords),
       })
     ) {
       outcomes.push({ trackedSeasonId: season.id, status: "skipped_at_quality_top" });
@@ -612,6 +627,8 @@ export async function runScheduledType3Monitoring(input: {
         ...(deps.assrtToken === undefined
           ? {}
           : { assrtToken: deps.assrtToken }),
+        acquisitionSelectionPath: deps.acquisitionSelectionPath,
+        ...customIdentifierWordsSpread(deps.customIdentifierWords),
         workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
         now,
       });
@@ -693,6 +710,8 @@ async function patrolMovie(args: {
     storageProvider: string | undefined;
     assrtToken: string | undefined;
     moviesParentDirectoryId: string | undefined;
+    acquisitionSelectionPath: AcquisitionSelectionPath;
+    customIdentifierWords: string[] | undefined;
   };
   state: {
     accountId: string;
@@ -729,6 +748,7 @@ async function patrolMovie(args: {
       qualityPreference: deps.qualityPreference,
       preferHdrOverResolution: deps.preferHdrOverResolution,
       considerSourceClass: deps.considerSourceClass,
+      ...customIdentifierWordsSpread(deps.customIdentifierWords),
     }))
   ) {
     return { trackedSeasonId: state.season.id, status: "skipped_at_quality_top" };
@@ -802,6 +822,8 @@ async function patrolMovie(args: {
       ...(deps.assrtToken === undefined
         ? {}
         : { assrtToken: deps.assrtToken }),
+      acquisitionSelectionPath: deps.acquisitionSelectionPath,
+      ...customIdentifierWordsSpread(deps.customIdentifierWords),
       workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
       now,
     });
@@ -900,6 +922,7 @@ async function skipUpgradeOnlyAtQualityTop(input: {
   qualityPreference: "high" | "medium" | undefined;
   preferHdrOverResolution: boolean;
   considerSourceClass: boolean;
+  customIdentifierWords?: readonly string[];
 }): Promise<boolean> {
   const hasAiredGap = input.episodes.some(
     (episode) => episode.airStatus === "aired" && !episode.obtained,
@@ -907,7 +930,12 @@ async function skipUpgradeOnlyAtQualityTop(input: {
   if (hasAiredGap || !input.patrolQualityUpgrade) {
     return false;
   }
-  const names = await listLandedQualityNames(input.storage, input.directoryId);
+  const rawNames = await listLandedQualityNames(input.storage, input.directoryId);
+  const words = input.customIdentifierWords;
+  const names =
+    !words || words.length === 0
+      ? rawNames
+      : rawNames.map((name) => prepareTitle(name, words).title);
   const policy = patrolQualityPolicy(input);
   const summary = summarizeLandedQuality(names, policy);
   return !shouldScheduleQualityUpgrade(summary.current, policy);
@@ -954,6 +982,8 @@ export async function runQueuedMovieAcquisition(input: {
   preferHdrOverResolution?: boolean;
   considerSourceClass?: boolean;
   patrolQualityUpgrade?: boolean;
+  acquisitionSelectionPath?: AcquisitionSelectionPath;
+  customIdentifierWords?: string[];
   moviesParentDirectoryId: string;
   now?: () => string;
   /** §7: resolve the claimed run's per-account 115 creds + landing CIDs. */
@@ -1002,6 +1032,8 @@ export async function runQueuedMovieAcquisition(input: {
       ...(deps.assrtToken === undefined
         ? {}
         : { assrtToken: deps.assrtToken }),
+      acquisitionSelectionPath: deps.acquisitionSelectionPath,
+      ...customIdentifierWordsSpread(deps.customIdentifierWords),
       workflowRun: {
         id: claimed.workflowRun.id,
         startedAt: claimed.workflowRun.startedAt,
@@ -1039,6 +1071,8 @@ export async function runQueuedSeriesInitialization(input: {
   qualityPreference?: "high" | "medium";
   preferHdrOverResolution?: boolean;
   considerSourceClass?: boolean;
+  acquisitionSelectionPath?: AcquisitionSelectionPath;
+  customIdentifierWords?: string[];
   storageParentDirectoryId: string;
   /** Separate landing parent for anime, so the 动漫 shelf is physically its own
    *  tree on 115 and never mixed into the TV shows directory. */
@@ -1106,6 +1140,8 @@ export async function runQueuedSeriesInitialization(input: {
       ...(deps.assrtToken === undefined
         ? {}
         : { assrtToken: deps.assrtToken }),
+      acquisitionSelectionPath: deps.acquisitionSelectionPath,
+      ...customIdentifierWordsSpread(deps.customIdentifierWords),
       workflowRun: {
         id: claimed.workflowRun.id,
         startedAt: claimed.workflowRun.startedAt,

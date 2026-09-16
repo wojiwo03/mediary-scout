@@ -252,6 +252,8 @@ export interface TvAnimeTarget {
   /** Missing episode codes, which MAY span the seasons above (e.g. ["S01E07","S02E13"]). */
   missingEpisodes: string[];
   qualityPreference: string;
+  /** Library TMDB id when the workflow already resolved the title. */
+  tmdbId?: number;
 }
 
 export interface MovieTarget {
@@ -259,6 +261,8 @@ export interface MovieTarget {
   aliases: string[];
   year: number;
   qualityPreference: string;
+  /** Library TMDB id when the workflow already resolved the title. */
+  tmdbId?: number;
 }
 
 export interface RunTvAnimeRequest extends TaskAgentPromptOptions {

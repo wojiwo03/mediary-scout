@@ -4,7 +4,7 @@
  * Default comparison order (highest impact first):
  *   1. Resolution band (unless the user opts into `preferHdrOverResolution`)
  *   2. HDR format
- *   3. Encode / source class (Remux > BluRay > WEB-DL > …) when enabled
+ *   3. Encode / source class (Remux > BluRay / WEB-DL / …) when enabled
  *   4. Audio tags as a soft tiebreaker (missing labels are not punished)
  *
  * HDR ladder (highest first):
@@ -16,6 +16,9 @@
  * Documented combination rule (default):
  *   prefer 4K DV over 4K SDR;
  *   do NOT prefer 1080p DV over 4K SDR unless `preferHdrOverResolution`.
+ *
+ * Title/filename recognition is MoviePilot MetaInfo-aligned (`release-meta.ts`
+ * composes these parsers and adds webSource / codec / season-episode / group).
  */
 
 export type ResolutionBand = "4k" | "1080p" | "720p" | "sd" | "unknown";
@@ -117,21 +120,25 @@ const DISC_PENALTY = 10_000;
 
 const DV_RE =
   /杜比视界|dolby[\s._-]*vision|\bdovi\b|\bdv\b|\bdo[\s._-]*vi\b/i;
-const HDR10_PLUS_RE = /hdr[\s._-]*10[\s._-]*(?:\+|plus)|hdr10plus/i;
+const HDR10_PLUS_RE =
+  /hdr[\s._-]*10[\s._-]*(?:\+|plus)|hdr10plus|\bhdr10p\b/i;
+const HDR_VIVID_RE = /hdr[\s._-]*vivid|\bhdrvivid\b/i;
+const HDR_FAMILY_RE = /\bhlg\b|\bedr\b/i;
 const HDR10_RE = /\bhdr[\s._-]*10\b|\bhdr\b/i;
 const DISC_RE = /\.iso\b|\bbdmv\b|蓝光原盘|原盘|\biso\b/i;
-const RES_4K_RE = /2160p|\b4k\b|\buhd\b|3840\s*[x×]\s*2160|超高清/i;
-const RES_1080_RE = /1080\s*[pi]|\bfhd\b|全高清|1920\s*[x×]\s*1080|\b2k\b/i;
-const RES_720_RE = /720\s*[pi]/i;
-const RES_SD_RE = /480\s*[pi]|576\s*[pi]|540p|\bsd\b/i;
+const RES_4K_RE = /2160p|\b2160\b|\b4k\b|\buhd\b|3840\s*[x×]\s*2160|超高清|[\[(](?:2160|4k|uhd)[\])]/i;
+const RES_1080_RE = /1080\s*[pi]|\b1080\b|\bfhd\b|全高清|1920\s*[x×]\s*1080|\b2k\b|[\[(]1080[\])]/i;
+const RES_720_RE = /720\s*[pi]|[\[(]720[\])]/i;
+const RES_SD_RE = /480\s*[pi]|576\s*[pi]|540p|\bsd\b|[\[(](?:480|576)[\])]/i;
 /** Bare 超清 after 4K/超高清 have already been ruled out — 网盘常把它当 1080p. */
 const RES_ULTRA_CLEAR_RE = /超清/i;
 
 const REMUX_RE = /\bremux\b|无压/i;
-const BLURAY_RE = /\bblu[\s._-]*ray\b|\bbd[\s._-]*rip\b|\bbluray\b|\bbdrip\b|\bbd\b|蓝光/i;
+const BLURAY_RE =
+  /\bblu[\s._-]*ray\b|\bbd[\s._-]*rip\b|\bbluray\b|\bbdrip\b|\bhd[\s._-]*rip\b|\bhddvd\b|\bbd\b|蓝光/i;
 const WEBDL_RE = /\bweb[\s._-]*dl\b|\bwebdl\b|官源/i;
 const WEBRIP_RE = /\bweb[\s._-]*rip\b|\bwebrip\b/i;
-const HDTV_RE = /\bhdtv\b|电视录制/i;
+const HDTV_RE = /\bhdtv\b|\buhdtv\b|\bsdtv\b|\bdvd[\s._-]*rip\b|电视录制/i;
 const CAM_RE =
   /\bcamrip\b|\bhd[\s._-]*cams?\b|\bcam\b|\bhdts\b|枪版|抢版|抢先版|尝鲜版/i;
 
@@ -155,7 +162,7 @@ export function parseHdrFormat(title: string): HdrFormat {
   if (HDR10_PLUS_RE.test(text)) {
     return "hdr10plus";
   }
-  if (HDR10_RE.test(text)) {
+  if (HDR_VIVID_RE.test(text) || HDR_FAMILY_RE.test(text) || HDR10_RE.test(text)) {
     return "hdr10";
   }
   return "sdr";

@@ -7,6 +7,8 @@ import {
   getPanSouBaseUrl,
   getProwlarrConfig,
   getQualityPreference,
+  getAcquisitionSelectionMode,
+  getCustomIdentifierWords,
   getPreferHdrOverResolution,
   getConsiderSourceClass,
   getUpgradeOnReacquire,
@@ -18,6 +20,7 @@ import {
   getTmdbAccesses,
   LLM_BASE_URL_SETTING_KEY,
   LLM_MODEL_ID_SETTING_KEY,
+  ACQUISITION_SELECTION_MODE_SETTING_KEY,
   PROWLARR_API_KEY_SETTING_KEY,
   PROWLARR_BASE_URL_SETTING_KEY,
   TMDB_API_KEY_SETTING_KEY,
@@ -83,15 +86,31 @@ describe("acquireLlmPreflightError (点击获取时的 LLM 预检)", () => {
   });
   const unconfigured = repoMap({});
 
-  it("live (vercel-ai) + unconfigured → the friendly 未配置 message (blocks enqueue)", async () => {
+  it("auto (default) + live + unconfigured → null (rules fallback, does not block enqueue)", async () => {
     const message = await acquireLlmPreflightError({
       settings: unconfigured,
+      env: { MEDIA_TRACK_AGENT_ADAPTER: "vercel-ai" } as unknown as NodeJS.ProcessEnv,
+    });
+    expect(message).toBeNull();
+  });
+
+  it("mode=agent + live + unconfigured → the friendly 未配置 message (blocks enqueue)", async () => {
+    const message = await acquireLlmPreflightError({
+      settings: repoMap({ [ACQUISITION_SELECTION_MODE_SETTING_KEY]: "agent" }),
       env: { MEDIA_TRACK_AGENT_ADAPTER: "vercel-ai" } as unknown as NodeJS.ProcessEnv,
     });
     expect(message).toContain("未配置 AI 模型");
   });
 
-  it("live (vercel-ai) + fully configured → null (common case, unchanged behavior)", async () => {
+  it("mode=rules + live + unconfigured → null (never needs LLM)", async () => {
+    const message = await acquireLlmPreflightError({
+      settings: repoMap({ [ACQUISITION_SELECTION_MODE_SETTING_KEY]: "rules" }),
+      env: { MEDIA_TRACK_AGENT_ADAPTER: "vercel-ai" } as unknown as NodeJS.ProcessEnv,
+    });
+    expect(message).toBeNull();
+  });
+
+  it("auto + live + fully configured → null (agent path)", async () => {
     const message = await acquireLlmPreflightError({
       settings: configured,
       env: { MEDIA_TRACK_AGENT_ADAPTER: "vercel-ai" } as unknown as NodeJS.ProcessEnv,
@@ -145,6 +164,34 @@ describe("getQualityPreference", () => {
   it("garbage (incl. legacy '4K') → undefined (safe)", async () => {
     expect(await getQualityPreference(repoWith("4K"))).toBeUndefined();
     expect(await getQualityPreference(repoWith("ultra"))).toBeUndefined();
+  });
+});
+
+describe("getAcquisitionSelectionMode", () => {
+  it("unset / garbage → auto", async () => {
+    expect(await getAcquisitionSelectionMode(repoWith(null))).toBe("auto");
+    expect(await getAcquisitionSelectionMode(repoWith("nope"))).toBe("auto");
+  });
+
+  it("accepts agent / rules / non_agent alias", async () => {
+    expect(await getAcquisitionSelectionMode(repoWith("agent"))).toBe("agent");
+    expect(await getAcquisitionSelectionMode(repoWith(" rules "))).toBe("rules");
+    expect(await getAcquisitionSelectionMode(repoWith("non_agent"))).toBe("rules");
+  });
+});
+
+describe("getCustomIdentifierWords", () => {
+  it("unset / blank → empty list", async () => {
+    expect(await getCustomIdentifierWords(repoWith(null))).toEqual([]);
+    expect(await getCustomIdentifierWords(repoWith("   \n# only comments\n"))).toEqual([]);
+  });
+
+  it("keeps replacement lines including empty to= and drops comments", async () => {
+    expect(
+      await getCustomIdentifierWords(
+        repoWith("# 注释\n网盘乱码 => 沙丘2\n测试替换 => \n招募翻译校对\n"),
+      ),
+    ).toEqual(["网盘乱码 => 沙丘2", "测试替换 => ", "招募翻译校对"]);
   });
 });
 

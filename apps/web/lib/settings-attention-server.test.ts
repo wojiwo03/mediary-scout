@@ -6,6 +6,7 @@ vi.mock("./workflow-runtime", () => ({
   getAccountScopedSettings: vi.fn(() => ({ getSetting: async () => null })),
   getCurrentAccountId: vi.fn(async () => "acct_default"),
   getLlmConfig: vi.fn(async () => ({ baseURL: "https://llm.example", modelId: "m" })),
+  getAcquisitionSelectionMode: vi.fn(async () => "auto"),
   getWorkflowRepository: vi.fn(),
   isMultiUserEnabled: vi.fn(() => false),
   PANSOU_BASE_URL_SETTING_KEY: "pansou_base_url",

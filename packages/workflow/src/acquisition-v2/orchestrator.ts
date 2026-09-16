@@ -11,6 +11,20 @@ import { budgetSoftThreshold } from "./agent-loop-guards.js";
 import { TaskSandbox } from "./sandbox.js";
 import { AssrtSubtitleProvider, type AssrtProviderPort } from "../subtitle-provider.js";
 import type { SearchProfile } from "./search-profile.js";
+import type { QualityLadderPolicy } from "./quality-ladder.js";
+import {
+  movieTargetToRules,
+  runRulesAcquisition,
+  tvTargetToRules,
+} from "./rules-task.js";
+import { customIdentifierWordsSpread } from "./release-meta.js";
+import {
+  AGENT_DECISION_NODE,
+  RULES_DECISION_NODE,
+  selectionPathAuditEvent,
+  type AcquisitionSelectionPath,
+  type ResolvedAcquisitionSelectionPath,
+} from "./selection-mode.js";
 import {
   needForMovie,
   needForTvTarget,
@@ -38,6 +52,16 @@ export interface RunAcquisitionV2Request {
   model: LanguageModel;
   workflowRunId: string;
   target: AcquisitionV2Target;
+  /**
+   * Which selector drives query → rank → transfer. Default `agent` (existing
+   * sandbox LLM loop). `rules` uses the deterministic quality-ladder selector
+   * and never calls the model.
+   */
+  acquisitionSelectionPath?: AcquisitionSelectionPath;
+  /** Post-recall quality ladder (rules selector). Agent path still uses qualityGuidance text. */
+  qualityPolicy?: QualityLadderPolicy;
+  /** MoviePilot-style identifier words from Settings; applied after built-ins. */
+  customIdentifierWords?: readonly string[];
   /** The scoped staging dir (under the show dir / storage parent — NEVER inside the Season dir). */
   stagingDirectoryId: string;
   /** TV: season number -> scoped Season directory. A multi-season pack's files are
@@ -212,10 +236,56 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(prefetchedCandidateCount === undefined ? {} : { prefetchedCandidateCount }),
   };
 
-  const result =
+  const requestedPath: AcquisitionSelectionPath = request.acquisitionSelectionPath ?? "agent";
+  const rulesRequest = {
+    sandbox,
+    target:
+      request.target.kind === "tv"
+        ? tvTargetToRules(stripKind(request.target), {
+            ...(request.originCountries === undefined ? {} : { originCountries: request.originCountries }),
+            ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
+          })
+        : movieTargetToRules(stripKind(request.target), {
+            ...(request.originCountries === undefined ? {} : { originCountries: request.originCountries }),
+            ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
+          }),
+    ...(request.qualityPolicy === undefined ? {} : { policy: request.qualityPolicy }),
+    ...(request.qualityUpgrade ? { qualityUpgrade: true } : {}),
+    ...customIdentifierWordsSpread(
+      request.customIdentifierWords ? [...request.customIdentifierWords] : undefined,
+    ),
+    ...(request.onProgress ? { onProgress: request.onProgress } : {}),
+  };
+
+  const runAgent = () =>
     request.target.kind === "tv"
-      ? await runTvAnimeTaskAgent({ ...common, target: stripKind(request.target) })
-      : await runMovieTaskAgent({ ...common, target: stripKind(request.target) });
+      ? runTvAnimeTaskAgent({ ...common, target: stripKind(request.target) })
+      : runMovieTaskAgent({ ...common, target: stripKind(request.target) });
+
+  let usedPath: ResolvedAcquisitionSelectionPath;
+  let fallbackReasons: string[] | undefined;
+  let result: AcquisitionAgentResult;
+
+  if (requestedPath === "agent") {
+    usedPath = "agent";
+    result = await runAgent();
+  } else if (requestedPath === "rules") {
+    usedPath = "rules";
+    result = await runRulesAcquisition(rulesRequest);
+  } else {
+    const rulesResult = await runRulesAcquisition({
+      ...rulesRequest,
+      escalateOnLowConfidence: true,
+    });
+    if (rulesResult.escalateToAgent && rulesResult.escalateToAgent.length > 0) {
+      usedPath = "agent";
+      fallbackReasons = rulesResult.escalateToAgent;
+      result = await runAgent();
+    } else {
+      usedPath = "rules";
+      result = rulesResult;
+    }
+  }
 
   // The agent transferred candidates by id; the storage adapter recorded the
   // domain attempts and the provider adapter the domain snapshots. Assemble the
@@ -228,6 +298,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     transferAttempts,
     resourceSnapshots,
     coverageMet: result.coverage.coverageMet,
+    node: usedPath === "rules" ? RULES_DECISION_NODE : AGENT_DECISION_NODE,
     // The finish terminal stop ends the loop AT the finish step, so a SUCCESSFUL
     // run has no closing free-text turn — fall back to the honest coverage summary
     // for that case. Other mechanical stops (systemic block / no-coverage) also
@@ -240,7 +311,17 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
         ? `已完成:obtained=${result.coverage.obtained.join(",") || "-"}(finish 终结即停)`
         : result.text),
   });
-  return { ...result, outcome: { resourceSnapshots, decisions, transferAttempts }, auditEvents: sandbox.auditTrail() };
+  return {
+    ...result,
+    outcome: { resourceSnapshots, decisions, transferAttempts },
+    auditEvents: [
+      ...sandbox.auditTrail(),
+      selectionPathAuditEvent(
+        usedPath,
+        fallbackReasons ? { fallbackFrom: "rules", reasons: fallbackReasons } : {},
+      ),
+    ],
+  };
 }
 
 /**
@@ -257,6 +338,7 @@ export function buildAgentDecisions(input: {
   resourceSnapshots: ResourceSnapshot[];
   coverageMet: boolean;
   reason: string;
+  node?: string;
 }): AgentDecision[] {
   const snapshotByCandidate = new Map<string, string>();
   for (const snapshot of input.resourceSnapshots) {
@@ -272,8 +354,9 @@ export function buildAgentDecisions(input: {
     selected.push(candidateId);
     selectedBySnapshot.set(snapshotId, selected);
   }
+  const node = input.node ?? AGENT_DECISION_NODE;
   return [...selectedBySnapshot.entries()].map(([snapshotId, selectedCandidateIds]) => ({
-    node: "acquisition_v2_sandbox_agent",
+    node,
     snapshotId,
     selectedCandidateIds,
     episodeMapping: {},

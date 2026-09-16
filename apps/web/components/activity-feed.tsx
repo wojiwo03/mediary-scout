@@ -129,6 +129,8 @@ function RunningRow({ run, storageId }: { run: ActivityActiveRun; storageId?: st
           {seasonLabel(run) ? <span className="act-sub">{seasonLabel(run)}</span> : null}
           {headline ? <span className="act-frac">{headline}</span> : null}
           {run.qualityUpgrade ? <span className="act-pill">升级画质</span> : null}
+          {run.selectionPath === "rules" ? <span className="act-pill">规则选片</span> : null}
+          {run.selectionPath === "agent" ? <span className="act-pill">智能选片</span> : null}
         </div>
         <div className="act-bar">
           <div className="act-bar-fill" style={{ width: `${percent}%` }} />

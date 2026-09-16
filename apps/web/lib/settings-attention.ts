@@ -58,6 +58,8 @@ export function buildSettingsAttentionItems(input: {
   }>;
   brandLabel: (provider: string) => string;
   llmConfigured: boolean;
+  /** Default auto. `rules` never needs LLM; `agent` still does. */
+  acquisitionSelectionMode?: "auto" | "agent" | "rules";
   /** 自建搜索源状态。`custom` = 用户在设置页填了自己的地址;`reachable` =
    *  最新健康态(两个来源:保存时探活 + 每次真实搜索后的运行时回写,见
    *  recordPanSouHealth)。**刻意不在这里探活** —— 这个函数在徽章轮询路径上,
@@ -91,13 +93,16 @@ export function buildSettingsAttentionItems(input: {
     });
   }
 
-  if (!input.llmConfigured) {
+  if (!input.llmConfigured && input.acquisitionSelectionMode !== "rules") {
+    const auto = input.acquisitionSelectionMode !== "agent";
     items.push({
       id: "missing_llm",
       kind: "missing_llm",
       severity: "warning",
-      title: "还没配置 AI 模型",
-      body: "填写 Base URL 和模型名后才能自动搜索与获取。",
+      title: auto ? "还没配置 AI 模型（将走规则选片）" : "还没配置 AI 模型",
+      body: auto
+        ? "当前是「自动」：没有 LLM 时按画质阶梯与标题匹配选片，获取仍可进行。配置模型后解析明确仍走规则，拿不准再改用智能 agent。"
+        : "当前强制智能 agent，填写 Base URL 和模型名后才能搜索与获取。",
       actionLabel: "去填写",
       href: href("services"),
     });

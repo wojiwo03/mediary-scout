@@ -82,6 +82,12 @@ import {
   type TrackedSeasonStatusView,
   type VerifiedFile,
   type WorkflowRepository,
+  parseAcquisitionSelectionMode,
+  resolveAcquisitionSelectionPath,
+  type AcquisitionSelectionMode,
+  type AcquisitionSelectionPath,
+  parseIdentifierWordLines,
+  customIdentifierWordsSpread,
 } from "@media-track/workflow";
 import {
   buildPanSouProviderChain,
@@ -899,7 +905,7 @@ function buildAccountContextResolver(): ResolveAccountWorkerContext {
     // specific drive it was queued onto.
     const scoped = getAccountScopedSettings(accountId);
     const parents = await getWorkerStorageParents(accountId, connectedStorageId);
-    const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade } =
+    const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade, acquisitionSelectionPath, customIdentifierWords } =
       await getAgentModel(scoped);
     // The run's drive brand selects its resource sources (quark→PanSou quark-only;
     // 115→PanSou+Prowlarr). null when no drive resolves → default 115 fallback.
@@ -917,6 +923,8 @@ function buildAccountContextResolver(): ResolveAccountWorkerContext {
       ...(preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
       ...(considerSourceClass === false ? { considerSourceClass: false } : {}),
       ...(patrolQualityUpgrade ? { patrolQualityUpgrade: true } : {}),
+      acquisitionSelectionPath,
+      ...customIdentifierWordsSpread(customIdentifierWords),
       storageParentDirectoryId: parents.tv,
       animeStorageParentDirectoryId: parents.anime,
       moviesParentDirectoryId: parents.movies,
@@ -968,13 +976,15 @@ export async function runNextQueuedWorkflow() {
   // The user's language preference is standing context baked into the agent
   // instance (one global preference), so every workflow — movie, series, type2,
   // anime — searches with it. No per-workflow plumbing.
-  const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade } =
+  const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade, acquisitionSelectionPath, customIdentifierWords } =
     await getAgentModel(getAccountScopedSettings(accountId));
   const language = preferredLanguage === undefined ? {} : { preferredLanguage };
   const quality = qualityPreference === undefined ? {} : { qualityPreference };
   const hdr = preferHdrOverResolution ? { preferHdrOverResolution: true as const } : {};
   const source = considerSourceClass === false ? { considerSourceClass: false as const } : {};
   const patrolUpgrade = patrolQualityUpgrade ? { patrolQualityUpgrade: true as const } : {};
+  const selection = { acquisitionSelectionPath };
+  const words = customIdentifierWordsSpread(customIdentifierWords);
   const storage = await getWorkerStorageExecutor(accountId);
   const parents = await getWorkerStorageParents(accountId);
   const resolveAccountContext = buildAccountContextResolver();
@@ -990,6 +1000,8 @@ export async function runNextQueuedWorkflow() {
     ...hdr,
     ...source,
     ...patrolUpgrade,
+    ...selection,
+    ...words,
     storageParentDirectoryId: parents.tv,
     animeStorageParentDirectoryId: parents.anime,
     resolveAccountContext,
@@ -1008,6 +1020,8 @@ export async function runNextQueuedWorkflow() {
     ...quality,
     ...hdr,
     ...source,
+    ...selection,
+    ...words,
     storageParentDirectoryId: parents.tv,
     animeStorageParentDirectoryId: parents.anime,
     resolveAccountContext,
@@ -1027,6 +1041,8 @@ export async function runNextQueuedWorkflow() {
     ...hdr,
     ...source,
     ...patrolUpgrade,
+    ...selection,
+    ...words,
     moviesParentDirectoryId: parents.movies,
     resolveAccountContext,
     onAuthErrorFreeze,
@@ -1059,6 +1075,8 @@ export const PREFER_HDR_OVER_RESOLUTION_SETTING_KEY = "prefer_hdr_over_resolutio
 export const CONSIDER_SOURCE_CLASS_SETTING_KEY = "consider_source_class";
 export const UPGRADE_ON_REACQUIRE_SETTING_KEY = "upgrade_on_reacquire";
 export const PATROL_QUALITY_UPGRADE_SETTING_KEY = "patrol_quality_upgrade";
+export const ACQUISITION_SELECTION_MODE_SETTING_KEY = "acquisition_selection_mode";
+export const CUSTOM_IDENTIFIER_WORDS_SETTING_KEY = "custom_identifier_words";
 
 /** The user's acquisition quality preference, or undefined when 不限/unset
  *  (the default). undefined → inject NO quality guidance (coverage-only, current
@@ -1106,6 +1124,23 @@ export async function getPatrolQualityUpgrade(
   repository: { getSetting(key: string): Promise<string | null> },
 ): Promise<boolean> {
   return parseBoolSetting(await repository.getSetting(PATROL_QUALITY_UPGRADE_SETTING_KEY));
+}
+
+/** How to pick PanSou/Prowlarr candidates: agent / rules / auto (default). */
+export async function getAcquisitionSelectionMode(
+  repository: { getSetting(key: string): Promise<string | null> },
+): Promise<AcquisitionSelectionMode> {
+  return parseAcquisitionSelectionMode(await repository.getSetting(ACQUISITION_SELECTION_MODE_SETTING_KEY));
+}
+
+/**
+ * MoviePilot-style custom identifier words (one per line). Comments (`#`) and
+ * blank lines are stripped; the raw textarea (including comments) stays in DB.
+ */
+export async function getCustomIdentifierWords(
+  repository: { getSetting(key: string): Promise<string | null> },
+): Promise<string[]> {
+  return parseIdentifierWordLines(await repository.getSetting(CUSTOM_IDENTIFIER_WORDS_SETTING_KEY));
 }
 
 // AI 模型 (LLM) 三件套 — OpenAI-compatible. Stored in the user's OWN app_settings
@@ -1633,7 +1668,7 @@ export async function runScheduledType3(options?: {
     await hydratePan115CookieFromDb();
     const sync = tmdbSeasonMetadataSync();
     const accountId = await getCurrentAccountId();
-    const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade } =
+    const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade, acquisitionSelectionPath, customIdentifierWords } =
       await getAgentModel(getAccountScopedSettings(accountId));
     const parents = await getWorkerStorageParents(accountId);
     result = await runScheduledType3Monitoring({
@@ -1646,6 +1681,8 @@ export async function runScheduledType3(options?: {
       ...(preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
       ...(considerSourceClass === false ? { considerSourceClass: false } : {}),
       ...(patrolQualityUpgrade ? { patrolQualityUpgrade: true } : {}),
+      acquisitionSelectionPath,
+      ...customIdentifierWordsSpread(customIdentifierWords),
       storageParentDirectoryId: parents.tv,
       animeStorageParentDirectoryId: parents.anime,
       moviesParentDirectoryId: parents.movies,
@@ -2425,12 +2462,18 @@ export async function acquireLlmPreflightError(
         env?: NodeJS.ProcessEnv;
       },
 ): Promise<string | null> {
-  const settings = typeof arg === "string" ? getAccountScopedSettings(arg) : arg.settings;
   const env = typeof arg === "string" ? process.env : arg.env ?? process.env;
+  const settings = typeof arg === "string" ? getAccountScopedSettings(arg) : arg.settings;
+  const mode = await getAcquisitionSelectionMode(settings);
+  const resolved = await resolveAgentModelConfig(settings, env);
+  const llmConfigured = llmConfigError(resolved) === null;
+  const path = resolveAcquisitionSelectionPath(mode, llmConfigured);
+  if (path === "rules") {
+    return null;
+  }
   if (env.MEDIA_TRACK_AGENT_ADAPTER !== "vercel-ai") {
     return null;
   }
-  const resolved = await resolveAgentModelConfig(settings, env);
   return llmConfigError(resolved);
 }
 
@@ -2444,6 +2487,8 @@ async function getAgentModel(repository: {
   considerSourceClass: boolean;
   upgradeOnReacquire: boolean;
   patrolQualityUpgrade: boolean;
+  acquisitionSelectionPath: AcquisitionSelectionPath;
+  customIdentifierWords: string[];
 }> {
   assertWorkflowAgentAdapterPolicy(process.env);
   const env = process.env;
@@ -2454,22 +2499,37 @@ async function getAgentModel(repository: {
   const considerSourceClass = await getConsiderSourceClass(repository);
   const upgradeOnReacquire = await getUpgradeOnReacquire(repository);
   const patrolQualityUpgrade = await getPatrolQualityUpgrade(repository);
+  const selectionMode = await getAcquisitionSelectionMode(repository);
+  const customIdentifierWords = await getCustomIdentifierWords(repository);
 
   // Resolve the live model config the SAME way the test action does (shared
   // resolver) — DB-first, then .env. No built-in default endpoint.
   const resolved = await resolveAgentModelConfig(repository, env);
   const { apiKey, baseURL, modelId } = resolved;
-  // Fail-fast pre-check (issue #49): on the live (vercel-ai) path, if baseURL or
-  // modelId is missing the run would die on its first model call (or hit the
-  // author endpoint keyless → 401). Throw the actionable, agnostic guidance NOW
-  // — before building/using the model — so the user gets guidance at 获取 time
-  // instead of a raw failure after a long agent run. apiKey may be empty (keyless
-  // local LLM is valid); the fake/stub adapter never needs a model config.
-  if (adapter === "vercel-ai") {
+  const llmConfigured = llmConfigError(resolved) === null;
+  const acquisitionSelectionPath = resolveAcquisitionSelectionPath(selectionMode, llmConfigured);
+
+  // Fail-fast pre-check (issue #49): live vercel-ai *agent* and *auto* (may
+  // fall back to agent) need baseURL + modelId. Forced rules / auto-without-LLM
+  // never call the model — skip the throw so acquire still works without a key.
+  if (adapter === "vercel-ai" && acquisitionSelectionPath !== "rules") {
     const configError = llmConfigError(resolved);
     if (configError) {
       throw new Error(configError);
     }
+  }
+  if (acquisitionSelectionPath === "rules") {
+    return {
+      model: createStubAcquisitionModel(),
+      preferredLanguage,
+      qualityPreference,
+      preferHdrOverResolution,
+      considerSourceClass,
+      upgradeOnReacquire,
+      patrolQualityUpgrade,
+      acquisitionSelectionPath,
+      customIdentifierWords,
+    };
   }
   // Cache per resolved config signature (so a Settings edit takes effect without
   // a restart AND different accounts' models coexist).
@@ -2487,6 +2547,8 @@ async function getAgentModel(repository: {
     considerSourceClass,
     upgradeOnReacquire,
     patrolQualityUpgrade,
+    acquisitionSelectionPath,
+    customIdentifierWords,
   };
 }
 

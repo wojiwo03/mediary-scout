@@ -12,6 +12,9 @@ import type { AgentToolEvent } from "./activity.js";
 import { runAcquisitionV2, type AcquisitionV2Outcome } from "./orchestrator.js";
 import { syncSeasonNeed } from "./sync-need.js";
 import type { SearchProfile } from "./search-profile.js";
+import type { QualityLadderPolicy } from "./quality-ladder.js";
+import type { AcquisitionSelectionPath } from "./selection-mode.js";
+import { customIdentifierWordsSpread } from "./release-meta.js";
 
 /**
  * Phase 7c — the outer workflow orchestration (TV/anime). It is the same
@@ -37,6 +40,11 @@ export interface RunAcquisitionV2WorkflowRequest {
   categoryParentId: string;
   seasons: V2WorkflowSeason[];
   qualityPreference: string;
+  /** Resolved selector for this run (`agent` default). */
+  acquisitionSelectionPath?: AcquisitionSelectionPath;
+  qualityPolicy?: QualityLadderPolicy;
+  /** MoviePilot-style identifier words from Settings; applied after built-ins. */
+  customIdentifierWords?: readonly string[];
   /** 实有 = the DB obtained marks for this title (the agent's prior markObtained).
    *  Empty for a first acquisition; the type-3 patrol passes the DB's obtained
    *  episode codes so the need = aired − 实有 (NOT a 115 scan). */
@@ -143,6 +151,7 @@ export async function runAcquisitionV2Workflow(
       seasons: request.seasons.map((season) => season.seasonNumber),
       missingEpisodes: upgradeComplete ? before.obtained : before.missing,
       qualityPreference: request.qualityPreference,
+      tmdbId: request.title.tmdbId,
     },
     stagingDirectoryId: directories.stagingDirectoryId,
     targetSeasonDirectoryIds: directories.seasonDirectoryIds,
@@ -159,6 +168,13 @@ export async function runAcquisitionV2Workflow(
     ...(request.assrtToken === undefined ? {} : { assrtToken: request.assrtToken }),
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
+    ...(request.acquisitionSelectionPath === undefined
+      ? {}
+      : { acquisitionSelectionPath: request.acquisitionSelectionPath }),
+    ...(request.qualityPolicy === undefined ? {} : { qualityPolicy: request.qualityPolicy }),
+    ...customIdentifierWordsSpread(
+      request.customIdentifierWords ? [...request.customIdentifierWords] : undefined,
+    ),
   });
 
   // Reconcile from the AGENT'S coverage (its markObtained), NOT a 115 re-scan:

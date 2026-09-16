@@ -12,6 +12,8 @@ import { runAcquisitionV2Workflow } from "./workflow-v2.js";
 import { qualityLadderPolicyFromFlags } from "./quality-ladder.js";
 import { getAcquisitionQualityGuidance, getSearchRecipe, searchProfile } from "./search-profile.js";
 import type { AgentToolEvent } from "./activity.js";
+import type { AcquisitionSelectionPath } from "./selection-mode.js";
+import { customIdentifierWordsSpread } from "./release-meta.js";
 
 function defaultNowIso(): string {
   return new Date().toISOString();
@@ -58,6 +60,9 @@ export interface RunTvAcquisitionV2Request {
   deadLinkStore?: DeadLinkStore;
   onProgress?: (event: AgentToolEvent) => void;
   now?: () => string;
+  acquisitionSelectionPath?: AcquisitionSelectionPath;
+  /** MoviePilot-style identifier words from Settings; applied after built-ins. */
+  customIdentifierWords?: readonly string[];
 }
 
 export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Promise<BridgedV2Result> {
@@ -70,14 +75,15 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     type: request.title.type,
     originCountries: request.title.originCountries ?? [],
   });
+  const policy = qualityLadderPolicyFromFlags({
+    ...(request.qualityPreference === undefined ? {} : { resolutionPreference: request.qualityPreference }),
+    ...(request.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+    ...(request.considerSourceClass === false ? { considerSourceClass: false } : {}),
+  });
   const qualityGuidance = getAcquisitionQualityGuidance({
     profile,
     preference: request.qualityPreference,
-    policy: qualityLadderPolicyFromFlags({
-      ...(request.qualityPreference === undefined ? {} : { resolutionPreference: request.qualityPreference }),
-      ...(request.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
-      ...(request.considerSourceClass === false ? { considerSourceClass: false } : {}),
-    }),
+    policy,
     ...(request.qualityUpgrade ? { qualityUpgrade: true } : {}),
   });
   const v2 = await runAcquisitionV2Workflow({
@@ -110,6 +116,13 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     ...(request.assrtToken === undefined ? {} : { assrtToken: request.assrtToken }),
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
+    ...(request.acquisitionSelectionPath === undefined
+      ? {}
+      : { acquisitionSelectionPath: request.acquisitionSelectionPath }),
+    qualityPolicy: policy,
+    ...customIdentifierWordsSpread(
+      request.customIdentifierWords ? [...request.customIdentifierWords] : undefined,
+    ),
   });
 
   return bridgeV2WorkflowToResult({
