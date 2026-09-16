@@ -11,9 +11,19 @@ const QUALITIES = [
   { key: "medium", label: "中画质（≈1080p）" },
 ] as const;
 
-export function QualityPreferenceForm({ initial }: { initial: string }) {
+export function QualityPreferenceForm({
+  initial,
+  preferHdrOverResolution,
+  upgradeOnReacquire,
+}: {
+  initial: string;
+  preferHdrOverResolution: boolean;
+  upgradeOnReacquire: boolean;
+}) {
   const [isPending, startTransition] = useTransition();
   const [value, setValue] = useState(initial || "any");
+  const [hdrFirst, setHdrFirst] = useState(preferHdrOverResolution);
+  const [upgrade, setUpgrade] = useState(upgradeOnReacquire);
   const [result, setResult] = useState<string | null>(null);
 
   const handleSave = () => {
@@ -22,7 +32,12 @@ export function QualityPreferenceForm({ initial }: { initial: string }) {
       // 不 catch 就是未处理 rejection,界面上什么都不变(见 runAction 注释)。
       // 业务错误(success:false)仍走下方原逻辑;这里只拦异常。
       const r = await runAction(
-        () => saveQualityPreferenceAction(value),
+        () =>
+          saveQualityPreferenceAction({
+            quality: value,
+            preferHdrOverResolution: hdrFirst,
+            upgradeOnReacquire: upgrade,
+          }),
         (msg) => {
           setResult(`❌ ${msg}`);
           setTimeout(() => setResult(null), 3000);
@@ -38,7 +53,9 @@ export function QualityPreferenceForm({ initial }: { initial: string }) {
   return (
     <div className="push-form">
       <p className="panel-note" style={{ marginBottom: 12 }}>
-        偏好的画质档位会作为「召回后选片优先级」传给 AI；找不到目标画质时仍优先保证入库完整（覆盖优先）。画质不进搜索关键词。
+        偏好的画质档位会作为「召回后选片优先级」传给
+        AI；找不到目标画质时仍优先保证入库完整（覆盖优先）。画质 / DV / HDR
+        不进搜索关键词，只从预搜候选标题里挑。
       </p>
       <div className="setting-row">
         <select
@@ -58,6 +75,28 @@ export function QualityPreferenceForm({ initial }: { initial: string }) {
           保存
         </button>
       </div>
+      <label className="setting-check">
+        <input
+          type="checkbox"
+          checked={hdrFirst}
+          onChange={(event) => setHdrFirst(event.target.checked)}
+        />
+        <span>
+          HDR 优先于分辨率
+          <small>默认关闭：同分辨率再按 DV &gt; HDR10+ &gt; HDR10 &gt; SDR；打开后 1080p DV 可以压过 4K SDR。</small>
+        </span>
+      </label>
+      <label className="setting-check">
+        <input
+          type="checkbox"
+          checked={upgrade}
+          onChange={(event) => setUpgrade(event.target.checked)}
+        />
+        <span>
+          重新获取时允许画质升级
+          <small>默认关闭。打开后，对已入库标题再点获取会排队替换任务（仅当候选严格更高）。详情页也有显式「升级画质」。</small>
+        </span>
+      </label>
       {result ? (
         <p className="panel-note" style={{ marginTop: 10 }}>
           {result}

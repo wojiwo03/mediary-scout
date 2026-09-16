@@ -122,6 +122,25 @@ describe("TaskSandbox — searchResources (system-budgeted, dedup, snapshot-boun
     expect(searched).toBe("奥本海默");
   });
 
+  it("strips DV / DoVi / HDR10+ / 杜比视界 tokens from search keywords", async () => {
+    let searched = "";
+    const sandbox = new TaskSandbox({
+      provider: {
+        async search(keyword) {
+          searched = keyword;
+          return { id: `s_${keyword}`, keyword, candidates: [] };
+        },
+      },
+      searchBudget: 8,
+      titleTerms: ["沙丘2"],
+    });
+
+    const result = await sandbox.searchResources("沙丘2 DV DoVi HDR10+ 杜比视界");
+
+    expect(searched).toBe("沙丘2");
+    expect(result.notice).toMatch(/已移除|画质|raw/);
+  });
+
   it("leaves a bare title keyword untouched (no strip, no notice)", async () => {
     const provider = new FakeResourceProviderV2({
       results: { 铁拳教育: [{ id: "c1", title: "铁拳教育 全12集" }] },

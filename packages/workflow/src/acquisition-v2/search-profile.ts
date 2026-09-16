@@ -1,4 +1,8 @@
 import type { MediaType } from "../domain.js";
+import {
+  composeAcquisitionQualityGuidance,
+  type QualityLadderPolicy,
+} from "./quality-ladder.js";
 
 /**
  * The fine-grained search profile a title falls into — finer than `MediaType`
@@ -167,7 +171,7 @@ export function getQualityGuidance(
   }
   // high
   const head =
-    "画质偏好:高(≈4K)。召回后优先选 2160p / 4K / UHD / REMUX 的【可播放视频文件】(mkv/mp4,带 HDR/杜比视界更佳)。" +
+    "画质偏好:高(≈4K)。召回后优先选 2160p / 4K / UHD / REMUX 的【可播放视频文件】(mkv/mp4)。同分辨率再按 HDR 阶梯(DV > HDR10+ > HDR10 > SDR)。" +
     "⚠️ 避免蓝光原盘 / ISO / BDMV 整盘镜像:它动辄上百GB、多数设备无法直接播放,且不是单个视频文件——宁取 4K REMUX 视频,退一步取更低画质的视频版本,也不要整盘镜像。";
   const tail =
     "覆盖永远优先于画质:找不到 4K 就退取 1080P/蓝光视频,绝不为画质放弃任何一集/这部片。" + QUALITY_KEYWORD_LAW;
@@ -180,6 +184,24 @@ export function getQualityGuidance(
     "已召回候选里有 4K 就取、没有就直接取最佳 1080P。" +
     tail
   );
+}
+
+/**
+ * Resolution guidance + HDR ladder (+ optional upgrade mandate) injected as
+ * one QUALITY PREFERENCE block. Always includes the HDR ladder so 不限 still
+ * ranks DV/HDR among recalled candidates — never as search keywords.
+ */
+export function getAcquisitionQualityGuidance(input: {
+  profile: SearchProfile;
+  preference: "high" | "medium" | undefined;
+  policy?: QualityLadderPolicy;
+  qualityUpgrade?: boolean;
+}): string {
+  return composeAcquisitionQualityGuidance({
+    resolutionGuidance: getQualityGuidance(input.profile, input.preference),
+    ...(input.policy === undefined ? {} : { policy: input.policy }),
+    ...(input.qualityUpgrade ? { qualityUpgrade: true } : {}),
+  });
 }
 
 const ANIME_PROFILES: ReadonlySet<SearchProfile> = new Set([

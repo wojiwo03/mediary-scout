@@ -91,7 +91,7 @@ Multiple drives appear as a workspace switcher with per-brand icons:
 Most "media automation" either searches well but doesn't know what you're actually missing, or moves files but never verifies what landed. Mediary Scout treats acquisition as a **state problem**, driven by an agent that acts from evidence, not vibes:
 
 - **Multi-drive, brand-extensible** — five drives today (Quark, 115, 光鸭 GuangYaPan, 123, 天翼 Tianyi), each a first-class workspace (a tree model: one account, many drives). Adding a new drive brand is a contained plugin.
-- **Agent-driven selection** — the agent reads real search results and picks by quality preference, **Chinese-subtitle** needs, and de-duplication, then verifies the transfer after it happens.
+- **Agent-driven selection** — the agent reads real search results and picks by quality preference, **HDR ladder** (DV > HDR10+ > HDR10 > SDR), **Chinese-subtitle** needs, and de-duplication, then verifies the transfer after it happens. Quality/HDR tokens never go in search keywords. Scheduled patrol stays gap-fill unless you enable an upgrade sweep — see [quality upgrade and HDR](docs/quality-upgrade-and-hdr.md).
 - **Tracking & scheduled gap-fill** — season-level state machine; a scheduled sweep comes back only for shows that still have missing episodes.
 - **Cloud-native** — it **transfers** shares/magnets straight into your drive (秒传 / save), it does not download to a local disk.
 

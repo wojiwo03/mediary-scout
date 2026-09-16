@@ -181,7 +181,7 @@ describe("runTvAcquisitionV2 — single TV entry over the V2 engine", () => {
     expect(reachable.system).toContain("真 4K 通常存在");
     expect(reachable.system).not.toMatch(/极少|稀缺/);
 
-    // 不限 (no preference) → NO quality block at all.
+    // 不限 (no resolution preference) → still injects HDR ranking, not 高/中档位.
     const none = { system: "" };
     await runTvAcquisitionV2({
       title: usTvTitle,
@@ -194,7 +194,10 @@ describe("runTvAcquisitionV2 — single TV entry over the V2 engine", () => {
       workflowRunId: "run-tv-q3",
       now: () => "2026-06-15T00:00:00.000Z",
     });
-    expect(none.system).not.toContain("画质偏好");
+    expect(none.system).not.toContain("画质偏好:高");
+    expect(none.system).not.toContain("画质偏好:中");
+    expect(none.system).toContain("Dolby Vision");
+    expect(none.system).toContain("QUALITY PREFERENCE");
   });
 
   it("multi-season series → builds a season intent per season, distinct verify-or-created dirs", async () => {

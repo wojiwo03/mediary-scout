@@ -2477,6 +2477,30 @@ select.setting-control {
   background-position: right 16px center;
 }
 
+.setting-check {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 14px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.setting-check input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.setting-check small {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
 .qr-frame {
   display: flex;
   flex-direction: column;

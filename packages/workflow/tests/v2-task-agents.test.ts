@@ -182,6 +182,13 @@ describe("quality guidance injection", () => {
     expect(buildTvAnimeSystemPrompt({})).not.toContain("画质偏好");
     expect(buildMovieSystemPrompt({})).not.toContain("画质偏好");
   });
+
+  it("HDR ladder in qualityGuidance is injected into both prompts (post-recall, not as search words)", () => {
+    const g = "HDR 阶梯(召回后读候选标题判,绝不进搜索词): 1. Dolby Vision";
+    expect(buildTvAnimeSystemPrompt({ qualityGuidance: g })).toContain("Dolby Vision");
+    expect(buildMovieSystemPrompt({ qualityGuidance: g })).toContain("Dolby Vision");
+    expect(buildTvAnimeSystemPrompt({ qualityGuidance: g })).toContain("QUALITY PREFERENCE");
+  });
 });
 
 describe("both prompts forcefully mandate reading the skill manual", () => {

@@ -49,6 +49,11 @@ export interface RunAcquisitionV2WorkflowRequest {
   originCountries?: string[];
   searchHints?: string;
   qualityGuidance?: string;
+  /**
+   * Run the agent even when nothing is missing, and allow replacing landed
+   * files with a strictly better candidate. Default off (type-3 no-op).
+   */
+  qualityUpgrade?: boolean;
   /** The task's fine-grained search profile — enables the anime taboo-keyword
    *  validator (warnings only, never blocking). 病2b。 */
   searchProfile?: SearchProfile;
@@ -108,8 +113,11 @@ export async function runAcquisitionV2Workflow(
 
   // 7b — sync the need from the DB marks (应有 − 实有). No 115 scan, no parser.
   const before = syncSeasonNeed({ seasons: seasonsForSync, obtained: priorObtained });
-  if (before.missing.length === 0) {
+  const upgradeComplete =
+    request.qualityUpgrade === true && before.missing.length === 0 && before.obtained.length > 0;
+  if (before.missing.length === 0 && !upgradeComplete) {
     // Already current — no agent run, no side effects (the type-3 no-op path).
+    // Quality-upgrade of a fully-covered title skips this no-op (upgradeComplete).
     return {
       directories,
       missingBefore: [],
@@ -133,7 +141,7 @@ export async function runAcquisitionV2Workflow(
       title: request.title.name,
       aliases: request.title.aliases,
       seasons: request.seasons.map((season) => season.seasonNumber),
-      missingEpisodes: before.missing,
+      missingEpisodes: upgradeComplete ? before.obtained : before.missing,
       qualityPreference: request.qualityPreference,
     },
     stagingDirectoryId: directories.stagingDirectoryId,
@@ -145,6 +153,8 @@ export async function runAcquisitionV2Workflow(
     ...(request.searchHints === undefined ? {} : { searchHints: request.searchHints }),
     ...(request.qualityGuidance === undefined ? {} : { qualityGuidance: request.qualityGuidance }),
     ...(request.searchProfile === undefined ? {} : { searchProfile: request.searchProfile }),
+    ...(request.qualityUpgrade ? { qualityUpgrade: true } : {}),
+    ...(request.qualityUpgrade ? { priorObtainedMarks: priorObtained } : {}),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(request.assrtToken === undefined ? {} : { assrtToken: request.assrtToken }),
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),

@@ -17,6 +17,7 @@ import {
   failWorkflowRun,
   requeueWorkflowRunForRetry,
 } from "./repository.js";
+import { isQualityUpgradeAudit } from "./acquisition-v2/quality-ladder.js";
 import { isTransientAcquisitionError } from "./acquisition-v2/transient-error.js";
 import { describeAgentRunError, summarizeErrorForNotification } from "./agent-error.js";
 import { formatReportPushText } from "./notification-report.js";
@@ -100,6 +101,8 @@ async function resolveWorkerDeps(
   model: LanguageModel;
   preferredLanguage: string | undefined;
   qualityPreference: "high" | "medium" | undefined;
+  preferHdrOverResolution: boolean;
+  patrolQualityUpgrade: boolean;
   storageProvider: string | undefined;
   assrtToken: string | undefined;
   storageParentDirectoryId: string | undefined;
@@ -113,6 +116,8 @@ async function resolveWorkerDeps(
     model: ctx.model ?? base.model,
     preferredLanguage: ctx.preferredLanguage ?? base.preferredLanguage,
     qualityPreference: ctx.qualityPreference ?? base.qualityPreference,
+    preferHdrOverResolution: ctx.preferHdrOverResolution ?? base.preferHdrOverResolution ?? false,
+    patrolQualityUpgrade: ctx.patrolQualityUpgrade ?? base.patrolQualityUpgrade ?? false,
     storageProvider: ctx.storageProvider ?? base.storageProvider,
     assrtToken: ctx.assrtToken ?? base.assrtToken,
     storageParentDirectoryId:
@@ -148,6 +153,8 @@ export interface AccountWorkerContext {
   model?: LanguageModel;
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
+  preferHdrOverResolution?: boolean;
+  patrolQualityUpgrade?: boolean;
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
   storageProvider?: string;
   /** assrt token (Settings → 字幕来源). Undefined = 字幕流程不触发。 */
@@ -263,16 +270,18 @@ export async function handleWorkflowRunFailure(input: {
   //  - terminal failure: a failed Type 2 init intentionally clears its initial
   //    episode state so a fresh, never-acquired season doesn't linger as tracked
   //    (see worker.test "clears initial episode state when the agent model dies").
+  const preserveCoverage =
+    willRetry || claimed.episodes.some((episode) => episode.obtained);
   await repository.saveWorkflowRunSnapshot({
     accountId: claimed.accountId,
     connectedStorageId: claimed.connectedStorageId,
     title: claimed.title,
     season: claimed.season,
     workflowRun,
-    episodes: willRetry ? claimed.episodes : [],
-    resourceSnapshots: willRetry ? claimed.resourceSnapshots : [],
-    decisions: willRetry ? claimed.decisions : [],
-    transferAttempts: willRetry ? claimed.transferAttempts : [],
+    episodes: preserveCoverage ? claimed.episodes : [],
+    resourceSnapshots: preserveCoverage ? claimed.resourceSnapshots : [],
+    decisions: preserveCoverage ? claimed.decisions : [],
+    transferAttempts: preserveCoverage ? claimed.transferAttempts : [],
     notifications: [notification],
   });
   // Brand auth (dead cookie/token) — freeze the drive so the queue refuses more
@@ -297,6 +306,8 @@ export async function runQueuedType2Workflow(input: {
   model: LanguageModel;
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
+  preferHdrOverResolution?: boolean;
+  patrolQualityUpgrade?: boolean;
   now?: () => string;
   storageParentDirectoryId?: string;
   /** Separate landing parent for anime (see runQueuedSeriesInitialization). */
@@ -321,6 +332,10 @@ export async function runQueuedType2Workflow(input: {
   );
 
   try {
+    const qualityUpgrade = isQualityUpgradeAudit(claimed.workflowRun.auditEvents);
+    const priorObtained = claimed.episodes
+      .filter((episode) => episode.obtained)
+      .map((episode) => episode.episodeCode);
     const result = await runType2InitializationV2AndPersist({
       title: claimed.title,
       season: claimed.season,
@@ -343,6 +358,9 @@ export async function runQueuedType2Workflow(input: {
       ...(deps.qualityPreference === undefined
         ? {}
         : { qualityPreference: deps.qualityPreference }),
+      ...(deps.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+      ...(qualityUpgrade ? { qualityUpgrade: true } : {}),
+      ...(priorObtained.length > 0 ? { priorObtained } : {}),
       ...(deps.storageProvider === undefined
         ? {}
         : { storageProvider: deps.storageProvider }),
@@ -411,6 +429,8 @@ export async function runScheduledType3Monitoring(input: {
   model: LanguageModel;
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
+  preferHdrOverResolution?: boolean;
+  patrolQualityUpgrade?: boolean;
   storageParentDirectoryId: string;
   /** Separate landing parent for anime, so anime patrol verify-or-creates under
    *  its own tree (see runQueuedSeriesInitialization). */
@@ -451,7 +471,10 @@ export async function runScheduledType3Monitoring(input: {
       continue;
     }
 
-    if (state.season.status !== "active" || state.episodes.length === 0) {
+    if (state.season.status !== "active" && !(deps.patrolQualityUpgrade && state.season.status === "completed")) {
+      continue;
+    }
+    if (state.episodes.length === 0) {
       continue;
     }
 
@@ -544,6 +567,8 @@ export async function runScheduledType3Monitoring(input: {
         ...(deps.qualityPreference === undefined
           ? {}
           : { qualityPreference: deps.qualityPreference }),
+        ...(deps.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+        ...(deps.patrolQualityUpgrade ? { qualityUpgrade: true } : {}),
         ...(deps.storageProvider === undefined
           ? {}
           : { storageProvider: deps.storageProvider }),
@@ -625,6 +650,8 @@ async function patrolMovie(args: {
     model: LanguageModel;
     preferredLanguage: string | undefined;
     qualityPreference: "high" | "medium" | undefined;
+    preferHdrOverResolution: boolean;
+    patrolQualityUpgrade: boolean;
     storageProvider: string | undefined;
     assrtToken: string | undefined;
     moviesParentDirectoryId: string | undefined;
@@ -644,7 +671,7 @@ async function patrolMovie(args: {
     return null;
   }
   const obtained = state.episodes.some((episode) => episode.obtained);
-  if (obtained) {
+  if (obtained && !deps.patrolQualityUpgrade) {
     return null;
   }
   // Air-time gate: a reserved (未上映) film whose release date is still in the
@@ -708,6 +735,8 @@ async function patrolMovie(args: {
       ...(deps.qualityPreference === undefined
         ? {}
         : { qualityPreference: deps.qualityPreference }),
+      ...(deps.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+      ...(obtained && deps.patrolQualityUpgrade ? { qualityUpgrade: true } : {}),
       ...(deps.storageProvider === undefined
         ? {}
         : { storageProvider: deps.storageProvider }),
@@ -806,6 +835,8 @@ export async function runQueuedMovieAcquisition(input: {
   model: LanguageModel;
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
+  preferHdrOverResolution?: boolean;
+  patrolQualityUpgrade?: boolean;
   moviesParentDirectoryId: string;
   now?: () => string;
   /** §7: resolve the claimed run's per-account 115 creds + landing CIDs. */
@@ -828,6 +859,7 @@ export async function runQueuedMovieAcquisition(input: {
   );
 
   try {
+    const qualityUpgrade = isQualityUpgradeAudit(claimed.workflowRun.auditEvents);
     const result = await runMovieAcquisitionV2AndPersist({
       title: claimed.title,
       categoryParentId:
@@ -844,6 +876,8 @@ export async function runQueuedMovieAcquisition(input: {
       ...(deps.qualityPreference === undefined
         ? {}
         : { qualityPreference: deps.qualityPreference }),
+      ...(deps.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+      ...(qualityUpgrade ? { qualityUpgrade: true } : {}),
       ...(deps.storageProvider === undefined
         ? {}
         : { storageProvider: deps.storageProvider }),

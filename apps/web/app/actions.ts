@@ -507,20 +507,78 @@ export async function savePreferredLanguageAction(
   }
 }
 
-export async function saveQualityPreferenceAction(
-  quality: string,
-): Promise<PushSettingsActionResult> {
+export async function saveQualityPreferenceAction(input: {
+  quality: string;
+  preferHdrOverResolution: boolean;
+  upgradeOnReacquire: boolean;
+}): Promise<PushSettingsActionResult> {
   assertNotDemo();
   try {
-    const { getWorkflowRepository, getCurrentAccountId, QUALITY_PREFERENCE_SETTING_KEY } = await import(
-      "../lib/workflow-runtime"
-    );
+    const {
+      getWorkflowRepository,
+      getCurrentAccountId,
+      QUALITY_PREFERENCE_SETTING_KEY,
+      PREFER_HDR_OVER_RESOLUTION_SETTING_KEY,
+      UPGRADE_ON_REACQUIRE_SETTING_KEY,
+    } = await import("../lib/workflow-runtime");
     const repository = getWorkflowRepository();
-    await repository.setAccountSetting(await getCurrentAccountId(), QUALITY_PREFERENCE_SETTING_KEY, quality.trim());
+    const accountId = await getCurrentAccountId();
+    await repository.setAccountSetting(accountId, QUALITY_PREFERENCE_SETTING_KEY, input.quality.trim());
+    await repository.setAccountSetting(
+      accountId,
+      PREFER_HDR_OVER_RESOLUTION_SETTING_KEY,
+      input.preferHdrOverResolution ? "true" : "false",
+    );
+    await repository.setAccountSetting(
+      accountId,
+      UPGRADE_ON_REACQUIRE_SETTING_KEY,
+      input.upgradeOnReacquire ? "true" : "false",
+    );
     return { success: true };
   } catch (error) {
     return { success: false, message: `保存失败：${String(error)}` };
   }
+}
+
+export async function savePatrolQualityUpgradeAction(enabled: boolean): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const { getWorkflowRepository, getCurrentAccountId, PATROL_QUALITY_UPGRADE_SETTING_KEY } = await import(
+      "../lib/workflow-runtime"
+    );
+    const repository = getWorkflowRepository();
+    await repository.setAccountSetting(
+      await getCurrentAccountId(),
+      PATROL_QUALITY_UPGRADE_SETTING_KEY,
+      enabled ? "true" : "false",
+    );
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
+export async function requestQualityUpgradeAction(input: {
+  candidateId: string;
+  storageId?: string;
+}): Promise<RequestTrackingActionResult> {
+  assertNotDemo();
+  const preflight = await acquireLlmNotConfigured();
+  if (preflight) {
+    return preflight;
+  }
+  const request = await queueCandidateTracking(input.candidateId, input.storageId, { qualityUpgrade: true });
+  if (request.status === "unsupported") {
+    return { status: "unsupported", message: request.message ?? "无法排队画质升级。" };
+  }
+  if (request.status === "already_running") {
+    return { status: "active_workflow", message: "获取任务已在运行中，不会重复创建。" };
+  }
+  if (request.status === "already_tracked") {
+    return { status: "already_tracked", message: "当前没有可升级的入库文件。" };
+  }
+  revalidatePath("/");
+  return { status: "requested", message: "已排队画质升级：仅当候选严格更高时才会替换。" };
 }
 
 export async function saveLlmConfigAction(input: {

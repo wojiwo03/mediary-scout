@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   animeSearchTabooWarnings,
+  getAcquisitionQualityGuidance,
   getQualityGuidance,
   getSearchRecipe,
   searchProfile,
@@ -140,6 +141,29 @@ describe("getQualityGuidance", () => {
     expect(g).toContain("破一档");
     // still avoids 原盘/REMUX/ISO even for subs (no unlimited bump)
     expect(g).toMatch(/原盘|REMUX|ISO/);
+  });
+});
+
+describe("getAcquisitionQualityGuidance", () => {
+  it("always includes the HDR ladder, even when resolution preference is 不限", () => {
+    const g = getAcquisitionQualityGuidance({ profile: "movie", preference: undefined });
+    expect(g).toContain("Dolby Vision");
+    expect(g).toContain("HDR10+");
+    expect(g).not.toContain("画质偏好:高");
+    expect(g).toMatch(/不进搜索/);
+  });
+
+  it("includes QUALITY UPGRADE lines only when requested", () => {
+    const off = getAcquisitionQualityGuidance({ profile: "movie", preference: "high" });
+    expect(off).toContain("画质偏好:高");
+    expect(off).toMatch(/巡检默认只补缺/);
+    const on = getAcquisitionQualityGuidance({
+      profile: "movie",
+      preference: "high",
+      qualityUpgrade: true,
+    });
+    expect(on).toMatch(/QUALITY UPGRADE/);
+    expect(on).not.toMatch(/巡检默认只补缺/);
   });
 });
 

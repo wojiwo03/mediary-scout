@@ -44,6 +44,8 @@ interface TvV2Common {
   preferredLanguage?: string;
   /** Global quality preference ("high"/"medium"); undefined = 不限 (no guidance). */
   qualityPreference?: "high" | "medium";
+  preferHdrOverResolution?: boolean;
+  qualityUpgrade?: boolean;
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
   storageProvider?: string;
   /** assrt token (Settings → 字幕来源). Undefined = 字幕流程不触发。 */
@@ -68,6 +70,8 @@ function passthrough(input: TvV2Common): {
   maxSteps?: number;
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
+  preferHdrOverResolution?: boolean;
+  qualityUpgrade?: boolean;
   storageProvider?: string;
   assrtToken?: string;
 } {
@@ -76,6 +80,8 @@ function passthrough(input: TvV2Common): {
     ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
     ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage }),
     ...(input.qualityPreference === undefined ? {} : { qualityPreference: input.qualityPreference }),
+    ...(input.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+    ...(input.qualityUpgrade ? { qualityUpgrade: true } : {}),
     ...(input.storageProvider === undefined ? {} : { storageProvider: input.storageProvider }),
     ...(input.assrtToken === undefined ? {} : { assrtToken: input.assrtToken }),
   };
@@ -138,7 +144,7 @@ async function persistSingleSeason(input: {
 }
 
 export async function runType2InitializationV2AndPersist(
-  input: TvV2Common & { season: TrackedSeason },
+  input: TvV2Common & { season: TrackedSeason; priorObtained?: string[] },
 ): Promise<BridgedV2Result> {
   const now = resolveNow(input);
   const bridged = await runTvAcquisitionV2({
@@ -160,6 +166,7 @@ export async function runType2InitializationV2AndPersist(
     model: input.model,
     workflowRunId: input.workflowRun.id,
     now,
+    ...(input.priorObtained === undefined ? {} : { priorObtained: input.priorObtained }),
     onProgress: progressAndTraceSink({
       repository: input.repository,
       workflowRunId: input.workflowRun.id,
@@ -325,6 +332,8 @@ export async function runMovieAcquisitionV2AndPersist(input: {
   preferredLanguage?: string;
   /** Global quality preference ("high"/"medium"); undefined = 不限 (no guidance). */
   qualityPreference?: "high" | "medium";
+  preferHdrOverResolution?: boolean;
+  qualityUpgrade?: boolean;
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
   storageProvider?: string;
   /** assrt token (Settings → 字幕来源). Undefined = 字幕流程不触发。 */
@@ -352,6 +361,8 @@ export async function runMovieAcquisitionV2AndPersist(input: {
     ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
     ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage }),
     ...(input.qualityPreference === undefined ? {} : { qualityPreference: input.qualityPreference }),
+    ...(input.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+    ...(input.qualityUpgrade ? { qualityUpgrade: true } : {}),
     ...(input.storageProvider === undefined ? {} : { storageProvider: input.storageProvider }),
     ...(input.assrtToken === undefined ? {} : { assrtToken: input.assrtToken }),
   });

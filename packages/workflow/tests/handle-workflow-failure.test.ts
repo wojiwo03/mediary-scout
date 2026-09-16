@@ -224,4 +224,28 @@ describe("handleWorkflowRunFailure", () => {
     ).resolves.toMatchObject({ status: "failed" });
     expect(onAuthErrorFreeze).not.toHaveBeenCalled();
   });
+
+  it("preserves obtained episode coverage on a terminal type2 failure (upgrade/reacquire must not untrack)", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const episodes = [
+      {
+        trackedSeasonId: "tmdb_movie_1_movie",
+        episodeCode: "S01E01",
+        airDate: null,
+        airStatus: "aired" as const,
+        obtained: true,
+      },
+    ];
+    const claimed = { ...snapshot(), episodes } as PersistedWorkflowRunSnapshot;
+    await handleWorkflowRunFailure({
+      claimed,
+      error: new Error("agent model died"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+    });
+    const saved = save.mock.calls[0]![0];
+    expect(saved.workflowRun.status).toBe("failed");
+    expect(saved.episodes).toHaveLength(1);
+    expect(saved.episodes[0]?.obtained).toBe(true);
+  });
 });

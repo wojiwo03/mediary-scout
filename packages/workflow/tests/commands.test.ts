@@ -49,6 +49,73 @@ describe("queueTrackingInitialization", () => {
   });
 });
 
+describe("queueTrackingInitialization — quality upgrade of an already-tracked title", () => {
+  async function seedTracked(repository: InMemoryWorkflowRepository, runId: string) {
+    const { title, season } = trackedFixture();
+    await queueTrackingInitialization({
+      title,
+      season,
+      keyword: "Show",
+      repository,
+      createWorkflowRunId: () => runId,
+      now: fixedNow,
+    });
+    const snap = await repository.getWorkflowRunSnapshot(runId);
+    if (!snap) {
+      throw new Error("expected seeded run");
+    }
+    await repository.saveWorkflowRunSnapshot({
+      accountId: snap.accountId,
+      connectedStorageId: snap.connectedStorageId,
+      title: snap.title,
+      season: snap.season,
+      workflowRun: { ...snap.workflowRun, status: "succeeded", finishedAt: fixedNow() },
+      episodes: snap.episodes,
+      resourceSnapshots: snap.resourceSnapshots,
+      decisions: snap.decisions,
+      transferAttempts: snap.transferAttempts,
+      notifications: snap.notifications,
+    });
+    return { title, season };
+  }
+
+  it("returns already_tracked when upgrade is off", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = await seedTracked(repository, "run_first");
+
+    const second = await queueTrackingInitialization({
+      title,
+      season,
+      keyword: "Show",
+      repository,
+      createWorkflowRunId: () => "run_second",
+      now: fixedNow,
+    });
+    expect(second.status).toBe("already_tracked");
+    expect(second.workflowRunId).toBeNull();
+  });
+
+  it("queues a quality_upgrade audit run when qualityUpgrade is on", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = await seedTracked(repository, "run_first");
+
+    const upgraded = await queueTrackingInitialization({
+      title,
+      season,
+      keyword: "Show",
+      repository,
+      createWorkflowRunId: () => "run_upgrade",
+      now: fixedNow,
+      qualityUpgrade: true,
+    });
+    expect(upgraded.status).toBe("queued");
+    expect(upgraded.workflowRunId).toBe("run_upgrade");
+    const snap = await repository.getWorkflowRunSnapshot("run_upgrade");
+    expect(snap?.workflowRun.status).toBe("queued");
+    expect(snap?.workflowRun.auditEvents.some((event) => event.type === "quality_upgrade")).toBe(true);
+  });
+});
+
 function trackedFixture(): { title: MediaTitle; season: TrackedSeason } {
   const title: MediaTitle = {
     id: "title_show",

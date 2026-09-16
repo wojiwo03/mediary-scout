@@ -517,4 +517,115 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
     const failed = await repository.getWorkflowRunSnapshot("run_multi_1");
     expect(failed?.workflowRun.status).toBe("failed");
   });
+
+  it("skips a completed fully-obtained season unless patrolQualityUpgrade is on", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture("done");
+    season.status = "completed";
+    await seedTrackedSeason({
+      repository,
+      title,
+      season,
+      obtainedCodes: ["S01E01", "S01E02"],
+    });
+
+    const off = await runScheduledType3Monitoring({
+      repository,
+      resourceProvider: emptyProvider(),
+      storage: new FakeStorageExecutor(),
+      model: throwingModel(),
+      storageParentDirectoryId: "library_root",
+      now: fixedNow,
+    });
+    expect(off).toEqual([]);
+
+    const on = await runScheduledType3Monitoring({
+      repository,
+      resourceProvider: emptyProvider(),
+      storage: new FakeStorageExecutor(),
+      model: throwingModel(),
+      storageParentDirectoryId: "library_root",
+      now: fixedNow,
+      patrolQualityUpgrade: true,
+      createWorkflowRunId: () => "run_patrol_upgrade",
+    });
+    expect(on).toHaveLength(1);
+    expect(on[0]).toMatchObject({
+      trackedSeasonId: season.id,
+      status: "failed",
+      errorMessage: "agent model unavailable",
+    });
+  });
+
+  it("patrols an already-obtained movie only when patrolQualityUpgrade is on", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const movie: MediaTitle = {
+      id: "tmdb_movie_upgrade",
+      tmdbId: 2,
+      type: "movie",
+      title: "Upgrade Movie",
+      originalTitle: "Upgrade Movie",
+      year: 2021,
+      aliases: [],
+    };
+    const obtainedEpisode = createEpisodeStates({
+      trackedSeasonId: `${movie.id}_movie`,
+      seasonNumber: 1,
+      totalEpisodes: 1,
+      latestAiredEpisode: 1,
+    }).map((episode) => ({ ...episode, obtained: true }));
+    await repository.saveWorkflowRunSnapshot({
+      title: movie,
+      season: {
+        id: `${movie.id}_movie`,
+        mediaTitleId: movie.id,
+        seasonNumber: 1,
+        status: "completed",
+        qualityPreference: "4K",
+        storageDirectoryId: "movies_root_upgrade",
+        totalEpisodes: 1,
+        latestAiredEpisode: 1,
+        latestAiredSource: "manual",
+      },
+      workflowRun: {
+        id: "seed_upgrade_movie",
+        kind: "movie_init",
+        status: "succeeded",
+        trackedSeasonId: `${movie.id}_movie`,
+        startedAt: fixedNow(),
+        finishedAt: fixedNow(),
+        auditEvents: [],
+      },
+      episodes: obtainedEpisode,
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+    });
+
+    const off = await runScheduledType3Monitoring({
+      repository,
+      resourceProvider: emptyProvider(),
+      storage: new FakeStorageExecutor(),
+      model: throwingModel(),
+      storageParentDirectoryId: "tv_root",
+      moviesParentDirectoryId: "movies_root",
+      now: fixedNow,
+    });
+    expect(off).toEqual([]);
+
+    const on = await runScheduledType3Monitoring({
+      repository,
+      resourceProvider: emptyProvider(),
+      storage: new FakeStorageExecutor(),
+      model: throwingModel(),
+      storageParentDirectoryId: "tv_root",
+      moviesParentDirectoryId: "movies_root",
+      now: fixedNow,
+      patrolQualityUpgrade: true,
+      createWorkflowRunId: () => "run_movie_upgrade",
+    });
+    expect(on).toHaveLength(1);
+    expect(on[0]?.status).toBe("failed");
+  });
 });

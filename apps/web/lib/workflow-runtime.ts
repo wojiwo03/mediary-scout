@@ -769,6 +769,7 @@ export async function getWorkflowStatusView(
 export async function queueCandidateTracking(
   candidateId: string,
   connectedStorageId?: string | null,
+  options?: { qualityUpgrade?: boolean },
 ): Promise<CandidateTrackingRequestResult> {
   let accountId: string;
   try {
@@ -786,6 +787,11 @@ export async function queueCandidateTracking(
   if (workspace.frozen) {
     return { status: "unsupported", message: "该网盘已掉线，请重新扫码绑定同一个 115 后再获取。" };
   }
+  const settings = getAccountScopedSettings(accountId);
+  const qualityUpgrade =
+    options?.qualityUpgrade === true || (await getUpgradeOnReacquire(settings));
+  const upgrade = qualityUpgrade ? { qualityUpgrade: true as const } : {};
+
   const movieTmdbId = parseMovieCandidateId(candidateId);
   if (movieTmdbId !== null) {
     const movie = await movieTargetFromTmdbId(movieTmdbId);
@@ -798,6 +804,7 @@ export async function queueCandidateTracking(
       repository: getWorkflowRepository(),
       accountId,
       connectedStorageId: workspace.id,
+      ...upgrade,
     });
     return {
       status: request.status === "queued" ? "queued" : request.status,
@@ -821,6 +828,7 @@ export async function queueCandidateTracking(
     repository: getWorkflowRepository(),
     accountId,
     connectedStorageId: workspace.id,
+    ...upgrade,
   });
   const status = request.status === "completed" ? "queued" : request.status;
 
@@ -891,7 +899,8 @@ function buildAccountContextResolver(): ResolveAccountWorkerContext {
     // specific drive it was queued onto.
     const scoped = getAccountScopedSettings(accountId);
     const parents = await getWorkerStorageParents(accountId, connectedStorageId);
-    const { model, preferredLanguage, qualityPreference } = await getAgentModel(scoped);
+    const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, patrolQualityUpgrade } =
+      await getAgentModel(scoped);
     // The run's drive brand selects its resource sources (quark→PanSou quark-only;
     // 115→PanSou+Prowlarr). null when no drive resolves → default 115 fallback.
     const driveProvider =
@@ -905,6 +914,8 @@ function buildAccountContextResolver(): ResolveAccountWorkerContext {
       ...(assrtToken === undefined ? {} : { assrtToken }),
       ...(preferredLanguage === undefined ? {} : { preferredLanguage }),
       ...(qualityPreference === undefined ? {} : { qualityPreference }),
+      ...(preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+      ...(patrolQualityUpgrade ? { patrolQualityUpgrade: true } : {}),
       storageParentDirectoryId: parents.tv,
       animeStorageParentDirectoryId: parents.anime,
       moviesParentDirectoryId: parents.movies,
@@ -956,9 +967,12 @@ export async function runNextQueuedWorkflow() {
   // The user's language preference is standing context baked into the agent
   // instance (one global preference), so every workflow — movie, series, type2,
   // anime — searches with it. No per-workflow plumbing.
-  const { model, preferredLanguage, qualityPreference } = await getAgentModel(getAccountScopedSettings(accountId));
+  const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, patrolQualityUpgrade } =
+    await getAgentModel(getAccountScopedSettings(accountId));
   const language = preferredLanguage === undefined ? {} : { preferredLanguage };
   const quality = qualityPreference === undefined ? {} : { qualityPreference };
+  const hdr = preferHdrOverResolution ? { preferHdrOverResolution: true as const } : {};
+  const patrolUpgrade = patrolQualityUpgrade ? { patrolQualityUpgrade: true as const } : {};
   const storage = await getWorkerStorageExecutor(accountId);
   const parents = await getWorkerStorageParents(accountId);
   const resolveAccountContext = buildAccountContextResolver();
@@ -971,6 +985,8 @@ export async function runNextQueuedWorkflow() {
     model,
     ...language,
     ...quality,
+    ...hdr,
+    ...patrolUpgrade,
     storageParentDirectoryId: parents.tv,
     animeStorageParentDirectoryId: parents.anime,
     resolveAccountContext,
@@ -1003,6 +1019,8 @@ export async function runNextQueuedWorkflow() {
     model,
     ...language,
     ...quality,
+    ...hdr,
+    ...patrolUpgrade,
     moviesParentDirectoryId: parents.movies,
     resolveAccountContext,
     onAuthErrorFreeze,
@@ -1031,6 +1049,9 @@ export async function getPreferredLanguage(
 export const PREFERRED_LANGUAGE_SETTING_KEY = "preferred_language";
 
 export const QUALITY_PREFERENCE_SETTING_KEY = "quality_preference";
+export const PREFER_HDR_OVER_RESOLUTION_SETTING_KEY = "prefer_hdr_over_resolution";
+export const UPGRADE_ON_REACQUIRE_SETTING_KEY = "upgrade_on_reacquire";
+export const PATROL_QUALITY_UPGRADE_SETTING_KEY = "patrol_quality_upgrade";
 
 /** The user's acquisition quality preference, or undefined when 不限/unset
  *  (the default). undefined → inject NO quality guidance (coverage-only, current
@@ -1041,6 +1062,32 @@ export async function getQualityPreference(
 ): Promise<"high" | "medium" | undefined> {
   const value = (await repository.getSetting(QUALITY_PREFERENCE_SETTING_KEY))?.trim();
   return value === "high" || value === "medium" ? value : undefined;
+}
+
+function parseBoolSetting(value: string | null | undefined): boolean {
+  const v = value?.trim().toLowerCase();
+  return v === "true" || v === "1" || v === "on" || v === "yes";
+}
+
+/** HDR may outrank resolution when picking among candidates. Default off. */
+export async function getPreferHdrOverResolution(
+  repository: { getSetting(key: string): Promise<string | null> },
+): Promise<boolean> {
+  return parseBoolSetting(await repository.getSetting(PREFER_HDR_OVER_RESOLUTION_SETTING_KEY));
+}
+
+/** Re-queueing an already-obtained title may replace lower-quality coverage. Default off. */
+export async function getUpgradeOnReacquire(
+  repository: { getSetting(key: string): Promise<string | null> },
+): Promise<boolean> {
+  return parseBoolSetting(await repository.getSetting(UPGRADE_ON_REACQUIRE_SETTING_KEY));
+}
+
+/** Scheduled patrol also runs a quality-upgrade sweep. Default off (gap-fill only). */
+export async function getPatrolQualityUpgrade(
+  repository: { getSetting(key: string): Promise<string | null> },
+): Promise<boolean> {
+  return parseBoolSetting(await repository.getSetting(PATROL_QUALITY_UPGRADE_SETTING_KEY));
 }
 
 // AI 模型 (LLM) 三件套 — OpenAI-compatible. Stored in the user's OWN app_settings
@@ -1568,7 +1615,8 @@ export async function runScheduledType3(options?: {
     await hydratePan115CookieFromDb();
     const sync = tmdbSeasonMetadataSync();
     const accountId = await getCurrentAccountId();
-    const { model, preferredLanguage, qualityPreference } = await getAgentModel(getAccountScopedSettings(accountId));
+    const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, patrolQualityUpgrade } =
+      await getAgentModel(getAccountScopedSettings(accountId));
     const parents = await getWorkerStorageParents(accountId);
     result = await runScheduledType3Monitoring({
       repository,
@@ -1577,6 +1625,8 @@ export async function runScheduledType3(options?: {
       model,
       ...(preferredLanguage === undefined ? {} : { preferredLanguage }),
       ...(qualityPreference === undefined ? {} : { qualityPreference }),
+      ...(preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+      ...(patrolQualityUpgrade ? { patrolQualityUpgrade: true } : {}),
       storageParentDirectoryId: parents.tv,
       animeStorageParentDirectoryId: parents.anime,
       moviesParentDirectoryId: parents.movies,
@@ -2331,12 +2381,18 @@ async function getAgentModel(repository: {
   model: ReturnType<typeof createAgentModelFromEnv>;
   preferredLanguage: string | undefined;
   qualityPreference: "high" | "medium" | undefined;
+  preferHdrOverResolution: boolean;
+  upgradeOnReacquire: boolean;
+  patrolQualityUpgrade: boolean;
 }> {
   assertWorkflowAgentAdapterPolicy(process.env);
   const env = process.env;
   const adapter = env.MEDIA_TRACK_AGENT_ADAPTER === "vercel-ai" ? "vercel-ai" : "fake";
   const preferredLanguage = await getPreferredLanguage(repository);
   const qualityPreference = await getQualityPreference(repository);
+  const preferHdrOverResolution = await getPreferHdrOverResolution(repository);
+  const upgradeOnReacquire = await getUpgradeOnReacquire(repository);
+  const patrolQualityUpgrade = await getPatrolQualityUpgrade(repository);
 
   // Resolve the live model config the SAME way the test action does (shared
   // resolver) — DB-first, then .env. No built-in default endpoint.
@@ -2362,7 +2418,14 @@ async function getAgentModel(repository: {
     model = adapter === "vercel-ai" ? createAgentModel(resolved) : createStubAcquisitionModel();
     agentModelCache.set(signature, model);
   }
-  return { model, preferredLanguage, qualityPreference };
+  return {
+    model,
+    preferredLanguage,
+    qualityPreference,
+    preferHdrOverResolution,
+    upgradeOnReacquire,
+    patrolQualityUpgrade,
+  };
 }
 
 function fakeTransferOutcomes() {

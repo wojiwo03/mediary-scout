@@ -4,6 +4,7 @@ import { Check, DownloadCloud, Layers, LoaderCircle } from "lucide-react";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  requestQualityUpgradeAction,
   requestRemainingAction,
   requestSeasonAction,
   type RequestTrackingActionResult,
@@ -183,6 +184,67 @@ export function RequestRemainingButton({
           <Layers size={14} aria-hidden />
         )}
         {inFlight ? "获取中" : isLocked ? "已请求" : label}
+      </button>
+      <AcquireResultNotice result={result} />
+    </>
+  );
+}
+
+export function QualityUpgradeButton({
+  candidateId,
+  storageId,
+  titleAcquiring = false,
+}: {
+  candidateId: string;
+  storageId: string | undefined;
+  titleAcquiring?: boolean;
+}) {
+  const router = useRouter();
+  const lock = useAcquisitionLock();
+  const [isPending, startTransition] = useTransition();
+  const [result, setResult] = useState<RequestTrackingActionResult | null>(null);
+  const scope = `upgrade-${candidateId}`;
+  const isLocked = isLockedResult(result);
+  const mine = lock?.acquiring === scope;
+  const othersAcquiring = (lock != null && lock.acquiring != null && !mine) || titleAcquiring;
+  const inFlight = isPending || mine;
+  const demo = isDemoModeClient();
+
+  if (demo) {
+    return null;
+  }
+
+  return (
+    <>
+      <button
+        className="season-request-button"
+        type="button"
+        title={othersAcquiring && !inFlight ? "该剧正在获取中，请稍候" : (result?.message ?? "升级画质")}
+        disabled={isPending || isLocked || othersAcquiring}
+        onClick={() => {
+          lock?.lock(scope);
+          startTransition(async () => {
+            const r = await runAction(
+              () => requestQualityUpgradeAction({ candidateId, storageId }),
+              (msg) => {
+                setResult({ status: "unsupported", message: msg });
+                router.refresh();
+              },
+            );
+            if (!r.ok) return;
+            setResult(r.value);
+            router.refresh();
+          });
+        }}
+      >
+        {inFlight ? (
+          <LoaderCircle size={13} className="spin" aria-hidden />
+        ) : isLocked ? (
+          <Check size={13} aria-hidden />
+        ) : (
+          <DownloadCloud size={13} aria-hidden />
+        )}
+        {inFlight ? "升级中" : isLocked ? "已请求" : "升级画质"}
       </button>
       <AcquireResultNotice result={result} />
     </>

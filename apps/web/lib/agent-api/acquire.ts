@@ -7,6 +7,8 @@ export interface AcquireInput {
   season?: number | null;
   storageId?: string | null;
   tmdbId?: number | null;
+  /** Explicit quality-upgrade of an already-obtained title. */
+  qualityUpgrade?: boolean;
 }
 
 export interface AcquireResult {
@@ -24,7 +26,14 @@ export interface AcquireResult {
  */
 export async function acquireMedia(input: AcquireInput, accountId: string): Promise<AcquireResult> {
   if (input.tmdbId) {
-    return queueByTmdbId(input.tmdbId, input.type ?? "tv", input.season, input.storageId);
+    return queueByTmdbId(
+      input.tmdbId,
+      input.type ?? "tv",
+      input.season,
+      input.storageId,
+      undefined,
+      input.qualityUpgrade,
+    );
   }
 
   const provider = await getTmdbSearchProvider(accountId);
@@ -80,10 +89,17 @@ export async function acquireMedia(input: AcquireInput, accountId: string): Prom
     };
   }
 
-  return queueByTmdbId(top.candidate.tmdbId, top.candidate.mediaType, input.season, input.storageId, {
-    title: top.candidate.title,
-    year: top.candidate.year,
-  });
+  return queueByTmdbId(
+    top.candidate.tmdbId,
+    top.candidate.mediaType,
+    input.season,
+    input.storageId,
+    {
+      title: top.candidate.title,
+      year: top.candidate.year,
+    },
+    input.qualityUpgrade,
+  );
 }
 
 async function queueByTmdbId(
@@ -92,6 +108,7 @@ async function queueByTmdbId(
   season: number | null | undefined,
   storageId: string | null | undefined,
   matchedTitle?: { title: string; year: number | null },
+  qualityUpgrade?: boolean,
 ): Promise<AcquireResult> {
   // candidateId formats from workflow-runtime.ts parsers:
   //   movie: tmdb_movie_<tmdbId>   (parseMovieCandidateId)
@@ -99,7 +116,11 @@ async function queueByTmdbId(
   const candidateId =
     type === "movie" ? `tmdb_movie_${tmdbId}` : `tmdb_tv_${tmdbId}_s${season ?? 1}`;
 
-  const result = await queueCandidateTracking(candidateId, storageId ?? undefined);
+  const result = await queueCandidateTracking(
+    candidateId,
+    storageId ?? undefined,
+    qualityUpgrade ? { qualityUpgrade: true } : undefined,
+  );
 
   const matched = {
     tmdbId,
