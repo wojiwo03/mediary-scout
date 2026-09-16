@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, DownloadCloud, Layers, LoaderCircle } from "lucide-react";
+import { Check, DownloadCloud, Layers, LoaderCircle, Sparkles } from "lucide-react";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -219,7 +219,7 @@ export function QualityUpgradeButton({
       <button
         className="season-request-button"
         type="button"
-        title={othersAcquiring && !inFlight ? "该剧正在获取中，请稍候" : (result?.message ?? "升级画质")}
+        title={othersAcquiring && !inFlight ? "该剧正在获取中，请稍候" : (result?.message ?? "按偏好寻找严格更高的版本并替换")}
         disabled={isPending || isLocked || othersAcquiring}
         onClick={() => {
           lock?.lock(scope);
@@ -242,11 +242,37 @@ export function QualityUpgradeButton({
         ) : isLocked ? (
           <Check size={13} aria-hidden />
         ) : (
-          <DownloadCloud size={13} aria-hidden />
+          <Sparkles size={13} aria-hidden />
         )}
         {inFlight ? "升级中" : isLocked ? "已请求" : "升级画质"}
       </button>
       <AcquireResultNotice result={result} />
     </>
+  );
+}
+
+export function QualityUpgradePanel({
+  candidateId,
+  storageId,
+  titleAcquiring = false,
+  targetLabel,
+}: {
+  candidateId: string;
+  storageId: string | undefined;
+  titleAcquiring?: boolean;
+  targetLabel: string;
+}) {
+  return (
+    <div className="quality-upgrade-panel">
+      <p className="quality-upgrade-copy">
+        目标偏好：{targetLabel}
+        <small>按阶梯寻找严格更高的版本替换现有文件。找不到或转存失败都不会删除旧文件。</small>
+      </p>
+      <QualityUpgradeButton
+        candidateId={candidateId}
+        storageId={storageId}
+        titleAcquiring={titleAcquiring}
+      />
+    </div>
   );
 }

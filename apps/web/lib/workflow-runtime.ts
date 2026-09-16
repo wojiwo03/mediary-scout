@@ -899,7 +899,7 @@ function buildAccountContextResolver(): ResolveAccountWorkerContext {
     // specific drive it was queued onto.
     const scoped = getAccountScopedSettings(accountId);
     const parents = await getWorkerStorageParents(accountId, connectedStorageId);
-    const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, patrolQualityUpgrade } =
+    const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade } =
       await getAgentModel(scoped);
     // The run's drive brand selects its resource sources (quark→PanSou quark-only;
     // 115→PanSou+Prowlarr). null when no drive resolves → default 115 fallback.
@@ -915,6 +915,7 @@ function buildAccountContextResolver(): ResolveAccountWorkerContext {
       ...(preferredLanguage === undefined ? {} : { preferredLanguage }),
       ...(qualityPreference === undefined ? {} : { qualityPreference }),
       ...(preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+      ...(considerSourceClass === false ? { considerSourceClass: false } : {}),
       ...(patrolQualityUpgrade ? { patrolQualityUpgrade: true } : {}),
       storageParentDirectoryId: parents.tv,
       animeStorageParentDirectoryId: parents.anime,
@@ -967,11 +968,12 @@ export async function runNextQueuedWorkflow() {
   // The user's language preference is standing context baked into the agent
   // instance (one global preference), so every workflow — movie, series, type2,
   // anime — searches with it. No per-workflow plumbing.
-  const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, patrolQualityUpgrade } =
+  const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade } =
     await getAgentModel(getAccountScopedSettings(accountId));
   const language = preferredLanguage === undefined ? {} : { preferredLanguage };
   const quality = qualityPreference === undefined ? {} : { qualityPreference };
   const hdr = preferHdrOverResolution ? { preferHdrOverResolution: true as const } : {};
+  const source = considerSourceClass === false ? { considerSourceClass: false as const } : {};
   const patrolUpgrade = patrolQualityUpgrade ? { patrolQualityUpgrade: true as const } : {};
   const storage = await getWorkerStorageExecutor(accountId);
   const parents = await getWorkerStorageParents(accountId);
@@ -986,6 +988,7 @@ export async function runNextQueuedWorkflow() {
     ...language,
     ...quality,
     ...hdr,
+    ...source,
     ...patrolUpgrade,
     storageParentDirectoryId: parents.tv,
     animeStorageParentDirectoryId: parents.anime,
@@ -1003,6 +1006,8 @@ export async function runNextQueuedWorkflow() {
     model,
     ...language,
     ...quality,
+    ...hdr,
+    ...source,
     storageParentDirectoryId: parents.tv,
     animeStorageParentDirectoryId: parents.anime,
     resolveAccountContext,
@@ -1020,6 +1025,7 @@ export async function runNextQueuedWorkflow() {
     ...language,
     ...quality,
     ...hdr,
+    ...source,
     ...patrolUpgrade,
     moviesParentDirectoryId: parents.movies,
     resolveAccountContext,
@@ -1050,6 +1056,7 @@ export const PREFERRED_LANGUAGE_SETTING_KEY = "preferred_language";
 
 export const QUALITY_PREFERENCE_SETTING_KEY = "quality_preference";
 export const PREFER_HDR_OVER_RESOLUTION_SETTING_KEY = "prefer_hdr_over_resolution";
+export const CONSIDER_SOURCE_CLASS_SETTING_KEY = "consider_source_class";
 export const UPGRADE_ON_REACQUIRE_SETTING_KEY = "upgrade_on_reacquire";
 export const PATROL_QUALITY_UPGRADE_SETTING_KEY = "patrol_quality_upgrade";
 
@@ -1074,6 +1081,17 @@ export async function getPreferHdrOverResolution(
   repository: { getSetting(key: string): Promise<string | null> },
 ): Promise<boolean> {
   return parseBoolSetting(await repository.getSetting(PREFER_HDR_OVER_RESOLUTION_SETTING_KEY));
+}
+
+/** Encode/source class participates in post-recall ranking. Default on. */
+export async function getConsiderSourceClass(
+  repository: { getSetting(key: string): Promise<string | null> },
+): Promise<boolean> {
+  const raw = (await repository.getSetting(CONSIDER_SOURCE_CLASS_SETTING_KEY))?.trim();
+  if (!raw) {
+    return true;
+  }
+  return parseBoolSetting(raw);
 }
 
 /** Re-queueing an already-obtained title may replace lower-quality coverage. Default off. */
@@ -1615,7 +1633,7 @@ export async function runScheduledType3(options?: {
     await hydratePan115CookieFromDb();
     const sync = tmdbSeasonMetadataSync();
     const accountId = await getCurrentAccountId();
-    const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, patrolQualityUpgrade } =
+    const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade } =
       await getAgentModel(getAccountScopedSettings(accountId));
     const parents = await getWorkerStorageParents(accountId);
     result = await runScheduledType3Monitoring({
@@ -1626,6 +1644,7 @@ export async function runScheduledType3(options?: {
       ...(preferredLanguage === undefined ? {} : { preferredLanguage }),
       ...(qualityPreference === undefined ? {} : { qualityPreference }),
       ...(preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+      ...(considerSourceClass === false ? { considerSourceClass: false } : {}),
       ...(patrolQualityUpgrade ? { patrolQualityUpgrade: true } : {}),
       storageParentDirectoryId: parents.tv,
       animeStorageParentDirectoryId: parents.anime,
@@ -2382,6 +2401,7 @@ async function getAgentModel(repository: {
   preferredLanguage: string | undefined;
   qualityPreference: "high" | "medium" | undefined;
   preferHdrOverResolution: boolean;
+  considerSourceClass: boolean;
   upgradeOnReacquire: boolean;
   patrolQualityUpgrade: boolean;
 }> {
@@ -2391,6 +2411,7 @@ async function getAgentModel(repository: {
   const preferredLanguage = await getPreferredLanguage(repository);
   const qualityPreference = await getQualityPreference(repository);
   const preferHdrOverResolution = await getPreferHdrOverResolution(repository);
+  const considerSourceClass = await getConsiderSourceClass(repository);
   const upgradeOnReacquire = await getUpgradeOnReacquire(repository);
   const patrolQualityUpgrade = await getPatrolQualityUpgrade(repository);
 
@@ -2423,6 +2444,7 @@ async function getAgentModel(repository: {
     preferredLanguage,
     qualityPreference,
     preferHdrOverResolution,
+    considerSourceClass,
     upgradeOnReacquire,
     patrolQualityUpgrade,
   };

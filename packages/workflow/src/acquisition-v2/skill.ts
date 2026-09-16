@@ -1,8 +1,10 @@
 import {
+  AUDIO_LADDER_LINES,
   HDR_LADDER_LINES,
   PATROL_GAP_ONLY_LINE,
   QUALITY_SEARCH_TOKEN_LAW,
   QUALITY_UPGRADE_LINES,
+  SOURCE_LADDER_LINES,
 } from "./quality-ladder.js";
 
 /**
@@ -196,7 +198,7 @@ The candidate must be THIS film — not a remake, sequel, prequel, or same-IP di
 - Reject "蝙蝠侠：黑暗骑士崛起" (2012) when the target is "蝙蝠侠：黑暗骑士" (2008).
 - Reject a 1990 version when the target is a later remake.
 - When identity is unclear, do NOT transfer speculatively.
-Reject packs / collections / box sets / multi-part / anything structured like seasons — a movie is a single film. Reject disc images too: a 蓝光原盘 / ISO / BDMV full-disc dump (often 50–100GB+, isVideo=false) is NOT a usable film — you need ONE playable video file (mkv/mp4/ts). Among confirmed identity matches prefer the highest quality VIDEO stated transparently (4K REMUX/video > 1080p > 720p); then apply the HDR ladder inside the same resolution. ${HDR_LADDER_LINES[0]} ${HDR_LADDER_LINES[1]} Prefer a 4K REMUX or even a lower-quality video over a 原盘/ISO even when the disc image is nominally higher quality. Magnets and 115 shares both transfer instantly — judge on identity/quality, never on link type. When QUALITY UPGRADE is on: ${QUALITY_UPGRADE_LINES.join("")}
+Reject packs / collections / box sets / multi-part / anything structured like seasons — a movie is a single film. Reject disc images too: a 蓝光原盘 / ISO / BDMV full-disc dump (often 50–100GB+, isVideo=false) is NOT a usable film — you need ONE playable video file (mkv/mp4/ts). Among confirmed identity matches prefer the highest quality VIDEO stated transparently (4K REMUX/video > 1080p > 720p); then apply the HDR ladder inside the same resolution, then source/encode class, then audio as a soft tiebreaker. ${HDR_LADDER_LINES[0]} ${HDR_LADDER_LINES[1]} ${SOURCE_LADDER_LINES[0]} ${AUDIO_LADDER_LINES[0]} Prefer a 4K REMUX or even a lower-quality video over a 原盘/ISO even when the disc image is nominally higher quality. Magnets and 115 shares both transfer instantly — judge on identity/quality, never on link type. When QUALITY UPGRADE is on: ${QUALITY_UPGRADE_LINES.join("")}
 
 ## Two transfer tools — pick by the situation
 - transferCandidate(snapshotId, candidateId): ONE candidate at a time. Use it for a single obvious share, or for a MAGNET (a magnet does NOT fail loud — only the landing point in inspectStaging tells you whether it 秒传'd; so transfer, then inspect).
@@ -313,9 +315,11 @@ Your per-run input already gives you THIS title's recipe (searchHints). The map 
 
 ## Universal laws (every type)
 - A single 0 almost NEVER means "no resource": PanSou's API jitters violently — the SAME keyword can swing 0↔900 between consecutive calls (measured: Breaking Bad 0→903; 斗破苍穹/遮天 once reported 0 are really 140-196). On a 0 (升级搜索时), re-run the SAME keyword 2-3 times before ever concluding empty. Most "0"s are lies.
-- Quality is NOT a search word. Putting 4K/1080P/蓝光/中字/字幕/DV/DoVi/HDR10+/HDR/杜比视界 into the keyword filters the title match AND skews to wrong works — measured归零 above. Read quality/中字/HDR off the returned titles instead (the system strips these tokens for you if you slip).
+- Quality is NOT a search word. Putting 4K/1080P/蓝光/中字/字幕/DV/DoVi/HDR10+/HDR/杜比视界/Remux/WEB-DL/Atmos into the keyword filters the title match AND skews to wrong works — measured归零 above. Read quality/中字/HDR/片源 off the returned titles instead (the system strips these tokens for you if you slip).
 - ${HDR_LADDER_LINES[0]}
 - ${HDR_LADDER_LINES[1]}
+- ${SOURCE_LADDER_LINES[0]}
+- ${AUDIO_LADDER_LINES[0]}
 - ${QUALITY_SEARCH_TOKEN_LAW}
 - count ≠ relevance: read the top titles to confirm the work itself + full coverage.
 - Sub-type tokens NEVER go in the query: +美剧/+韩剧/+日剧/+国产剧/+番剧/+动画 almost never help — they zero the pool or top it with noise. The ONLY exceptions: 国漫's +国漫 (a real release tag, for disambiguating same-name live-action) and Chernobyl's +美剧 (the one show whose bare name is always 0).

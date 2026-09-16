@@ -8,6 +8,7 @@ import {
   getProwlarrConfig,
   getQualityPreference,
   getPreferHdrOverResolution,
+  getConsiderSourceClass,
   getUpgradeOnReacquire,
   getPatrolQualityUpgrade,
   movieTargetFromTmdbId,
@@ -152,6 +153,13 @@ describe("quality upgrade / HDR setting getters", () => {
     expect(await getPreferHdrOverResolution(repoWith(null))).toBe(false);
     expect(await getUpgradeOnReacquire(repoWith(null))).toBe(false);
     expect(await getPatrolQualityUpgrade(repoWith(null))).toBe(false);
+  });
+
+  it("considerSourceClass defaults on when unset", async () => {
+    expect(await getConsiderSourceClass(repoWith(null))).toBe(true);
+    expect(await getConsiderSourceClass(repoWith(""))).toBe(true);
+    expect(await getConsiderSourceClass(repoWith("false"))).toBe(false);
+    expect(await getConsiderSourceClass(repoWith("true"))).toBe(true);
   });
 
   it("parses true/1/on/yes", async () => {

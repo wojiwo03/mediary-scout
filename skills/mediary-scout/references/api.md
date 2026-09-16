@@ -77,8 +77,10 @@ curl -H "Authorization: Bearer $TOKEN" "$BASE/api/agent/config"
   "llm": { "baseURL": "…", "modelId": "…", "apiKey": "sk-***7f2a" },
   "qualityPreference": "high",
   "preferHdrOverResolution": false,
+  "considerSourceClass": true,
   "upgradeOnReacquire": false,
   "patrolQualityUpgrade": false,
+  "qualityLadderSummary": "比较顺序：分辨率 → HDR → 片源 / 压制 → 音轨。…",
   "preferredLanguage": "zh",
   "dailySweepTime": "09:30",
   "pansouBaseUrl": "…",
@@ -95,6 +97,8 @@ curl -H "Authorization: Bearer $TOKEN" "$BASE/api/agent/config"
 - `storages`：只读列出 `id` / `brand` / `name`，**不含凭据**。`brand` 取值如 `pan115` / `quark` / `guangya`。
 - `qualityPreference`：`"high"` / `"medium"`（未设则为不限）。
 - `preferHdrOverResolution`：默认 `false`。为 true 时 HDR 阶梯可压过更高分辨率（1080p DV 可压过 4K SDR）。
+- `considerSourceClass`：默认 `true`。为 false 时不比较 Remux / BluRay / WEB-DL 等片源类型。
+- `qualityLadderSummary`：只读。当前生效阶梯的中文摘要（分辨率 / HDR / 片源 / 音轨）。
 - `upgradeOnReacquire`：默认 `false`。为 true 时对已入库标题再 acquire 会排队画质升级（仅严格更高才替换）。
 - `patrolQualityUpgrade`：默认 `false`。为 true 时定时巡检也会扫已完结季/已入库电影做升级；默认巡检只补缺。
 - `preferredLanguage`：如 `"zh"`。
@@ -129,7 +133,7 @@ curl -X PUT \
 - **不接受 `storages`**：改盘绑定要在桌面 app 做（QR/凭据交互无法 agent 化）。
 - **校验失败 → 400**：响应含具体字段名与失败原因，据此修正后重试。
 
-**可写字段（示例）**：`qualityPreference`、`preferHdrOverResolution`、`upgradeOnReacquire`、`patrolQualityUpgrade`、`preferredLanguage`、`dailySweepTime`、`pansouBaseUrl`、`llm.{baseURL,modelId,apiKey}`、`prowlarr.{baseURL,apiKey}`、`tmdbApiKey`、`push.{bark,serverchan,…}`。以 GET 返回的结构为准。
+**可写字段（示例）**：`qualityPreference`、`preferHdrOverResolution`、`considerSourceClass`、`upgradeOnReacquire`、`patrolQualityUpgrade`、`preferredLanguage`、`dailySweepTime`、`pansouBaseUrl`、`llm.{baseURL,modelId,apiKey}`、`prowlarr.{baseURL,apiKey}`、`tmdbApiKey`、`push.{bark,serverchan,…}`。以 GET 返回的结构为准。`qualityLadderSummary` 只读。
 
 ---
 

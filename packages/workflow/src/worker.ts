@@ -102,6 +102,7 @@ async function resolveWorkerDeps(
   preferredLanguage: string | undefined;
   qualityPreference: "high" | "medium" | undefined;
   preferHdrOverResolution: boolean;
+  considerSourceClass: boolean;
   patrolQualityUpgrade: boolean;
   storageProvider: string | undefined;
   assrtToken: string | undefined;
@@ -117,6 +118,7 @@ async function resolveWorkerDeps(
     preferredLanguage: ctx.preferredLanguage ?? base.preferredLanguage,
     qualityPreference: ctx.qualityPreference ?? base.qualityPreference,
     preferHdrOverResolution: ctx.preferHdrOverResolution ?? base.preferHdrOverResolution ?? false,
+    considerSourceClass: ctx.considerSourceClass ?? base.considerSourceClass ?? true,
     patrolQualityUpgrade: ctx.patrolQualityUpgrade ?? base.patrolQualityUpgrade ?? false,
     storageProvider: ctx.storageProvider ?? base.storageProvider,
     assrtToken: ctx.assrtToken ?? base.assrtToken,
@@ -154,6 +156,7 @@ export interface AccountWorkerContext {
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
   preferHdrOverResolution?: boolean;
+  considerSourceClass?: boolean;
   patrolQualityUpgrade?: boolean;
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
   storageProvider?: string;
@@ -307,6 +310,7 @@ export async function runQueuedType2Workflow(input: {
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
   preferHdrOverResolution?: boolean;
+  considerSourceClass?: boolean;
   patrolQualityUpgrade?: boolean;
   now?: () => string;
   storageParentDirectoryId?: string;
@@ -359,6 +363,7 @@ export async function runQueuedType2Workflow(input: {
         ? {}
         : { qualityPreference: deps.qualityPreference }),
       ...(deps.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+      ...(deps.considerSourceClass === false ? { considerSourceClass: false } : {}),
       ...(qualityUpgrade ? { qualityUpgrade: true } : {}),
       ...(priorObtained.length > 0 ? { priorObtained } : {}),
       ...(deps.storageProvider === undefined
@@ -430,6 +435,7 @@ export async function runScheduledType3Monitoring(input: {
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
   preferHdrOverResolution?: boolean;
+  considerSourceClass?: boolean;
   patrolQualityUpgrade?: boolean;
   storageParentDirectoryId: string;
   /** Separate landing parent for anime, so anime patrol verify-or-creates under
@@ -568,6 +574,7 @@ export async function runScheduledType3Monitoring(input: {
           ? {}
           : { qualityPreference: deps.qualityPreference }),
         ...(deps.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+        ...(deps.considerSourceClass === false ? { considerSourceClass: false } : {}),
         ...(deps.patrolQualityUpgrade ? { qualityUpgrade: true } : {}),
         ...(deps.storageProvider === undefined
           ? {}
@@ -651,6 +658,7 @@ async function patrolMovie(args: {
     preferredLanguage: string | undefined;
     qualityPreference: "high" | "medium" | undefined;
     preferHdrOverResolution: boolean;
+    considerSourceClass: boolean;
     patrolQualityUpgrade: boolean;
     storageProvider: string | undefined;
     assrtToken: string | undefined;
@@ -736,6 +744,7 @@ async function patrolMovie(args: {
         ? {}
         : { qualityPreference: deps.qualityPreference }),
       ...(deps.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+      ...(deps.considerSourceClass === false ? { considerSourceClass: false } : {}),
       ...(obtained && deps.patrolQualityUpgrade ? { qualityUpgrade: true } : {}),
       ...(deps.storageProvider === undefined
         ? {}
@@ -836,6 +845,7 @@ export async function runQueuedMovieAcquisition(input: {
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
   preferHdrOverResolution?: boolean;
+  considerSourceClass?: boolean;
   patrolQualityUpgrade?: boolean;
   moviesParentDirectoryId: string;
   now?: () => string;
@@ -877,6 +887,7 @@ export async function runQueuedMovieAcquisition(input: {
         ? {}
         : { qualityPreference: deps.qualityPreference }),
       ...(deps.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+      ...(deps.considerSourceClass === false ? { considerSourceClass: false } : {}),
       ...(qualityUpgrade ? { qualityUpgrade: true } : {}),
       ...(deps.storageProvider === undefined
         ? {}
@@ -919,6 +930,8 @@ export async function runQueuedSeriesInitialization(input: {
   model: LanguageModel;
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
+  preferHdrOverResolution?: boolean;
+  considerSourceClass?: boolean;
   storageParentDirectoryId: string;
   /** Separate landing parent for anime, so the 动漫 shelf is physically its own
    *  tree on 115 and never mixed into the TV shows directory. */
@@ -978,6 +991,8 @@ export async function runQueuedSeriesInitialization(input: {
       ...(deps.qualityPreference === undefined
         ? {}
         : { qualityPreference: deps.qualityPreference }),
+      ...(deps.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+      ...(deps.considerSourceClass === false ? { considerSourceClass: false } : {}),
       ...(deps.storageProvider === undefined
         ? {}
         : { storageProvider: deps.storageProvider }),

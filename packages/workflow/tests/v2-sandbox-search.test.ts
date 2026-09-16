@@ -141,6 +141,24 @@ describe("TaskSandbox — searchResources (system-budgeted, dedup, snapshot-boun
     expect(result.notice).toMatch(/已移除|画质|raw/);
   });
 
+  it("strips Remux / WEB-DL / Atmos tokens from search keywords", async () => {
+    let searched = "";
+    const sandbox = new TaskSandbox({
+      provider: {
+        async search(keyword) {
+          searched = keyword;
+          return { id: `s_${keyword}`, keyword, candidates: [] };
+        },
+      },
+      searchBudget: 8,
+      titleTerms: ["沙丘2"],
+    });
+
+    await sandbox.searchResources("沙丘2 Remux WEB-DL Atmos");
+
+    expect(searched).toBe("沙丘2");
+  });
+
   it("leaves a bare title keyword untouched (no strip, no notice)", async () => {
     const provider = new FakeResourceProviderV2({
       results: { 铁拳教育: [{ id: "c1", title: "铁拳教育 全12集" }] },

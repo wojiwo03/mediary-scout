@@ -19,12 +19,12 @@ import { isMergedSourceEvidenceUsable, type MergedSourceHealth } from "../resour
  *  "1080p" / "WEB-DL" / "BluRay" match as units. 中字/国语/双语/字幕 are CJK so they
  *  match anywhere. */
 const QUALITY_SUBTITLE_TOKEN =
-  /hdr\s*10\s*\+|\b(?:4k|2160p|1080p|720p|hdr10plus|hdr10|hdr|dovi|dv|dolby[\s.-]?vision|remux|web-?dl|bluray|bdrip)\b|蓝光|杜比视界|中字|国语|双语|字幕/gi;
+  /hdr\s*10\s*\+|\b(?:4k|2160p|1080p|720p|hdr10plus|hdr10|hdr|dovi|dv|dolby[\s.-]?vision|remux|web-?dl|web-?rip|webrip|bluray|bdrip|hdtv|atmos|truehd|dts-?hd)\b|蓝光|杜比视界|杜比全景声|中字|国语|双语|字幕/gi;
 
 const SUBTITLE_NAME_PATTERN = /\.(srt|ass|ssa|sub|idx|vtt|sup|smi)$/i;
 
 const STRIP_NOTICE =
-  "已从关键词移除画质/字幕词(如 4K/1080p/DV/DoVi/HDR10+/HDR/杜比视界/蓝光/中字):PanSou 是通配符匹配,加这些只会把召回打成子集或归零,raw 裸标题召回最全。已改用裸标题搜索。";
+  "已从关键词移除画质/字幕词(如 4K/1080p/DV/DoVi/HDR10+/HDR/杜比视界/蓝光/Remux/WEB-DL/Atmos/中字):PanSou 是通配符匹配,加这些只会把召回打成子集或归零,raw 裸标题召回最全。已改用裸标题搜索。";
 
 /** Threshold for large snapshot digestion hint (病3). */
 const LARGE_SNAPSHOT_DIGEST_THRESHOLD = 10;

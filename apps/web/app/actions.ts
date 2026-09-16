@@ -510,7 +510,9 @@ export async function savePreferredLanguageAction(
 export async function saveQualityPreferenceAction(input: {
   quality: string;
   preferHdrOverResolution: boolean;
+  considerSourceClass: boolean;
   upgradeOnReacquire: boolean;
+  patrolQualityUpgrade: boolean;
 }): Promise<PushSettingsActionResult> {
   assertNotDemo();
   try {
@@ -519,7 +521,9 @@ export async function saveQualityPreferenceAction(input: {
       getCurrentAccountId,
       QUALITY_PREFERENCE_SETTING_KEY,
       PREFER_HDR_OVER_RESOLUTION_SETTING_KEY,
+      CONSIDER_SOURCE_CLASS_SETTING_KEY,
       UPGRADE_ON_REACQUIRE_SETTING_KEY,
+      PATROL_QUALITY_UPGRADE_SETTING_KEY,
     } = await import("../lib/workflow-runtime");
     const repository = getWorkflowRepository();
     const accountId = await getCurrentAccountId();
@@ -531,8 +535,18 @@ export async function saveQualityPreferenceAction(input: {
     );
     await repository.setAccountSetting(
       accountId,
+      CONSIDER_SOURCE_CLASS_SETTING_KEY,
+      input.considerSourceClass ? "true" : "false",
+    );
+    await repository.setAccountSetting(
+      accountId,
       UPGRADE_ON_REACQUIRE_SETTING_KEY,
       input.upgradeOnReacquire ? "true" : "false",
+    );
+    await repository.setAccountSetting(
+      accountId,
+      PATROL_QUALITY_UPGRADE_SETTING_KEY,
+      input.patrolQualityUpgrade ? "true" : "false",
     );
     return { success: true };
   } catch (error) {

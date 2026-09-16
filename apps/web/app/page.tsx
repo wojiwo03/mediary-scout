@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { CalendarClock, CheckCircle2, Clock3, Library, LoaderCircle, TriangleAlert } from "lucide-react";
+import { CalendarClock, CheckCircle2, Clock3, Library, LoaderCircle, Sparkles, TriangleAlert } from "lucide-react";
 import { AcquiringPoller } from "../components/acquiring-poller";
 import { AppSidebar } from "../components/app-sidebar";
 import { RequestTrackButton } from "../components/request-track-button";
@@ -616,9 +616,15 @@ function PosterCard({ entry, activeStorageId }: { entry: LibraryWallEntry; activ
     entry.state === "reserved"
       ? [{ tone: "blue", icon: CalendarClock, label: "预定（未上映）" }]
       : entry.state === "complete"
-        ? [{ tone: "green", icon: CheckCircle2, label: "已全部入库" }]
+        ? [
+            { tone: "green", icon: CheckCircle2, label: "已全部入库" },
+            { tone: "teal", icon: Sparkles, label: "打开详情可升级画质（仅当找到严格更高的版本才替换）" },
+          ]
         : entry.state === "tracking"
-          ? [{ tone: "indigo", icon: Clock3, label: "追更中" }]
+          ? [
+              { tone: "indigo", icon: Clock3, label: "追更中" },
+              { tone: "teal", icon: Sparkles, label: "打开详情可升级画质（仅当找到严格更高的版本才替换）" },
+            ]
           : [
               { tone: "amber", icon: TriangleAlert, label: "有缺集" },
               ...(entry.airing ? [{ tone: "indigo", icon: Clock3, label: "追更中" }] : []),

@@ -45,6 +45,8 @@ interface TvV2Common {
   /** Global quality preference ("high"/"medium"); undefined = 不限 (no guidance). */
   qualityPreference?: "high" | "medium";
   preferHdrOverResolution?: boolean;
+  /** When false, encode/source class is ignored. Default true. */
+  considerSourceClass?: boolean;
   qualityUpgrade?: boolean;
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
   storageProvider?: string;
@@ -71,6 +73,7 @@ function passthrough(input: TvV2Common): {
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
   preferHdrOverResolution?: boolean;
+  considerSourceClass?: boolean;
   qualityUpgrade?: boolean;
   storageProvider?: string;
   assrtToken?: string;
@@ -81,6 +84,7 @@ function passthrough(input: TvV2Common): {
     ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage }),
     ...(input.qualityPreference === undefined ? {} : { qualityPreference: input.qualityPreference }),
     ...(input.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+    ...(input.considerSourceClass === false ? { considerSourceClass: false } : {}),
     ...(input.qualityUpgrade ? { qualityUpgrade: true } : {}),
     ...(input.storageProvider === undefined ? {} : { storageProvider: input.storageProvider }),
     ...(input.assrtToken === undefined ? {} : { assrtToken: input.assrtToken }),
@@ -333,6 +337,7 @@ export async function runMovieAcquisitionV2AndPersist(input: {
   /** Global quality preference ("high"/"medium"); undefined = 不限 (no guidance). */
   qualityPreference?: "high" | "medium";
   preferHdrOverResolution?: boolean;
+  considerSourceClass?: boolean;
   qualityUpgrade?: boolean;
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
   storageProvider?: string;
@@ -362,6 +367,7 @@ export async function runMovieAcquisitionV2AndPersist(input: {
     ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage }),
     ...(input.qualityPreference === undefined ? {} : { qualityPreference: input.qualityPreference }),
     ...(input.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+    ...(input.considerSourceClass === false ? { considerSourceClass: false } : {}),
     ...(input.qualityUpgrade ? { qualityUpgrade: true } : {}),
     ...(input.storageProvider === undefined ? {} : { storageProvider: input.storageProvider }),
     ...(input.assrtToken === undefined ? {} : { assrtToken: input.assrtToken }),

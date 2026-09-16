@@ -11,7 +11,6 @@ import { UnbindStorageButton } from "../../components/unbind-storage-button";
 import { PushNotificationForm } from "../../components/push-notification-form";
 import { PreferredLanguageForm } from "../../components/preferred-language-form";
 import { QualityPreferenceForm } from "../../components/quality-preference-form";
-import { PatrolQualityUpgradeForm } from "../../components/patrol-quality-upgrade-form";
 import { LlmConfigForm } from "../../components/llm-config-form";
 import { TmdbApiKeyForm } from "../../components/tmdb-api-key-form";
 import { AssrtTokenForm } from "../../components/assrt-token-form";
@@ -41,6 +40,7 @@ import {
   getPan115ConnectionStatus,
   getWorkflowRepository,
   getPreferHdrOverResolution,
+  getConsiderSourceClass,
   getUpgradeOnReacquire,
   getPatrolQualityUpgrade,
   PREFERRED_LANGUAGE_SETTING_KEY,
@@ -263,7 +263,9 @@ async function QualityPreferenceSection() {
   const repository = getAccountScopedSettings(await getCurrentAccountId());
   const initial = (await repository.getSetting(QUALITY_PREFERENCE_SETTING_KEY)) ?? "any";
   const preferHdr = await getPreferHdrOverResolution(repository);
+  const considerSource = await getConsiderSourceClass(repository);
   const upgradeOnReacquire = await getUpgradeOnReacquire(repository);
+  const patrolUpgrade = await getPatrolQualityUpgrade(repository);
 
   return (
     <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
@@ -274,14 +276,16 @@ async function QualityPreferenceSection() {
             偏好画质
           </h2>
           <p className="panel-note">
-            优先获取的画质档位（覆盖优先，找不到不留缺）。HDR 阶梯只在召回后读候选标题，搜索仍用裸标题。
+            优先获取的画质档位（覆盖优先，找不到不留缺）。比较阶梯只在召回后读候选标题，搜索仍用裸标题。
           </p>
         </div>
       </div>
       <QualityPreferenceForm
         initial={initial}
         preferHdrOverResolution={preferHdr}
+        considerSourceClass={considerSource}
         upgradeOnReacquire={upgradeOnReacquire}
+        patrolQualityUpgrade={patrolUpgrade}
       />
     </section>
   );
@@ -536,7 +540,12 @@ async function DailySweepSection() {
         </div>
       </div>
       <DailySweepForm initial={times} max={MAX_DAILY_SWEEP_TIMES} />
-      <PatrolQualityUpgradeForm initial={patrolUpgrade} />
+      <p className="panel-note" style={{ marginTop: 16 }}>
+        {patrolUpgrade
+          ? "当前已打开「巡检时也升级画质」：定时巡检会扫已完结季和已入库电影，仅替换严格更高的版本。"
+          : "当前巡检只补缺，不会替换已入库画质。"}
+        开关在「获取偏好 → 偏好画质」。
+      </p>
       <div
         style={{
           display: "flex",

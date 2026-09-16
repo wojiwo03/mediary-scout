@@ -9,6 +9,7 @@ import {
 } from "./workflow-v2-bridge.js";
 import type { DeadLinkStore } from "./dead-links.js";
 import { runAcquisitionV2Workflow } from "./workflow-v2.js";
+import { qualityLadderPolicyFromFlags } from "./quality-ladder.js";
 import { getAcquisitionQualityGuidance, getSearchRecipe, searchProfile } from "./search-profile.js";
 import type { AgentToolEvent } from "./activity.js";
 
@@ -43,6 +44,8 @@ export interface RunTvAcquisitionV2Request {
   qualityPreference?: "high" | "medium";
   /** HDR may outrank resolution (1080p DV > 4K SDR). Default off. */
   preferHdrOverResolution?: boolean;
+  /** When false, encode/source class is ignored. Default true. */
+  considerSourceClass?: boolean;
   /**
    * Allow replacing already-obtained coverage with a strictly better candidate.
    * Default off — scheduled patrol stays gap-fill unless the caller sets this.
@@ -70,10 +73,11 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
   const qualityGuidance = getAcquisitionQualityGuidance({
     profile,
     preference: request.qualityPreference,
-    policy: {
+    policy: qualityLadderPolicyFromFlags({
       ...(request.qualityPreference === undefined ? {} : { resolutionPreference: request.qualityPreference }),
       ...(request.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
-    },
+      ...(request.considerSourceClass === false ? { considerSourceClass: false } : {}),
+    }),
     ...(request.qualityUpgrade ? { qualityUpgrade: true } : {}),
   });
   const v2 = await runAcquisitionV2Workflow({
