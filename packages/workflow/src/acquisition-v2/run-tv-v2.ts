@@ -9,7 +9,7 @@ import {
 } from "./workflow-v2-bridge.js";
 import type { DeadLinkStore } from "./dead-links.js";
 import { runAcquisitionV2Workflow } from "./workflow-v2.js";
-import { getQualityGuidance, getSearchRecipe, searchProfile } from "./search-profile.js";
+import { getAcquisitionQualityGuidance, getSearchRecipe, searchProfile } from "./search-profile.js";
 import type { AgentToolEvent } from "./activity.js";
 
 function defaultNowIso(): string {
@@ -41,6 +41,13 @@ export interface RunTvAcquisitionV2Request {
   preferredLanguage?: string;
   /** Global quality preference ("high"/"medium"); undefined = 不限 (no guidance). */
   qualityPreference?: "high" | "medium";
+  /** HDR may outrank resolution (1080p DV > 4K SDR). Default off. */
+  preferHdrOverResolution?: boolean;
+  /**
+   * Allow replacing already-obtained coverage with a strictly better candidate.
+   * Default off — scheduled patrol stays gap-fill unless the caller sets this.
+   */
+  qualityUpgrade?: boolean;
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
   storageProvider?: string;
   /** assrt token (Settings → 字幕来源). Undefined = 字幕流程不触发。 */
@@ -60,7 +67,15 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     type: request.title.type,
     originCountries: request.title.originCountries ?? [],
   });
-  const qualityGuidance = getQualityGuidance(profile, request.qualityPreference);
+  const qualityGuidance = getAcquisitionQualityGuidance({
+    profile,
+    preference: request.qualityPreference,
+    policy: {
+      ...(request.qualityPreference === undefined ? {} : { resolutionPreference: request.qualityPreference }),
+      ...(request.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+    },
+    ...(request.qualityUpgrade ? { qualityUpgrade: true } : {}),
+  });
   const v2 = await runAcquisitionV2Workflow({
     provider: request.resourceProvider,
     executor: request.storage,
@@ -81,6 +96,7 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     searchHints: getSearchRecipe(profile),
     searchProfile: profile,
     ...(qualityGuidance === "" ? {} : { qualityGuidance }),
+    ...(request.qualityUpgrade ? { qualityUpgrade: true } : {}),
     ...(request.priorObtained === undefined ? {} : { priorObtained: request.priorObtained }),
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
     ...(request.maxSteps === undefined ? {} : { maxSteps: request.maxSteps }),

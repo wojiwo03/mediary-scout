@@ -12,6 +12,7 @@ import { RequestTrackButton } from "../../../components/request-track-button";
 import {
   RequestRemainingButton,
   RequestSeasonButton,
+  QualityUpgradeButton,
 } from "../../../components/title-action-buttons";
 import { UntrackButton } from "../../../components/untrack-button";
 import type { DemoAcquisitionEntry } from "../../../lib/demo-session";
@@ -348,6 +349,13 @@ function MovieHub({
                     storageId={storageId}
                   />
                 ) : null}
+                {view.state === "acquired" ? (
+                  <QualityUpgradeButton
+                    candidateId={movieCandidateId}
+                    storageId={storageId}
+                    titleAcquiring={view.acquiring}
+                  />
+                ) : null}
                 {view.state === "acquiring" ? (
                   <Link className="primary-button" href={activityHref}>
                     查看活动
@@ -504,6 +512,13 @@ function SeasonRow({
           ))}
         </div>
         <div className="season-untrack-row">
+          {season.obtainedCount > 0 ? (
+            <QualityUpgradeButton
+              candidateId={`tmdb_tv_${tmdbId}_s${season.seasonNumber}`}
+              storageId={storageId}
+              titleAcquiring={acquiring}
+            />
+          ) : null}
           <UntrackButton
             tmdbId={tmdbId}
             storageId={storageId}

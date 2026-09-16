@@ -105,3 +105,35 @@ describe("SEARCH section — raw 活期文档 doctrine (Task 5: C2/C3)", () => {
     expect(search).toMatch(/reportNoCoverage/);
   });
 });
+
+describe("prompt/skill quality ladder alignment (no drift)", () => {
+  it("SEARCH carries the shared HDR ladder and never-in-keyword law", async () => {
+    const { HDR_LADDER_LINES, QUALITY_SEARCH_TOKEN_LAW } = await import(
+      "../src/acquisition-v2/quality-ladder.js"
+    );
+    const search = readSkillSection("search");
+    expect(search).toContain(HDR_LADDER_LINES[0]);
+    expect(search).toContain(HDR_LADDER_LINES[1]);
+    expect(search).toContain(QUALITY_SEARCH_TOKEN_LAW);
+    expect(search).toMatch(/DV|DoVi|杜比视界/);
+  });
+
+  it("TV and MOVIE manuals carry upgrade + patrol-gap-only shared lines", async () => {
+    const { QUALITY_UPGRADE_LINES, PATROL_GAP_ONLY_LINE } = await import(
+      "../src/acquisition-v2/quality-ladder.js"
+    );
+    const tv = readSkillSection("tv");
+    const movie = readSkillSection("movie");
+    expect(tv).toContain(PATROL_GAP_ONLY_LINE);
+    expect(tv).toContain(QUALITY_UPGRADE_LINES[0]);
+    expect(movie).toContain(QUALITY_UPGRADE_LINES[0]);
+    expect(movie).toMatch(/Dolby Vision|HDR 阶梯|DV/);
+  });
+
+  it("DEDUP keep-larger yields to the ladder only on QUALITY UPGRADE runs", () => {
+    const dedup = readSkillSection("dedup");
+    expect(dedup).toMatch(/QUALITY UPGRADE/);
+    expect(dedup).toMatch(/keep-larger|larger/i);
+    expect(dedup).toMatch(/阶梯|strictly higher|严格更高/);
+  });
+});

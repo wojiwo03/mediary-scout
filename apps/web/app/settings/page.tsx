@@ -11,6 +11,7 @@ import { UnbindStorageButton } from "../../components/unbind-storage-button";
 import { PushNotificationForm } from "../../components/push-notification-form";
 import { PreferredLanguageForm } from "../../components/preferred-language-form";
 import { QualityPreferenceForm } from "../../components/quality-preference-form";
+import { PatrolQualityUpgradeForm } from "../../components/patrol-quality-upgrade-form";
 import { LlmConfigForm } from "../../components/llm-config-form";
 import { TmdbApiKeyForm } from "../../components/tmdb-api-key-form";
 import { AssrtTokenForm } from "../../components/assrt-token-form";
@@ -39,6 +40,9 @@ import {
   beijingDateTime,
   getPan115ConnectionStatus,
   getWorkflowRepository,
+  getPreferHdrOverResolution,
+  getUpgradeOnReacquire,
+  getPatrolQualityUpgrade,
   PREFERRED_LANGUAGE_SETTING_KEY,
   QUALITY_PREFERENCE_SETTING_KEY,
   LLM_BASE_URL_SETTING_KEY,
@@ -258,6 +262,8 @@ async function QualityPreferenceSection() {
   await connection();
   const repository = getAccountScopedSettings(await getCurrentAccountId());
   const initial = (await repository.getSetting(QUALITY_PREFERENCE_SETTING_KEY)) ?? "any";
+  const preferHdr = await getPreferHdrOverResolution(repository);
+  const upgradeOnReacquire = await getUpgradeOnReacquire(repository);
 
   return (
     <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
@@ -267,10 +273,16 @@ async function QualityPreferenceSection() {
             <Gauge size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
             偏好画质
           </h2>
-          <p className="panel-note">优先获取的画质档位（覆盖优先，找不到不留缺）</p>
+          <p className="panel-note">
+            优先获取的画质档位（覆盖优先，找不到不留缺）。HDR 阶梯只在召回后读候选标题，搜索仍用裸标题。
+          </p>
         </div>
       </div>
-      <QualityPreferenceForm initial={initial} />
+      <QualityPreferenceForm
+        initial={initial}
+        preferHdrOverResolution={preferHdr}
+        upgradeOnReacquire={upgradeOnReacquire}
+      />
     </section>
   );
 }
@@ -495,6 +507,8 @@ async function DailySweepSection() {
   const times = await getDailySweepTimes(repository);
   const lastSweepAt = await repository.getSetting(LAST_SWEEP_COMPLETED_AT_SETTING_KEY);
   const { hhmm } = beijingDateTime();
+  const accountSettings = getAccountScopedSettings(await getCurrentAccountId());
+  const patrolUpgrade = await getPatrolQualityUpgrade(accountSettings);
 
   const nextSlot = times.find((slot) => slot > hhmm) ?? times[0]!;
   // 坏 ISO 串（手改/旧版遗留）会让 format() 抛 RangeError 炸掉整页 SSR——先验有效性。
@@ -518,10 +532,11 @@ async function DailySweepSection() {
             <CalendarClock size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
             每日定时巡检
           </h2>
-          <p className="panel-note">在这些时间点自动追更：检查已追踪剧集，获取新播出或仍缺失的集数</p>
+          <p className="panel-note">在这些时间点自动追更：检查已追踪剧集，获取新播出或仍缺失的集数。默认不升级已入库画质。</p>
         </div>
       </div>
       <DailySweepForm initial={times} max={MAX_DAILY_SWEEP_TIMES} />
+      <PatrolQualityUpgradeForm initial={patrolUpgrade} />
       <div
         style={{
           display: "flex",

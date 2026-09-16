@@ -19,12 +19,12 @@ import { isMergedSourceEvidenceUsable, type MergedSourceHealth } from "../resour
  *  "1080p" / "WEB-DL" / "BluRay" match as units. 中字/国语/双语/字幕 are CJK so they
  *  match anywhere. */
 const QUALITY_SUBTITLE_TOKEN =
-  /\b(?:4k|2160p|1080p|720p|hdr|dv|remux|web-?dl|bluray|bdrip)\b|蓝光|中字|国语|双语|字幕/gi;
+  /hdr\s*10\s*\+|\b(?:4k|2160p|1080p|720p|hdr10plus|hdr10|hdr|dovi|dv|dolby[\s.-]?vision|remux|web-?dl|bluray|bdrip)\b|蓝光|杜比视界|中字|国语|双语|字幕/gi;
 
 const SUBTITLE_NAME_PATTERN = /\.(srt|ass|ssa|sub|idx|vtt|sup|smi)$/i;
 
 const STRIP_NOTICE =
-  "已从关键词移除画质/字幕词(如 4K/1080p/蓝光/中字/字幕):PanSou 是通配符匹配,加这些只会把召回打成子集或归零,raw 裸标题召回最全。已改用裸标题搜索。";
+  "已从关键词移除画质/字幕词(如 4K/1080p/DV/DoVi/HDR10+/HDR/杜比视界/蓝光/中字):PanSou 是通配符匹配,加这些只会把召回打成子集或归零,raw 裸标题召回最全。已改用裸标题搜索。";
 
 /** Threshold for large snapshot digestion hint (病3). */
 const LARGE_SNAPSHOT_DIGEST_THRESHOLD = 10;
@@ -112,6 +112,15 @@ export interface TaskSandboxOptions {
   /** The task's fine-grained search profile — enables the anime taboo-keyword
    *  validator (warnings only, never blocking). 病2b。 */
   searchProfile?: SearchProfile;
+  /**
+   * Allow transferCandidate / transferUntilLanded after coverage is met so a
+   * strictly-better candidate can replace landed files. Default off — the
+   * 莉可丽丝 gate (no more transfers once covered) stays in force.
+   */
+  qualityUpgrade?: boolean;
+  /** Pre-seed markObtained so an upgrade run of an already-covered title starts
+   *  coverage-met (transfers then rely on qualityUpgrade). */
+  priorObtainedMarks?: readonly string[];
 }
 
 export interface SearchToolResult {
@@ -165,6 +174,7 @@ export class TaskSandbox {
   /** Reserve-zone threshold (movie 8+2) — undefined disables the reserve zone. */
   private readonly softThreshold: number | undefined;
   private readonly profile: SearchProfile | undefined;
+  private readonly qualityUpgrade: boolean;
   private readonly seenKeywords = new Set<string>();
   private readonly snapshotByKeyword = new Map<string, ResourceSnapshotV2>();
   /** 每个（规范化）关键词被搜索的次数——prime 记 1，agent fresh 记 1，dedup 命中递增。 */
@@ -200,6 +210,7 @@ export class TaskSandbox {
     this.storage = options.storage;
     this.stagingDirectoryId = options.stagingDirectoryId;
     this.profile = options.searchProfile;
+    this.qualityUpgrade = options.qualityUpgrade === true;
     this.seasonDirs = new Map(
       Object.entries(options.targetSeasonDirectoryIds ?? {}).map(([season, id]) => [Number(season), id]),
     );
@@ -207,6 +218,9 @@ export class TaskSandbox {
     this.need = options.need ?? [];
     this.titleTerms = options.titleTerms ?? [];
     this.subtitleProvider = options.subtitleProvider;
+    for (const code of options.priorObtainedMarks ?? []) {
+      this.obtainedCodes.add(code);
+    }
   }
 
   /** Every scoped target directory (all seasons + the movie) — the union used for
@@ -448,7 +462,7 @@ export class TaskSandbox {
     if (!this.storage || !this.stagingDirectoryId) {
       throw new Error("SANDBOX: no storage/staging handle configured for transfers");
     }
-    if (this.isCoverageMet()) {
+    if (this.isCoverageMet() && !this.qualityUpgrade) {
       throw new Error(
         `SANDBOX_COVERAGE_ALREADY_MET: every needed item (${this.need.join(",")}) is obtained; no further transfers`,
       );
@@ -503,7 +517,7 @@ export class TaskSandbox {
         "SANDBOX_TRANSFER_UNTIL_LANDED_MOVIE_ONLY: only a movie task may iterate alternative links for one film",
       );
     }
-    if (this.isCoverageMet()) {
+    if (this.isCoverageMet() && !this.qualityUpgrade) {
       throw new Error(
         `SANDBOX_COVERAGE_ALREADY_MET: every needed item (${this.need.join(",")}) is obtained; no further transfers`,
       );

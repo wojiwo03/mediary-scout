@@ -55,6 +55,13 @@ export interface RunAcquisitionV2Request {
   searchHints?: string;
   /** Rendered quality-preference guidance (召回后选片优先级), injected into the prompt. */
   qualityGuidance?: string;
+  /**
+   * Allow replacing already-obtained coverage with a strictly better candidate
+   * (relaxes the sandbox coverage-met transfer gate). Default off.
+   */
+  qualityUpgrade?: boolean;
+  /** Pre-seed obtained marks (upgrade of an already-covered title). */
+  priorObtainedMarks?: readonly string[];
   /** The task's fine-grained search profile — enables the anime taboo-keyword
    *  validator (warnings only, never blocking). 病2b。 */
   searchProfile?: SearchProfile;
@@ -122,6 +129,12 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     titleTerms: [request.target.title, ...request.target.aliases],
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
     ...(request.searchProfile === undefined ? {} : { searchProfile: request.searchProfile }),
+    ...(request.qualityUpgrade ? { qualityUpgrade: true } : {}),
+    ...(request.qualityUpgrade && request.target.kind === "movie"
+      ? { priorObtainedMarks: ["MOVIE"] }
+      : request.priorObtainedMarks
+        ? { priorObtainedMarks: request.priorObtainedMarks }
+        : {}),
   });
 
   // Pre-warm the raw snapshot (bare title) BEFORE building the system prompt, so the

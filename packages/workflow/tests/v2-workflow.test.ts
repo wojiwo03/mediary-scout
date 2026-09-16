@@ -111,4 +111,25 @@ describe("runAcquisitionV2Workflow — outer orchestration (dirs → sync → ag
     expect(result.obtained).toEqual(["S01E01"]);
     expect(result.stillMissing).toEqual(["S01E02", "S01E03"]);
   });
+
+  it("qualityUpgrade of a fully-covered season does NOT no-op — the agent still runs", async () => {
+    const executor = new FakeStorageExecutor();
+    const result = await runAcquisitionV2Workflow({
+      provider: emptyProvider(),
+      executor,
+      model: searchThenReportModel(),
+      workflowRunId: "run-upgrade",
+      title: { name: "Show", year: 2024, aliases: [], tmdbId: 42 },
+      categoryParentId: "tv_root",
+      seasons: [{ seasonNumber: 1, latestAiredEpisode: 3 }],
+      qualityPreference: "1080p",
+      priorObtained: ["S01E01", "S01E02", "S01E03"],
+      qualityUpgrade: true,
+    });
+
+    expect(result.missingBefore).toEqual([]);
+    expect(result.obtained).toEqual(["S01E01", "S01E02", "S01E03"]);
+    // The gap no-op returns EMPTY_OUTCOME with no snapshots; an upgrade run searches.
+    expect(result.outcome.resourceSnapshots.length).toBeGreaterThan(0);
+  });
 });

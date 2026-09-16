@@ -38,13 +38,15 @@ BASE=$(jq -r .baseUrl ~/.mediary/agent.json)
 | 用户意图 | 端点 | curl |
 |---|---|---|
 | 查当前配置（画质/语言/LLM/推送…） | `GET /api/agent/config` | `curl -H "Authorization: Bearer $TOKEN" "$BASE/api/agent/config"` |
-| 改配置（画质、语言、扫描时间…，传啥改啥） | `PUT /api/agent/config` | `curl -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"qualityPreference":"4K"}' "$BASE/api/agent/config"` |
+| 改配置（画质、HDR、升级策略、语言、扫描时间…，传啥改啥） | `PUT /api/agent/config` | `curl -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"qualityPreference":"high","upgradeOnReacquire":true}' "$BASE/api/agent/config"` |
 | 「帮我找/下 XX」 | `POST /api/agent/acquire` | `curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"query":"进击的巨人","type":"tv","season":2}' "$BASE/api/agent/acquire"` |
 | 「触发一次巡检」「跑一遍巡检」 | `POST /api/agent/patrol` | `curl -X POST -H "Authorization: Bearer $TOKEN" "$BASE/api/agent/patrol"` |
 | 「我在追哪些剧」「缺哪几集」「我的库存」 | `GET /api/agent/library` | `curl -H "Authorization: Bearer $TOKEN" "$BASE/api/agent/library"` |
 | 「XX 下好了吗」「下载到哪了」「最近在忙啥」 | `GET /api/agent/activity` | `curl -H "Authorization: Bearer $TOKEN" "$BASE/api/agent/activity?limit=20"` |
 
-`acquire` body 字段：`query`(必填)、`type`(`"tv"`/`"movie"`/`null`)、`season`(数字/`null`)、`storageId`(`"cs_…"`/`null`，缺省用 primary drive)、`tmdbId`(数字/`null`，用于消歧重发)。
+`acquire` body 字段：`query`(必填)、`type`(`"tv"`/`"movie"`/`null`)、`season`(数字/`null`)、`storageId`(`"cs_…"`/`null`，缺省用 primary drive)、`tmdbId`(数字/`null`，用于消歧重发)、`qualityUpgrade`(布尔，显式升级已入库画质)。
+
+画质/DV/HDR 只在召回后读候选标题，**不要**让用户把这些词写进搜索 query。定时巡检默认只补缺；要巡检也升级须 `patrolQualityUpgrade: true`。详见仓库 `docs/quality-upgrade-and-hdr.md`。
 
 ## 3. 关键规则（必须遵守）
 

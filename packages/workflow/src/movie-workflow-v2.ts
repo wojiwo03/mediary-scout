@@ -21,7 +21,7 @@ import type { DeadLinkStore } from "./acquisition-v2/dead-links.js";
 import { readLandedSize, type LandedSize } from "./acquisition-v2/landed-size.js";
 import type { AgentToolEvent } from "./acquisition-v2/activity.js";
 import { runAcquisitionV2 } from "./acquisition-v2/orchestrator.js";
-import { getQualityGuidance, getSearchRecipe } from "./acquisition-v2/search-profile.js";
+import { getAcquisitionQualityGuidance, getSearchRecipe } from "./acquisition-v2/search-profile.js";
 import { ensureMediaLibraryDirectory } from "./media-library-folder.js";
 
 function defaultNowIso(): string {
@@ -47,6 +47,10 @@ export interface RunMovieAcquisitionV2Request {
   preferredLanguage?: string;
   /** Global quality preference ("high"/"medium"); undefined = 不限 (no guidance). */
   qualityPreference?: "high" | "medium";
+  /** HDR may outrank resolution (1080p DV > 4K SDR). Default off. */
+  preferHdrOverResolution?: boolean;
+  /** Replace an already-obtained film when a strictly better candidate exists. */
+  qualityUpgrade?: boolean;
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
   storageProvider?: string;
   /** assrt token (Settings → 字幕来源). Undefined = 字幕流程不触发。 */
@@ -74,6 +78,16 @@ export async function runMovieAcquisitionV2(
     tmdbId: request.title.tmdbId,
   });
 
+  const qualityGuidance = getAcquisitionQualityGuidance({
+    profile: "movie",
+    preference: request.qualityPreference,
+    policy: {
+      ...(request.qualityPreference === undefined ? {} : { resolutionPreference: request.qualityPreference }),
+      ...(request.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+    },
+    ...(request.qualityUpgrade ? { qualityUpgrade: true } : {}),
+  });
+
   const v2 = await runAcquisitionV2({
     provider: request.resourceProvider,
     executor: request.storage,
@@ -90,9 +104,8 @@ export async function runMovieAcquisitionV2(
     targetMovieDirectoryId: movieDirectoryId,
     searchHints: getSearchRecipe("movie"), // movie search is origin-independent
     searchProfile: "movie",
-    ...(getQualityGuidance("movie", request.qualityPreference) === ""
-      ? {}
-      : { qualityGuidance: getQualityGuidance("movie", request.qualityPreference) }),
+    ...(qualityGuidance === "" ? {} : { qualityGuidance }),
+    ...(request.qualityUpgrade ? { qualityUpgrade: true } : {}),
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
     ...(request.maxSteps === undefined ? {} : { maxSteps: request.maxSteps }),
     ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),

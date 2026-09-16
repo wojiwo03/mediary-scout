@@ -1,3 +1,10 @@
+import {
+  HDR_LADDER_LINES,
+  PATROL_GAP_ONLY_LINE,
+  QUALITY_SEARCH_TOKEN_LAW,
+  QUALITY_UPGRADE_LINES,
+} from "./quality-ladder.js";
+
 /**
  * The acquisition SKILL — the agent's on-demand manual.
  *
@@ -172,7 +179,8 @@ const DEDUP = `# Deduplication (keep the larger, by real size)
 Overlapping ranges (1-10, 8-13) or a fuller pack on top of what a season already has WILL create duplicate episodes once you extract. When the same episode has more than one file:
 - Group the files by episode (read the real filenames — you understand "[Grp] Show - 04.mkv" is E04; no regex, no suffix tricks).
 - Keep the LARGER file (higher bitrate = better quality), delete the smaller. deleteFiles executes your grouping; the system rereads to confirm.
-- Size is the ONLY criterion. "Newer" is not better. "Collection pack" is not better. A "(1)" suffix decides nothing.
+- Size is the default criterion. "Newer" is not better. "Collection pack" is not better. A "(1)" suffix decides nothing.
+- Exception — QUALITY UPGRADE (only when this run's QUALITY PREFERENCE block says QUALITY UPGRADE is on): a strictly higher ladder candidate replaces the landed file even if it is smaller. Equal quality still keep-larger. Disc images never replace playable video. ${QUALITY_UPGRADE_LINES[2]}
 
 ## Worked example — Life Tree (生命树)
 The season dir already holds E01-E12 at ~1.2GB each (high quality). A new pack lands E01-E14 at ~800MB each. Missing was E13-E14.
@@ -188,7 +196,7 @@ The candidate must be THIS film — not a remake, sequel, prequel, or same-IP di
 - Reject "蝙蝠侠：黑暗骑士崛起" (2012) when the target is "蝙蝠侠：黑暗骑士" (2008).
 - Reject a 1990 version when the target is a later remake.
 - When identity is unclear, do NOT transfer speculatively.
-Reject packs / collections / box sets / multi-part / anything structured like seasons — a movie is a single film. Reject disc images too: a 蓝光原盘 / ISO / BDMV full-disc dump (often 50–100GB+, isVideo=false) is NOT a usable film — you need ONE playable video file (mkv/mp4/ts). Among confirmed identity matches prefer the highest quality VIDEO stated transparently (4K REMUX/video > 1080p > 720p); prefer a 4K REMUX or even a lower-quality video over a 原盘/ISO even when the disc image is nominally higher quality. Magnets and 115 shares both transfer instantly — judge on identity/quality, never on link type.
+Reject packs / collections / box sets / multi-part / anything structured like seasons — a movie is a single film. Reject disc images too: a 蓝光原盘 / ISO / BDMV full-disc dump (often 50–100GB+, isVideo=false) is NOT a usable film — you need ONE playable video file (mkv/mp4/ts). Among confirmed identity matches prefer the highest quality VIDEO stated transparently (4K REMUX/video > 1080p > 720p); then apply the HDR ladder inside the same resolution. ${HDR_LADDER_LINES[0]} ${HDR_LADDER_LINES[1]} Prefer a 4K REMUX or even a lower-quality video over a 原盘/ISO even when the disc image is nominally higher quality. Magnets and 115 shares both transfer instantly — judge on identity/quality, never on link type. When QUALITY UPGRADE is on: ${QUALITY_UPGRADE_LINES.join("")}
 
 ## Two transfer tools — pick by the situation
 - transferCandidate(snapshotId, candidateId): ONE candidate at a time. Use it for a single obvious share, or for a MAGNET (a magnet does NOT fail loud — only the landing point in inspectStaging tells you whether it 秒传'd; so transfer, then inspect).
@@ -221,6 +229,8 @@ You own one OR MORE seasons in scope. The need is "应有 vs 实有 = which epis
 - Otherwise compose the FEWEST non-redundant ranges that cover every missing episode, decide that whole set (Evidence → Facts → Decision), then transfer the set back-to-back (do NOT search again between transfers).
 - Worked example — you need 50 episodes and every resource is a single-episode pack: do NOT transfer-one → re-check → transfer-one fifty times (that hammers 115). DECIDE the set of packs that together cover the 50, transfer that decided set in sequence, THEN inspect / dedup / mark once.
 - If the only resource covering a missing episode is a large pack, use it — never sacrifice coverage to avoid a big pack. (In the daily patrol specifically, when a small exact-missing resource AND a huge full-season pack both cover, prefer the small exact one — less dedup risk; quality can be upgraded later.)
+${PATROL_GAP_ONLY_LINE}
+When QUALITY UPGRADE is on for this run: ${QUALITY_UPGRADE_LINES.join("")} ${QUALITY_SEARCH_TOKEN_LAW}
 
 ## Multi-season / complete-series packs
 The need may span several seasons and a SINGLE pack ("Breaking Bad Complete Series" / "全五季") may cover them all. Transfer it ONCE, then submit ONE distribution plan that maps the files to EACH season at once: moveToSeason({moves:[{season:1,fileIds:[...]},{season:2,fileIds:[...]}]}) — each video's SUBTITLES ride in the same season's fileIds. Take ONLY still-missing episodes — a season the library already has is NOT recopied (inspectTargetDir(season) shows what each season already holds; recopying a present season is the 莉可丽丝 mistake across seasons). A pack covering seasons beyond the need is fine — take only what is missing, leave the rest in staging.
@@ -303,7 +313,10 @@ Your per-run input already gives you THIS title's recipe (searchHints). The map 
 
 ## Universal laws (every type)
 - A single 0 almost NEVER means "no resource": PanSou's API jitters violently — the SAME keyword can swing 0↔900 between consecutive calls (measured: Breaking Bad 0→903; 斗破苍穹/遮天 once reported 0 are really 140-196). On a 0 (升级搜索时), re-run the SAME keyword 2-3 times before ever concluding empty. Most "0"s are lies.
-- Quality is NOT a search word. Putting 4K/1080P/蓝光/中字/字幕 into the keyword filters the title match AND skews to wrong works — measured归零 above. Read quality/中字 off the returned titles instead (the system strips these tokens for you if you slip).
+- Quality is NOT a search word. Putting 4K/1080P/蓝光/中字/字幕/DV/DoVi/HDR10+/HDR/杜比视界 into the keyword filters the title match AND skews to wrong works — measured归零 above. Read quality/中字/HDR off the returned titles instead (the system strips these tokens for you if you slip).
+- ${HDR_LADDER_LINES[0]}
+- ${HDR_LADDER_LINES[1]}
+- ${QUALITY_SEARCH_TOKEN_LAW}
 - count ≠ relevance: read the top titles to confirm the work itself + full coverage.
 - Sub-type tokens NEVER go in the query: +美剧/+韩剧/+日剧/+国产剧/+番剧/+动画 almost never help — they zero the pool or top it with noise. The ONLY exceptions: 国漫's +国漫 (a real release tag, for disambiguating same-name live-action) and Chernobyl's +美剧 (the one show whose bare name is always 0).
 - The 升级 keyword's LANGUAGE follows the user's subtitle preference. Prefer 中文 subs (the default) → the 中文译名 already recalled in the活期文档 is best (Chinese-named resources carry 中字 AND recall better). Prefer the original language → only then search by the original/English name (huge recall but mostly NO Chinese subs). The English/original name is the 升级 fallback for "中文名 still 0", and you must then pick the results that carry 中字; if none do, that's weak coverage for a 中文 user.

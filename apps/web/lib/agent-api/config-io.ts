@@ -4,12 +4,18 @@ import {
   getLlmConfig,
   getQualityPreference,
   getPreferredLanguage,
+  getPreferHdrOverResolution,
+  getUpgradeOnReacquire,
+  getPatrolQualityUpgrade,
   getDailySweepTime,
   getProwlarrConfig,
   LLM_BASE_URL_SETTING_KEY,
   LLM_API_KEY_SETTING_KEY,
   LLM_MODEL_ID_SETTING_KEY,
   QUALITY_PREFERENCE_SETTING_KEY,
+  PREFER_HDR_OVER_RESOLUTION_SETTING_KEY,
+  UPGRADE_ON_REACQUIRE_SETTING_KEY,
+  PATROL_QUALITY_UPGRADE_SETTING_KEY,
   PREFERRED_LANGUAGE_SETTING_KEY,
   DAILY_SWEEP_TIME_SETTING_KEY,
   PANSOU_BASE_URL_SETTING_KEY,
@@ -25,6 +31,9 @@ type PushChannelKey = (typeof PUSH_CHANNEL_KEYS)[number];
 export interface AgentConfigView {
   llm: { baseURL: string | null; modelId: string | null; apiKey: string | null };
   qualityPreference: string | undefined;
+  preferHdrOverResolution: boolean;
+  upgradeOnReacquire: boolean;
+  patrolQualityUpgrade: boolean;
   preferredLanguage: string | undefined;
   dailySweepTime: string;
   pansouBaseUrl: string | null;
@@ -51,14 +60,18 @@ export function isMaskedPlaceholder(value: string): boolean {
 export async function readAgentConfig(accountId: string): Promise<AgentConfigView> {
   const settings = getAccountScopedSettings(accountId);
   const repository = getWorkflowRepository();
-  const [llm, quality, language, sweepTime, prowlarr, storageRows] = await Promise.all([
-    getLlmConfig(settings),
-    getQualityPreference(settings),
-    getPreferredLanguage(settings),
-    getDailySweepTime(repository),
-    getProwlarrConfig(settings),
-    repository.listConnectedStorages(accountId),
-  ]);
+  const [llm, quality, language, sweepTime, prowlarr, storageRows, preferHdr, upgradeOnReacquire, patrolUpgrade] =
+    await Promise.all([
+      getLlmConfig(settings),
+      getQualityPreference(settings),
+      getPreferredLanguage(settings),
+      getDailySweepTime(repository),
+      getProwlarrConfig(settings),
+      repository.listConnectedStorages(accountId),
+      getPreferHdrOverResolution(settings),
+      getUpgradeOnReacquire(settings),
+      getPatrolQualityUpgrade(settings),
+    ]);
   const pansou = (await settings.getSetting(PANSOU_BASE_URL_SETTING_KEY))?.trim() || null;
   const tmdbKey = (await settings.getSetting(TMDB_API_KEY_SETTING_KEY))?.trim() || null;
 
@@ -80,6 +93,9 @@ export async function readAgentConfig(accountId: string): Promise<AgentConfigVie
       apiKey: maskSecret(llm.apiKey),
     },
     qualityPreference: quality,
+    preferHdrOverResolution: preferHdr,
+    upgradeOnReacquire,
+    patrolQualityUpgrade: patrolUpgrade,
     preferredLanguage: language,
     dailySweepTime: sweepTime,
     pansouBaseUrl: pansou,
@@ -99,6 +115,9 @@ export async function readAgentConfig(accountId: string): Promise<AgentConfigVie
 export interface AgentConfigWriteInput {
   llm?: { baseURL?: string; modelId?: string; apiKey?: string };
   qualityPreference?: string;
+  preferHdrOverResolution?: boolean;
+  upgradeOnReacquire?: boolean;
+  patrolQualityUpgrade?: boolean;
   preferredLanguage?: string;
   dailySweepTime?: string;
   pansouBaseUrl?: string;
@@ -156,6 +175,18 @@ export async function writeAgentConfig(
     }
     await setAccount(QUALITY_PREFERENCE_SETTING_KEY, input.qualityPreference);
     updated.push("qualityPreference");
+  }
+
+  const boolWrites: Array<[boolean | undefined, string, string]> = [
+    [input.preferHdrOverResolution, PREFER_HDR_OVER_RESOLUTION_SETTING_KEY, "preferHdrOverResolution"],
+    [input.upgradeOnReacquire, UPGRADE_ON_REACQUIRE_SETTING_KEY, "upgradeOnReacquire"],
+    [input.patrolQualityUpgrade, PATROL_QUALITY_UPGRADE_SETTING_KEY, "patrolQualityUpgrade"],
+  ];
+  for (const [value, key, field] of boolWrites) {
+    if (value !== undefined) {
+      await setAccount(key, value ? "true" : "false");
+      updated.push(field);
+    }
   }
 
   if (input.preferredLanguage !== undefined) {

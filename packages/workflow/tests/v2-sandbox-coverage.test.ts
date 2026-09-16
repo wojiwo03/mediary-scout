@@ -52,6 +52,29 @@ describe("TaskSandbox — coverage gate (§3: no side effects once needSet is me
     const second = await sandbox.transferCandidate({ snapshotId: search.snapshot!.id, candidateId: "cand2" });
     expect(second.attempt.status).toBe("succeeded");
   });
+
+  it("qualityUpgrade relaxes the coverage gate so a strictly-better replacement can transfer", async () => {
+    const storage = new Storage115Simulator({
+      packs: {
+        cand1: { files: [{ path: "Show - 01.mkv", sizeBytes: 9 }] },
+        cand2: { files: [{ path: "Show - 01.2160p.DV.mkv", sizeBytes: 20 }] },
+      },
+    });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const targetSeasonDirectoryId = await storage.createDirectory({ name: "Season 1", parentId: "root" });
+    const sandbox = new TaskSandbox({
+      provider: provider(),
+      storage,
+      stagingDirectoryId,
+      targetSeasonDirectoryIds: { 1: targetSeasonDirectoryId },
+      need: ["S01E01"],
+      qualityUpgrade: true,
+      priorObtainedMarks: ["S01E01"],
+    });
+    const search = await sandbox.searchResources("show");
+    const second = await sandbox.transferCandidate({ snapshotId: search.snapshot!.id, candidateId: "cand2" });
+    expect(second.attempt.status).toBe("succeeded");
+  });
 });
 
 describe("TaskSandbox — finish / reportNoCoverage (§9)", () => {

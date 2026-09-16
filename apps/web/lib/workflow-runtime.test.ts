@@ -7,6 +7,9 @@ import {
   getPanSouBaseUrl,
   getProwlarrConfig,
   getQualityPreference,
+  getPreferHdrOverResolution,
+  getUpgradeOnReacquire,
+  getPatrolQualityUpgrade,
   movieTargetFromTmdbId,
   PANSOU_BASE_URL_SETTING_KEY,
   DEFAULT_PANSOU_BASE_URL,
@@ -141,6 +144,20 @@ describe("getQualityPreference", () => {
   it("garbage (incl. legacy '4K') → undefined (safe)", async () => {
     expect(await getQualityPreference(repoWith("4K"))).toBeUndefined();
     expect(await getQualityPreference(repoWith("ultra"))).toBeUndefined();
+  });
+});
+
+describe("quality upgrade / HDR setting getters", () => {
+  it("boolean settings default off", async () => {
+    expect(await getPreferHdrOverResolution(repoWith(null))).toBe(false);
+    expect(await getUpgradeOnReacquire(repoWith(null))).toBe(false);
+    expect(await getPatrolQualityUpgrade(repoWith(null))).toBe(false);
+  });
+
+  it("parses true/1/on/yes", async () => {
+    expect(await getPreferHdrOverResolution(repoWith("true"))).toBe(true);
+    expect(await getPreferHdrOverResolution(repoWith("1"))).toBe(true);
+    expect(await getPreferHdrOverResolution(repoWith("ON"))).toBe(true);
   });
 });
 

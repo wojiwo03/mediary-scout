@@ -1,13 +1,16 @@
 import {
   createEpisodeStates,
   movieAnchorSeason,
+  DEFAULT_ACCOUNT_ID,
   type AcquisitionSeasonScope,
   type EpisodeState,
   type MediaTitle,
   type NotificationEvent,
   type TrackedSeason,
+  type WorkflowKind,
   type WorkflowStatus,
 } from "./domain.js";
+import { QUALITY_UPGRADE_AUDIT_TYPE } from "./acquisition-v2/quality-ladder.js";
 import {
   ensureMediaLibraryDirectory,
   legacyMediaLibraryFolderName,
@@ -47,6 +50,9 @@ export async function queueTrackingInitialization(input: {
   createWorkflowRunId?: () => string;
   now?: () => string;
   staleActiveRunTimeoutMs?: number;
+  /** When true, an already-tracked title queues a quality-upgrade run instead of
+   *  returning already_tracked. Default off (conservative). */
+  qualityUpgrade?: boolean;
 }): Promise<TrackingInitializationRequestResult> {
   const now = input.now ?? (() => new Date().toISOString());
   const workflowRunId = input.createWorkflowRunId?.() ?? crypto.randomUUID();
@@ -110,6 +116,13 @@ export async function queueTrackingInitialization(input: {
     };
   }
   if (reservation.status === "already_has_episode_state") {
+    if (input.qualityUpgrade) {
+      return queueExistingTitleUpgrade({
+        ...input,
+        kind: "type2_init",
+        keyword: input.keyword,
+      });
+    }
     return {
       status: "already_tracked",
       titleId: input.title.id,
@@ -159,6 +172,98 @@ function summarizeEpisodeProgress(season: TrackedSeason, episodes: EpisodeState[
     missingAiredEpisodes: episodes
       .filter((episode) => episode.airStatus === "aired" && !episode.obtained)
       .map((episode) => episode.episodeCode),
+  };
+}
+
+async function queueExistingTitleUpgrade(input: {
+  title: MediaTitle;
+  season: TrackedSeason;
+  keyword: string;
+  repository: WorkflowRepository;
+  accountId?: string;
+  connectedStorageId?: string | null;
+  createWorkflowRunId?: () => string;
+  now?: () => string;
+  staleActiveRunTimeoutMs?: number;
+  kind: Extract<WorkflowKind, "type2_init" | "movie_init">;
+}): Promise<TrackingInitializationRequestResult> {
+  const now = input.now ?? (() => new Date().toISOString());
+  const workflowRunId = input.createWorkflowRunId?.() ?? crypto.randomUUID();
+  const queuedAt = now();
+  const staleActiveRunStartedBefore = staleStartedBefore(queuedAt, input.staleActiveRunTimeoutMs);
+  const existing = await input.repository.getTrackedSeasonState(input.season.id, {
+    accountId: input.accountId ?? DEFAULT_ACCOUNT_ID,
+    connectedStorageId: input.connectedStorageId ?? null,
+  });
+  if (!existing) {
+    return {
+      status: "already_tracked",
+      titleId: input.title.id,
+      trackedSeasonId: input.season.id,
+      workflowRunId: null,
+      workflowStatus: null,
+      notification: null,
+      progress: summarizeEpisodeProgress(input.season, []),
+    };
+  }
+
+  const reservation = await input.repository.reserveWorkflowRun({
+    ...(input.accountId ? { accountId: input.accountId } : {}),
+    ...(input.connectedStorageId != null ? { connectedStorageId: input.connectedStorageId } : {}),
+    title: existing.title,
+    season: existing.season,
+    workflowRun: {
+      id: workflowRunId,
+      kind: input.kind,
+      status: "queued",
+      trackedSeasonId: existing.season.id,
+      startedAt: queuedAt,
+      finishedAt: null,
+      auditEvents: [
+        {
+          type: QUALITY_UPGRADE_AUDIT_TYPE,
+          message: "Quality upgrade: replace landed files only if a candidate is strictly better on the ladder",
+          data: { keyword: input.keyword },
+        },
+        {
+          type: "tracking_request_queued",
+          message: `Queued quality-upgrade workflow ${workflowRunId}`,
+          data: { keyword: input.keyword },
+        },
+      ],
+    },
+    episodes: existing.episodes,
+    resourceSnapshots: [],
+    decisions: [],
+    transferAttempts: [],
+    notifications: [],
+    blockIfEpisodeStatesExist: false,
+    blockIfTitleHasActiveRun: true,
+    ...(staleActiveRunStartedBefore
+      ? { staleActiveRunStartedBefore, staleFinishedAt: queuedAt }
+      : {}),
+  });
+
+  if (reservation.status === "already_active") {
+    return {
+      status: "already_running",
+      titleId: input.title.id,
+      trackedSeasonId: existing.season.id,
+      workflowRunId: reservation.snapshot.workflowRun.id,
+      workflowStatus: reservation.snapshot.workflowRun.status,
+      notification: reservation.snapshot.notifications[0] ?? null,
+      progress: summarizeEpisodeProgress(existing.season, reservation.snapshot.episodes),
+    };
+  }
+
+  return {
+    status: "queued",
+    titleId: input.title.id,
+    trackedSeasonId: existing.season.id,
+    workflowRunId,
+    workflowStatus: "queued",
+    notification: null,
+    progress: summarizeEpisodeProgress(existing.season, existing.episodes),
   };
 }
 
@@ -277,6 +382,7 @@ export async function queueMovieAcquisition(input: {
   createWorkflowRunId?: () => string;
   now?: () => string;
   staleActiveRunTimeoutMs?: number;
+  qualityUpgrade?: boolean;
 }): Promise<MovieAcquisitionRequestResult> {
   const now = input.now ?? (() => new Date().toISOString());
   const workflowRunId = input.createWorkflowRunId?.() ?? crypto.randomUUID();
@@ -323,6 +429,26 @@ export async function queueMovieAcquisition(input: {
     return { status: "already_running", titleId: input.title.id, workflowRunId: reservation.snapshot.workflowRun.id };
   }
   if (reservation.status === "already_has_episode_state") {
+    if (input.qualityUpgrade) {
+      const upgraded = await queueExistingTitleUpgrade({
+        ...input,
+        season: movieAnchorSeason({
+          titleId: input.title.id,
+          qualityPreference: "4K",
+          storageDirectoryId: "",
+        }),
+        kind: "movie_init",
+        keyword: input.keyword,
+      });
+      return {
+        status:
+          upgraded.status === "queued" || upgraded.status === "completed"
+            ? "queued"
+            : upgraded.status,
+        titleId: upgraded.titleId,
+        workflowRunId: upgraded.workflowRunId,
+      };
+    }
     return { status: "already_tracked", titleId: input.title.id, workflowRunId: null };
   }
   return { status: "queued", titleId: input.title.id, workflowRunId };
