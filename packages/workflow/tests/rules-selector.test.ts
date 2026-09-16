@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   candidateMatchesTitle,
   mapTvCoverage,
+  mediaBindingDecision,
   parseEpisodeSpan,
   parseSeasonMarkers,
   selectResourceCandidates,
 } from "../src/acquisition-v2/rules-selector.js";
+import { movieTargetToRules, tvTargetToRules } from "../src/acquisition-v2/rules-task.js";
 import { qualityLadderPolicyFromFlags } from "../src/acquisition-v2/quality-ladder.js";
 
 const high = qualityLadderPolicyFromFlags({ resolutionPreference: "high" });
@@ -173,5 +175,92 @@ describe("selectResourceCandidates — TV", () => {
     });
     expect(selection.selected).toEqual([]);
     expect(selection.rejected.some((r) => r.reason === "raw-foreign")).toBe(true);
+  });
+});
+
+describe("selectResourceCandidates — mediaBinding", () => {
+  const batman = {
+    kind: "movie" as const,
+    title: "蝙蝠侠：黑暗骑士",
+    aliases: ["The Dark Knight"],
+    year: 2008,
+    tmdbId: 155,
+  };
+
+  it("matches by tmdbid even when the share title is messy", () => {
+    expect(mediaBindingDecision("随机网盘名 2160p WEB-DL [tmdbid=155]", batman)).toBe("match");
+    const selection = selectResourceCandidates({
+      candidates: [
+        cand("messy", "随机网盘名 无中文片名 2010 2160p DV REMUX [tmdbid=155]"),
+        cand("named", "蝙蝠侠：黑暗骑士 2008 1080p WEB-DL 中字"),
+      ],
+      target: batman,
+      policy: high,
+    });
+    expect(selection.selected.map((c) => c.candidateId)).toEqual(["messy"]);
+  });
+
+  it("rejects a different tmdbid even if the fuzzy title matches", () => {
+    expect(mediaBindingDecision("蝙蝠侠：黑暗骑士 2008 2160p [tmdbid=27205]", batman)).toBe("mismatch");
+    const selection = selectResourceCandidates({
+      candidates: [
+        cand("wrong", "蝙蝠侠：黑暗骑士 2008 2160p DV REMUX 中字 [tmdbid=27205]"),
+        cand("ok", "蝙蝠侠：黑暗骑士 2008 1080p WEB-DL 中字"),
+      ],
+      target: batman,
+      policy: high,
+    });
+    expect(selection.selected.map((c) => c.candidateId)).toEqual(["ok"]);
+    expect(selection.rejected.some((r) => r.candidateId === "wrong" && r.reason === "media-id-mismatch")).toBe(
+      true,
+    );
+  });
+
+  it("falls back to title match when the candidate has no binding", () => {
+    expect(mediaBindingDecision("蝙蝠侠：黑暗骑士 2008 1080p 中字", batman)).toBe("absent");
+    const selection = selectResourceCandidates({
+      candidates: [
+        cand("named", "蝙蝠侠：黑暗骑士 2008 1080p WEB-DL 中字"),
+        cand("unrelated", "随机网盘名 2160p WEB-DL"),
+      ],
+      target: batman,
+      policy: high,
+    });
+    expect(selection.selected.map((c) => c.candidateId)).toEqual(["named"]);
+    expect(selection.rejected.some((r) => r.candidateId === "unrelated" && r.reason === "title-mismatch")).toBe(
+      true,
+    );
+  });
+
+  it("does not invent a lookup when the candidate binds a source the target lacks", () => {
+    expect(mediaBindingDecision("蝙蝠侠：黑暗骑士 2008 [doubanid=1851857] 1080p", batman)).toBe("absent");
+    const selection = selectResourceCandidates({
+      candidates: [cand("douban", "蝙蝠侠：黑暗骑士 2008 1080p 中字 [doubanid=1851857]")],
+      target: batman,
+      policy: high,
+    });
+    expect(selection.selected.map((c) => c.candidateId)).toEqual(["douban"]);
+  });
+
+  it("threads tmdbId from MovieTarget / TvAnimeTarget into the rules target", () => {
+    expect(
+      movieTargetToRules({
+        title: "盗梦空间",
+        aliases: ["Inception"],
+        year: 2010,
+        qualityPreference: "4K",
+        tmdbId: 27205,
+      }).tmdbId,
+    ).toBe(27205);
+    expect(
+      tvTargetToRules({
+        title: "庆余年",
+        aliases: [],
+        seasons: [1],
+        missingEpisodes: ["S01E01"],
+        qualityPreference: "1080p",
+        tmdbId: 90000,
+      }).tmdbId,
+    ).toBe(90000);
   });
 });

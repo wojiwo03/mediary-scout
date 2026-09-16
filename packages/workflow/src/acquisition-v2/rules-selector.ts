@@ -36,6 +36,12 @@ export interface RulesSelectorTarget {
   missingEpisodes?: readonly string[];
   originCountries?: readonly string[];
   preferredLanguage?: string;
+  /**
+   * Library TMDB id. The only media identity MediaTitle currently stores —
+   * douban/bangumi/anilist bindings on a candidate therefore cannot hard-match
+   * or hard-reject against the target.
+   */
+  tmdbId?: number;
 }
 
 export interface RankedRulesCandidate {
@@ -74,6 +80,28 @@ const QUALITY_NOISE_RE = releaseMetaNoisePattern();
 
 export function titleTermsFor(target: Pick<RulesSelectorTarget, "title" | "aliases">): string[] {
   return [target.title, ...target.aliases].map((term) => term.trim()).filter((term) => term.length > 0);
+}
+
+/**
+ * Compare a candidate title's MoviePilot-style `mediaBinding` with the target.
+ * `match` / `mismatch` only fire when both sides have an id for the same source.
+ */
+export function mediaBindingDecision(
+  candidateTitle: string,
+  target: Pick<RulesSelectorTarget, "tmdbId">,
+): "match" | "mismatch" | "absent" {
+  const binding = parseReleaseMeta(candidateTitle).mediaBinding;
+  if (!binding) {
+    return "absent";
+  }
+  const targetId =
+    binding.source === "tmdb" && target.tmdbId !== undefined && target.tmdbId > 0
+      ? String(target.tmdbId)
+      : undefined;
+  if (targetId === undefined) {
+    return "absent";
+  }
+  return targetId === binding.id ? "match" : "mismatch";
 }
 
 export function candidateMatchesTitle(candidateTitle: string, terms: readonly string[]): boolean {
@@ -359,11 +387,17 @@ export function selectResourceCandidates(input: {
   const seasons = input.target.seasons ?? [1];
 
   for (const candidate of input.candidates) {
-    if (!candidateMatchesTitle(candidate.title, terms)) {
+    const binding = mediaBindingDecision(candidate.title, input.target);
+    if (binding === "mismatch") {
+      rejected.push({ ...candidate, reason: "media-id-mismatch" });
+      continue;
+    }
+    const boundMatch = binding === "match";
+    if (!boundMatch && !candidateMatchesTitle(candidate.title, terms)) {
       rejected.push({ ...candidate, reason: "title-mismatch" });
       continue;
     }
-    if (looksLikeSequelOrRemake(candidate.title, terms, input.target.year)) {
+    if (!boundMatch && looksLikeSequelOrRemake(candidate.title, terms, input.target.year)) {
       rejected.push({ ...candidate, reason: "sequel-or-year" });
       continue;
     }

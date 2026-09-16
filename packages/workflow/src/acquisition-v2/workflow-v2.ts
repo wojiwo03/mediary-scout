@@ -148,6 +148,7 @@ export async function runAcquisitionV2Workflow(
       seasons: request.seasons.map((season) => season.seasonNumber),
       missingEpisodes: upgradeComplete ? before.obtained : before.missing,
       qualityPreference: request.qualityPreference,
+      tmdbId: request.title.tmdbId,
     },
     stagingDirectoryId: directories.stagingDirectoryId,
     targetSeasonDirectoryIds: directories.seasonDirectoryIds,

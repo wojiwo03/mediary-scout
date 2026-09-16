@@ -338,6 +338,7 @@ export function movieTargetToRules(target: MovieTarget, extras?: { originCountri
     title: target.title,
     aliases: target.aliases,
     year: target.year,
+    ...(target.tmdbId === undefined ? {} : { tmdbId: target.tmdbId }),
     ...(extras?.originCountries ? { originCountries: extras.originCountries } : {}),
     ...(extras?.preferredLanguage ? { preferredLanguage: extras.preferredLanguage } : {}),
   };
@@ -350,6 +351,7 @@ export function tvTargetToRules(target: TvAnimeTarget, extras?: { originCountrie
     aliases: target.aliases,
     seasons: target.seasons,
     missingEpisodes: target.missingEpisodes,
+    ...(target.tmdbId === undefined ? {} : { tmdbId: target.tmdbId }),
     ...(extras?.originCountries ? { originCountries: extras.originCountries } : {}),
     ...(extras?.preferredLanguage ? { preferredLanguage: extras.preferredLanguage } : {}),
   };

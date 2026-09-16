@@ -106,6 +106,7 @@ export async function runMovieAcquisitionV2(
       aliases: request.title.aliases,
       year: request.title.year ?? 0,
       qualityPreference: "4K",
+      tmdbId: request.title.tmdbId,
     },
     stagingDirectoryId: movieDirectoryId,
     targetMovieDirectoryId: movieDirectoryId,
