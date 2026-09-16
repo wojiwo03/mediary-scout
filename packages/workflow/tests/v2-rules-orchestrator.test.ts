@@ -250,6 +250,86 @@ describe("runAcquisitionV2 — rules selector (no LLM)", () => {
     expect(result.outcome.decisions[0]?.node).toBe(RULES_DECISION_NODE);
   });
 
+  it("TV: fills missing episodes from scattered shares and skips overlap", async () => {
+    const snapId = "snap_tv_scatter";
+    const provider: ResourceProvider = {
+      search: async ({ keyword }) =>
+        snapshot(snapId, keyword, [
+          candidate({ id: "a", snapshotId: snapId, index: 0, title: "庆余年 1-2集 1080p WEB-DL" }),
+          candidate({ id: "b", snapshotId: snapId, index: 1, title: "庆余年 第3集 1080p WEB-DL" }),
+          candidate({ id: "c", snapshotId: snapId, index: 2, title: "庆余年 4-6集 1080p WEB-DL" }),
+          candidate({ id: "dup", snapshotId: snapId, index: 3, title: "庆余年 1-2集 720p" }),
+        ]),
+    };
+    const executor = new FakeStorageExecutor({
+      directories: { staging: [], season: [] },
+      transferOutcomes: {
+        a: {
+          status: "succeeded",
+          providerMessage: "ok",
+          files: [
+            videoFile("e1", "庆余年.S01E01.mkv", "S01E01"),
+            videoFile("e2", "庆余年.S01E02.mkv", "S01E02"),
+          ],
+        },
+        b: {
+          status: "succeeded",
+          providerMessage: "ok",
+          files: [videoFile("e3", "庆余年.S01E03.mkv", "S01E03")],
+        },
+        c: {
+          status: "succeeded",
+          providerMessage: "ok",
+          files: [
+            videoFile("e4", "庆余年.S01E04.mkv", "S01E04"),
+            videoFile("e5", "庆余年.S01E05.mkv", "S01E05"),
+            videoFile("e6", "庆余年.S01E06.mkv", "S01E06"),
+          ],
+        },
+        dup: {
+          status: "succeeded",
+          providerMessage: "must not run",
+          files: [videoFile("waste", "庆余年.S01E01.dup.mkv", "S01E01")],
+        },
+      },
+    });
+
+    const result = await runAcquisitionV2({
+      provider,
+      executor,
+      model: throwingModel(),
+      workflowRunId: "run-rules-tv-scatter",
+      target: {
+        kind: "tv",
+        title: "庆余年",
+        aliases: [],
+        seasons: [1],
+        missingEpisodes: ["S01E01", "S01E02", "S01E03", "S01E04", "S01E05", "S01E06"],
+        qualityPreference: "1080p",
+      },
+      stagingDirectoryId: "staging",
+      targetSeasonDirectoryIds: { 1: "season" },
+      acquisitionSelectionPath: "rules",
+    });
+
+    expect(result.coverage.coverageMet).toBe(true);
+    expect(result.coverage.obtained.sort()).toEqual([
+      "S01E01",
+      "S01E02",
+      "S01E03",
+      "S01E04",
+      "S01E05",
+      "S01E06",
+    ]);
+    expect([...result.outcome.transferAttempts.map((attempt) => attempt.candidateId)].sort()).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+    expect(result.text).toMatch(/用 3 个分享补齐/);
+    expect(result.outcome.decisions[0]?.selectedCandidateIds.sort()).toEqual(["a", "b", "c"]);
+  });
+
   it("default (agent) path still invokes the model", async () => {
     const provider: ResourceProvider = {
       search: async ({ keyword }) => snapshot("snap_empty", keyword, []),

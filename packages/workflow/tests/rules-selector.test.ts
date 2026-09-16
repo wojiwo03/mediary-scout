@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   candidateMatchesTitle,
   chineseSubtitleScore,
+  describeTvSelection,
+  formatEpisodeCodes,
   mapTvCoverage,
   mediaBindingDecision,
   parseEpisodeSpan,
@@ -270,6 +272,140 @@ describe("selectResourceCandidates — TV", () => {
     });
     expect(selection.selected.map((c) => c.candidateId)).toEqual(["v2"]);
     expect(selection.selected[0]!.coveredEpisodes).toEqual(["S01E28"]);
+  });
+});
+
+function ep(n: number): string {
+  return `S01E${String(n).padStart(2, "0")}`;
+}
+
+function eps(from: number, to: number): string[] {
+  return Array.from({ length: to - from + 1 }, (_, i) => ep(from + i));
+}
+
+describe("selectResourceCandidates — scattered TV multi-share fill", () => {
+  const show = {
+    kind: "tv" as const,
+    title: "Show",
+    aliases: [],
+    seasons: [1] as const,
+    preferredLanguage: "中文",
+    originCountries: ["CN"],
+  };
+
+  it("composes E01-E02 + E03 + E04-E06 when no complete pack exists", () => {
+    const selection = selectResourceCandidates({
+      candidates: [
+        cand("a", "Show 1-2集 1080p WEB-DL"),
+        cand("b", "Show 第3集 1080p WEB-DL"),
+        cand("c", "Show 4-6集 1080p WEB-DL"),
+        cand("noise", "流浪地球 全集 1080p"),
+      ],
+      target: { ...show, missingEpisodes: eps(1, 6) },
+      policy: high,
+    });
+    expect(selection.selected.map((c) => c.candidateId).sort()).toEqual(["a", "b", "c"]);
+    expect([...new Set(selection.selected.flatMap((c) => c.coveredEpisodes))].sort()).toEqual(eps(1, 6));
+    expect(selection.reason).toMatch(/用 3 个分享补齐/);
+    expect(selection.reason).toContain("S01E01–E06");
+    expect(selection.rejected.some((r) => r.candidateId === "noise")).toBe(true);
+  });
+
+  it("prefers one denser 1080p pack over ten 4K singles when the pack is not a complete season", () => {
+    const singles = eps(1, 10).map((code, i) => cand(`e${i + 1}`, `Show 第${i + 1}集 2160p WEB-DL`));
+    const selection = selectResourceCandidates({
+      candidates: [cand("dense", "Show 1-9集 1080p WEB-DL"), ...singles],
+      target: { ...show, missingEpisodes: eps(1, 10) },
+      policy: high,
+    });
+    expect(selection.selected.map((c) => c.candidateId)).toEqual(["dense", "e10"]);
+    expect(selection.selected).toHaveLength(2);
+    expect(selection.rejected.filter((r) => r.reason === "redundant-coverage").length).toBeGreaterThanOrEqual(9);
+  });
+
+  it("does not report empty selection just because a 全集 pack is absent", () => {
+    const selection = selectResourceCandidates({
+      candidates: [cand("a", "Show 1-2集 1080p WEB-DL"), cand("b", "Show 第4集 1080p WEB-DL")],
+      target: { ...show, missingEpisodes: eps(1, 6) },
+    });
+    expect(selection.selected.map((c) => c.candidateId).sort()).toEqual(["a", "b"]);
+    expect(selection.reason).toMatch(/整季包不可用/);
+    expect(selection.reason).toMatch(/仍缺/);
+    expect(selection.selected.length).toBeGreaterThan(0);
+  });
+
+  it("skips redundant overlapping packs (no extra transfers of the same episodes)", () => {
+    const selection = selectResourceCandidates({
+      candidates: [
+        cand("low", "Show 1-6集 1080p WEB-DL"),
+        cand("dup", "Show 1-6集 1080p WEB-DL 中字"),
+        cand("overlap", "Show 4-8集 1080p WEB-DL"),
+        cand("tail", "Show 7-10集 1080p WEB-DL"),
+        cand("hi", "Show 1-6集 2160p WEB-DL"),
+      ],
+      target: { ...show, missingEpisodes: eps(1, 10) },
+      policy: high,
+    });
+    expect(selection.selected.map((c) => c.candidateId).sort()).toEqual(["hi", "tail"]);
+    expect(selection.selected).toHaveLength(2);
+    expect(
+      selection.rejected.filter((r) =>
+        ["low", "dup", "overlap"].includes(r.candidateId) && r.reason === "redundant-coverage",
+      ),
+    ).toHaveLength(3);
+  });
+
+  it("keeps explicit scattered spans at high confidence (auto must not bounce to agent)", () => {
+    const selection = selectResourceCandidates({
+      candidates: [
+        cand("a", "Show 1-2集 1080p WEB-DL"),
+        cand("b", "Show 第3集 1080p WEB-DL"),
+      ],
+      target: { ...show, missingEpisodes: eps(1, 3) },
+    });
+    expect(
+      assessRulesConfidence({
+        target: { ...show, missingEpisodes: eps(1, 3) },
+        selection,
+        candidateCount: 2,
+      }).confidence,
+    ).toBe("high");
+  });
+});
+
+describe("formatEpisodeCodes / describeTvSelection", () => {
+  it("compresses consecutive SxxExx into an en-dash range", () => {
+    expect(formatEpisodeCodes(["S01E01", "S01E02", "S01E03", "S01E05"])).toBe("S01E01–E03、S01E05");
+    expect(formatEpisodeCodes(["S02E01", "S01E12", "S01E11"])).toBe("S01E11–E12、S02E01");
+  });
+
+  it("names a multi-share fill in 用 N 个分享补齐 form", () => {
+    const selected = [
+      {
+        snapshotId: "s",
+        candidateId: "a",
+        title: "t",
+        coveredEpisodes: ["S01E01", "S01E02"],
+        qualityScore: 1,
+        chineseScore: 0,
+        totalScore: 10,
+      },
+      {
+        snapshotId: "s",
+        candidateId: "b",
+        title: "t",
+        coveredEpisodes: ["S01E03"],
+        qualityScore: 1,
+        chineseScore: 0,
+        totalScore: 10,
+      },
+    ];
+    expect(describeTvSelection(selected, ["S01E01", "S01E02", "S01E03"])).toBe(
+      "规则选片：用 2 个分享补齐 S01E01–E03",
+    );
+    expect(describeTvSelection(selected, ["S01E01", "S01E02", "S01E03", "S01E04"])).toMatch(
+      /用 2 个分享补齐 S01E01–E03（整季包不可用，仍缺 S01E04）/,
+    );
   });
 });
 

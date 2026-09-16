@@ -111,7 +111,13 @@ const AUDIO_RANK: Record<AudioClass, number> = {
   unknown: 0,
 };
 
-const RES_WEIGHT = 1000;
+/**
+ * Score gap equal to one resolution step in `scoreReleaseQuality`. A denser
+ * TV pack within this band of the best eligible candidate is "acceptable"
+ * under the ladder (1080p may fill instead of many 4K singles; 720p vs 4K may not).
+ */
+export const QUALITY_RESOLUTION_BAND = 1000;
+const RES_WEIGHT = QUALITY_RESOLUTION_BAND;
 const HDR_WEIGHT = 100;
 const SOURCE_WEIGHT = 10;
 const AUDIO_WEIGHT = 1;

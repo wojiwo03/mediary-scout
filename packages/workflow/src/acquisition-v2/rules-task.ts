@@ -185,6 +185,26 @@ export function inferEpisodeCodeFromListingPath(
   return episodeCode(season, episode);
 }
 
+function transferSucceeded(result: unknown): boolean {
+  if (!result || typeof result !== "object" || "error" in result) {
+    return false;
+  }
+  if ("attempt" in result) {
+    const attempt = (result as { attempt?: { status?: string } }).attempt;
+    if (attempt?.status === "succeeded") {
+      return true;
+    }
+    if (attempt?.status === "failed") {
+      return false;
+    }
+  }
+  if ("staging" in result) {
+    const staging = (result as { staging?: Array<{ isVideo?: boolean }> }).staging;
+    return Array.isArray(staging) && staging.some((file) => file.isVideo);
+  }
+  return false;
+}
+
 async function transferRanked(
   sandbox: TaskSandbox,
   selected: RankedRulesCandidate[],
@@ -216,7 +236,12 @@ async function transferRanked(
     return { landed: false };
   }
 
+  const remaining = new Set(selected.flatMap((candidate) => candidate.coveredEpisodes));
   for (const candidate of selected) {
+    const gain = candidate.coveredEpisodes.filter((code) => remaining.has(code));
+    if (gain.length === 0) {
+      continue;
+    }
     emit(onProgress, "transferCandidate", { snapshotId: candidate.snapshotId, candidateId: candidate.candidateId });
     const result = await asEvidence(() =>
       sandbox.transferCandidate({ snapshotId: candidate.snapshotId, candidateId: candidate.candidateId }),
@@ -226,6 +251,11 @@ async function transferRanked(
     }
     if (result && typeof result === "object" && "systemicBlock" in result && result.systemicBlock) {
       return { systemicBlock: result.systemicBlock.reason, landed: false };
+    }
+    if (transferSucceeded(result)) {
+      for (const code of gain) {
+        remaining.delete(code);
+      }
     }
   }
   const staging = await asEvidence(() => sandbox.inspectStaging());
@@ -383,6 +413,7 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
   emit(onProgress, "rulesSelectCandidates", {
     selected: selection.selected.map((candidate) => candidate.candidateId),
     reason: selection.reason,
+    shareCount: selection.selected.length,
   });
 
   if (selection.selected.length === 0) {
