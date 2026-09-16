@@ -1,4 +1,5 @@
 import { createTmdbSearchProvider, type MediaSearchProvider } from "@media-track/workflow";
+import { qualityFloorOverrideSpread, type QualityFloorSetting } from "@media-track/workflow/quality-ladder";
 import { getTmdbAccesses, getAccountScopedSettings, queueCandidateTracking } from "../workflow-runtime";
 
 export interface AcquireInput {
@@ -9,6 +10,8 @@ export interface AcquireInput {
   tmdbId?: number | null;
   /** Explicit quality-upgrade of an already-obtained title. */
   qualityUpgrade?: boolean;
+  /** Per-run hard floor override (`any` = disable the account default). */
+  qualityFloor?: QualityFloorSetting;
 }
 
 export interface AcquireResult {
@@ -33,6 +36,7 @@ export async function acquireMedia(input: AcquireInput, accountId: string): Prom
       input.storageId,
       undefined,
       input.qualityUpgrade,
+      input.qualityFloor,
     );
   }
 
@@ -99,7 +103,19 @@ export async function acquireMedia(input: AcquireInput, accountId: string): Prom
       year: top.candidate.year,
     },
     input.qualityUpgrade,
+    input.qualityFloor,
   );
+}
+
+function acquireQueueOptions(
+  qualityUpgrade?: boolean,
+  qualityFloor?: QualityFloorSetting,
+): { qualityUpgrade?: boolean; qualityFloor?: QualityFloorSetting } | undefined {
+  const options = {
+    ...(qualityUpgrade ? { qualityUpgrade: true as const } : {}),
+    ...qualityFloorOverrideSpread(qualityFloor),
+  };
+  return Object.keys(options).length > 0 ? options : undefined;
 }
 
 async function queueByTmdbId(
@@ -109,6 +125,7 @@ async function queueByTmdbId(
   storageId: string | null | undefined,
   matchedTitle?: { title: string; year: number | null },
   qualityUpgrade?: boolean,
+  qualityFloor?: QualityFloorSetting,
 ): Promise<AcquireResult> {
   // candidateId formats from workflow-runtime.ts parsers:
   //   movie: tmdb_movie_<tmdbId>   (parseMovieCandidateId)
@@ -119,7 +136,7 @@ async function queueByTmdbId(
   const result = await queueCandidateTracking(
     candidateId,
     storageId ?? undefined,
-    qualityUpgrade ? { qualityUpgrade: true } : undefined,
+    acquireQueueOptions(qualityUpgrade, qualityFloor),
   );
 
   const matched = {

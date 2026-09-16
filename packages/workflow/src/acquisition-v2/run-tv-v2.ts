@@ -9,7 +9,7 @@ import {
 } from "./workflow-v2-bridge.js";
 import type { DeadLinkStore } from "./dead-links.js";
 import { runAcquisitionV2Workflow } from "./workflow-v2.js";
-import { qualityLadderPolicyFromFlags } from "./quality-ladder.js";
+import { qualityLadderPolicyFromFlags, type QualityFloorBand } from "./quality-ladder.js";
 import { getAcquisitionQualityGuidance, getSearchRecipe, searchProfile } from "./search-profile.js";
 import type { AgentToolEvent } from "./activity.js";
 import type { AcquisitionSelectionPath } from "./selection-mode.js";
@@ -48,6 +48,8 @@ export interface RunTvAcquisitionV2Request {
   preferHdrOverResolution?: boolean;
   /** When false, encode/source class is ignored. Default true. */
   considerSourceClass?: boolean;
+  /** Hard resolution floor for this run (already resolved vs global/override). */
+  qualityFloor?: QualityFloorBand;
   /**
    * Allow replacing already-obtained coverage with a strictly better candidate.
    * Default off — scheduled patrol stays gap-fill unless the caller sets this.
@@ -79,6 +81,7 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     ...(request.qualityPreference === undefined ? {} : { resolutionPreference: request.qualityPreference }),
     ...(request.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
     ...(request.considerSourceClass === false ? { considerSourceClass: false } : {}),
+    ...(request.qualityFloor === undefined ? {} : { resolutionFloor: request.qualityFloor }),
   });
   const qualityGuidance = getAcquisitionQualityGuidance({
     profile,

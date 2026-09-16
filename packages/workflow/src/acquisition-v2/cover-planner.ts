@@ -91,9 +91,13 @@ function bestOf(pool: CoverCandidate[], remaining: ReadonlySet<string>): CoverCa
  *
  * Quality floor: when composing partials, prefer candidates within one
  * resolution band of the best eligible score so a 1080p 9-ep pack beats ten
- * 4K singles. A below-floor pack is still used when it is the only way to
- * cover leftover episodes. Complete coverage of the current remainder always
- * wins (整季包不可用 must not block acquisition).
+ * 4K singles. A pack below that *relative* band is still used when it is the
+ * only way to cover leftover episodes. Complete coverage of the current
+ * remainder always wins (整季包不可用 must not block acquisition).
+ *
+ * User hard floor (`QualityLadderPolicy.resolutionFloor`) is applied *before*
+ * this planner: below-floor candidates never enter `ranked`, so they cannot
+ * fill as "only option".
  */
 export function greedyCover(ranked: CoverCandidate[], missing: readonly string[]): CoverCandidate[] {
   const remaining = new Set(missing);

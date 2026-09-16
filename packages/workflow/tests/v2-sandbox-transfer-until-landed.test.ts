@@ -24,6 +24,7 @@ async function movieSetup(options: {
   packs?: Record<string, { files: Array<{ path: string; sizeBytes: number }> }>;
   linkKinds?: Record<string, "share" | "magnet">;
   failureMessages?: Record<string, string>;
+  qualityPolicy?: { resolutionFloor?: "4k" | "1080p" | "720p" | "sd" };
 }) {
   const provider = new FakeResourceProviderV2({
     results: { oppenheimer: options.results.map((r) => ({ ...r })) },
@@ -40,6 +41,7 @@ async function movieSetup(options: {
     stagingDirectoryId: movieDir,
     targetMovieDirectoryId: movieDir,
     need: ["MOVIE"],
+    ...(options.qualityPolicy === undefined ? {} : { qualityPolicy: options.qualityPolicy }),
   });
   return { sandbox, storage, movieDir };
 }
@@ -373,5 +375,27 @@ describe("transferUntilLanded — no_target_change STOPS the loop (123 异步 co
     expect(executor.transfers).toEqual(["A", "B"]); // dead link burned through as before
     expect(result.transferredCandidateId).toBe("B");
     expect(result.attempts.map((a) => a.status)).toEqual(["failed", "succeeded"]);
+  });
+
+  it("skips below-floor shares and still lands a later candidate that meets the floor", async () => {
+    const { sandbox } = await movieSetup({
+      results: [
+        { id: "low", title: "奥本海默 720p WEB-DL" },
+        { id: "ok", title: "奥本海默 1080p WEB-DL" },
+      ],
+      packs: {
+        low: { files: [{ path: "奥本海默 (2023)/Oppenheimer.720p.mkv", sizeBytes: 1000 }] },
+        ok: { files: [{ path: "奥本海默 (2023)/Oppenheimer.1080p.mkv", sizeBytes: 4000 }] },
+      },
+      linkKinds: { low: "share", ok: "share" },
+      qualityPolicy: { resolutionFloor: "1080p" },
+    });
+    await sandbox.searchResources("oppenheimer");
+
+    const result = await sandbox.transferUntilLanded({ candidateIds: ["low", "ok"] });
+
+    expect(result.attempts[0]?.status).toBe("failed");
+    expect(result.attempts[0]?.providerMessage).toMatch(/SANDBOX_BELOW_QUALITY_FLOOR/);
+    expect(result.transferredCandidateId).toBe("ok");
   });
 });

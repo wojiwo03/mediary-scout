@@ -12,6 +12,8 @@ import {
 import { runAction } from "../lib/run-action";
 import { useAcquisitionLock } from "./acquisition-lock";
 import { AcquireResultNotice, isLockedResult } from "./request-state";
+import { QualityFloorPicker, qualityFloorActionValue, type QualityFloorChoice } from "./quality-floor-picker";
+import type { QualityFloorBand } from "@media-track/workflow/quality-ladder";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { DemoAcquirePlayback } from "./demo-acquire-playback";
 import type { DemoAcquisitionEntry } from "../lib/demo-session";
@@ -24,6 +26,7 @@ export function RequestSeasonButton({
   storageId,
   titleAcquiring = false,
   demoEntry,
+  globalQualityFloor,
 }: {
   tmdbId: number;
   seasonNumber: number;
@@ -34,10 +37,12 @@ export function RequestSeasonButton({
   titleAcquiring?: boolean;
   /** Demo only: recorded to the session library when the scripted playback ends. */
   demoEntry?: DemoAcquisitionEntry | undefined;
+  globalQualityFloor?: QualityFloorBand | undefined;
 }) {
   const router = useRouter();
   const lock = useAcquisitionLock();
   const [isPending, startTransition] = useTransition();
+  const [floorChoice, setFloorChoice] = useState<QualityFloorChoice>("default");
   const [result, setResult] = useState<RequestTrackingActionResult | null>(null);
   const scope = `season-${seasonNumber}`;
   const isLocked = isLockedResult(result);
@@ -63,6 +68,7 @@ export function RequestSeasonButton({
 
   return (
     <>
+      <div className="acquire-with-floor">
       <button
         className="season-request-button"
         type="button"
@@ -78,7 +84,15 @@ export function RequestSeasonButton({
           lock?.lock(scope);
           startTransition(async () => {
             const r = await runAction(
-              () => requestSeasonAction({ tmdbId, seasonNumber, storageId }),
+              () => {
+                const floor = qualityFloorActionValue(floorChoice);
+                return requestSeasonAction({
+                  tmdbId,
+                  seasonNumber,
+                  storageId,
+                  ...(floor ? { qualityFloor: floor } : {}),
+                });
+              },
               (msg) => {
                 setResult({ status: "unsupported", message: msg });
                 // 必须 refresh:lock.acquiring 是前端 state,靠重挂载重置。
@@ -101,6 +115,13 @@ export function RequestSeasonButton({
         )}
         {inFlight ? "获取中" : isLocked ? "已请求" : "获取本季"}
       </button>
+      <QualityFloorPicker
+        globalFloor={globalQualityFloor}
+        value={floorChoice}
+        onChange={setFloorChoice}
+        disabled={isPending || isLocked || othersAcquiring}
+      />
+      </div>
       <AcquireResultNotice result={result} />
     </>
   );
@@ -112,6 +133,7 @@ export function RequestRemainingButton({
   storageId,
   titleAcquiring = false,
   demoEntry,
+  globalQualityFloor,
 }: {
   tmdbId: number;
   label: string;
@@ -122,10 +144,12 @@ export function RequestRemainingButton({
   titleAcquiring?: boolean;
   /** Demo only: recorded to the session library when the scripted playback ends. */
   demoEntry?: DemoAcquisitionEntry | undefined;
+  globalQualityFloor?: QualityFloorBand | undefined;
 }) {
   const router = useRouter();
   const lock = useAcquisitionLock();
   const [isPending, startTransition] = useTransition();
+  const [floorChoice, setFloorChoice] = useState<QualityFloorChoice>("default");
   const [result, setResult] = useState<RequestTrackingActionResult | null>(null);
   const scope = "remaining";
   const isLocked = isLockedResult(result);
@@ -151,6 +175,7 @@ export function RequestRemainingButton({
 
   return (
     <>
+      <div className="acquire-with-floor">
       <button
         className="primary-button"
         type="button"
@@ -164,7 +189,10 @@ export function RequestRemainingButton({
           lock?.lock(scope);
           startTransition(async () => {
             const r = await runAction(
-              () => requestRemainingAction({ tmdbId, storageId }),
+              () => {
+                const floor = qualityFloorActionValue(floorChoice);
+                return requestRemainingAction({ tmdbId, storageId, ...(floor ? { qualityFloor: floor } : {}) });
+              },
               (msg) => {
                 setResult({ status: "unsupported", message: msg });
                 // 同上一处:失败必须 refresh 清锁,否则 sibling 全禁用。
@@ -186,6 +214,13 @@ export function RequestRemainingButton({
         )}
         {inFlight ? "获取中" : isLocked ? "已请求" : label}
       </button>
+      <QualityFloorPicker
+        globalFloor={globalQualityFloor}
+        value={floorChoice}
+        onChange={setFloorChoice}
+        disabled={isPending || isLocked || othersAcquiring}
+      />
+      </div>
       <AcquireResultNotice result={result} />
     </>
   );

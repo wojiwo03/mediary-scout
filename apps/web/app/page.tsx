@@ -21,7 +21,10 @@ import {
 } from "../lib/title-hub";
 import {
   ensureDemoSeeded,
+  getAccountScopedSettings,
   getActiveWorkspaceScope,
+  getCurrentAccountId,
+  getQualityFloor,
   getRegisteredDriveCount,
   getWorkflowRepository,
 } from "../lib/workflow-runtime";
@@ -180,6 +183,7 @@ async function SearchResults({
   // so a result acquired from search stayed stuck on 已请求.)
   const inProgress = await getInProgressTitles(storageId);
   const inProgressIds = new Set(inProgress.map((title) => title.tmdbId));
+  const globalQualityFloor = await getQualityFloor(getAccountScopedSettings(await getCurrentAccountId()));
 
   return (
     <>
@@ -241,6 +245,7 @@ async function SearchResults({
                     (state) => state.season.seasonNumber,
                   )}
                   storageId={storageId}
+                  globalQualityFloor={globalQualityFloor}
                   key={`${candidate.mediaType}_${candidate.tmdbId}`}
                 />
               ))}
@@ -303,6 +308,7 @@ function CandidateCard({
   trackedLabel,
   trackedSeasonNumbers,
   storageId,
+  globalQualityFloor,
 }: {
   candidate: SearchCandidateCard;
   /** This title has a queued/running acquisition — show 获取中, not its
@@ -312,6 +318,7 @@ function CandidateCard({
   trackedSeasonNumbers: number[];
   /** Tree model: the active workspace drive — acquisition lands HERE. */
   storageId?: string | undefined;
+  globalQualityFloor?: import("@media-track/workflow/quality-ladder").QualityFloorBand | undefined;
 }) {
   const isTv = candidate.mediaType === "tv";
   const trackedSet = new Set(trackedSeasonNumbers);
@@ -363,6 +370,7 @@ function CandidateCard({
                   trackedLabel !== null ? `获取剩余 ${untrackedSeasons.length} 季` : "获取所有季"
                 }
                 storageId={storageId}
+                globalQualityFloor={globalQualityFloor}
                 demoEntry={{
                   tmdbId: candidate.tmdbId,
                   title: candidate.title,
@@ -388,6 +396,7 @@ function CandidateCard({
                 disabled={candidate.action.disabled}
                 label={candidate.action.label}
                 storageId={storageId}
+                globalQualityFloor={globalQualityFloor}
                 demoEntry={{
                   tmdbId: candidate.tmdbId,
                   title: candidate.title,

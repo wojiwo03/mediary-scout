@@ -7,6 +7,7 @@ import {
   getPanSouBaseUrl,
   getProwlarrConfig,
   getQualityPreference,
+  getQualityFloor,
   getAcquisitionSelectionMode,
   getCustomIdentifierWords,
   getPreferHdrOverResolution,
@@ -164,6 +165,21 @@ describe("getQualityPreference", () => {
   it("garbage (incl. legacy '4K') → undefined (safe)", async () => {
     expect(await getQualityPreference(repoWith("4K"))).toBeUndefined();
     expect(await getQualityPreference(repoWith("ultra"))).toBeUndefined();
+  });
+});
+
+describe("getQualityFloor", () => {
+  it("unset / any / garbage → undefined (previous no-floor behavior)", async () => {
+    expect(await getQualityFloor(repoWith(null))).toBeUndefined();
+    expect(await getQualityFloor(repoWith("any"))).toBeUndefined();
+    expect(await getQualityFloor(repoWith("sd"))).toBeUndefined();
+    expect(await getQualityFloor(repoWith("ultra"))).toBeUndefined();
+  });
+
+  it("720p / 1080p / 4k pass through (trimmed, case-insensitive)", async () => {
+    expect(await getQualityFloor(repoWith("1080p"))).toBe("1080p");
+    expect(await getQualityFloor(repoWith(" 4K "))).toBe("4k");
+    expect(await getQualityFloor(repoWith("720p"))).toBe("720p");
   });
 });
 

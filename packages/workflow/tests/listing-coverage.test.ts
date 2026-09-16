@@ -108,6 +108,22 @@ describe("opaque probe gates — not unrestricted transfer-to-look", () => {
     expect(picked).toHaveLength(MAX_BLACKBOX_PROBES);
     expect(picked.map((row) => row.candidateId)).toEqual(["uhd", "fhd", "hd"]);
   });
+
+  it("never probes a below-floor candidate (even if it is the only opaque pack)", () => {
+    const picked = pickOpaqueProbeCandidates({
+      candidates: [cand("sd", "庆余年 720p"), cand("uhd", "庆余年 2160p")],
+      target: showTarget,
+      policy: { resolutionFloor: "1080p" },
+    });
+    expect(picked.map((row) => row.candidateId)).toEqual(["uhd"]);
+    expect(
+      pickOpaqueProbeCandidates({
+        candidates: [cand("only", "庆余年 720p")],
+        target: showTarget,
+        policy: { resolutionFloor: "1080p" },
+      }),
+    ).toEqual([]);
+  });
 });
 
 describe("cover planner integration — probed coverage participates like titled spans", () => {

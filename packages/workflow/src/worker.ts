@@ -20,9 +20,13 @@ import {
 import {
   isQualityUpgradeAudit,
   QUALITY_UPGRADE_AUDIT_TYPE,
+  qualityFloorOverrideFromAudit,
+  qualityFloorSpread,
   qualityLadderPolicyFromFlags,
+  resolveQualityFloor,
   shouldScheduleQualityUpgrade,
   summarizeLandedQuality,
+  type QualityFloorBand,
 } from "./acquisition-v2/quality-ladder.js";
 import { isTransientAcquisitionError } from "./acquisition-v2/transient-error.js";
 import { describeAgentRunError, summarizeErrorForNotification } from "./agent-error.js";
@@ -111,6 +115,7 @@ async function resolveWorkerDeps(
   qualityPreference: "high" | "medium" | undefined;
   preferHdrOverResolution: boolean;
   considerSourceClass: boolean;
+  qualityFloor: QualityFloorBand | undefined;
   patrolQualityUpgrade: boolean;
   storageProvider: string | undefined;
   assrtToken: string | undefined;
@@ -129,6 +134,7 @@ async function resolveWorkerDeps(
     qualityPreference: ctx.qualityPreference ?? base.qualityPreference,
     preferHdrOverResolution: ctx.preferHdrOverResolution ?? base.preferHdrOverResolution ?? false,
     considerSourceClass: ctx.considerSourceClass ?? base.considerSourceClass ?? true,
+    qualityFloor: ctx.qualityFloor ?? base.qualityFloor,
     patrolQualityUpgrade: ctx.patrolQualityUpgrade ?? base.patrolQualityUpgrade ?? false,
     storageProvider: ctx.storageProvider ?? base.storageProvider,
     assrtToken: ctx.assrtToken ?? base.assrtToken,
@@ -169,6 +175,7 @@ export interface AccountWorkerContext {
   qualityPreference?: "high" | "medium";
   preferHdrOverResolution?: boolean;
   considerSourceClass?: boolean;
+  qualityFloor?: QualityFloorBand;
   patrolQualityUpgrade?: boolean;
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
   storageProvider?: string;
@@ -185,6 +192,15 @@ export type ResolveAccountWorkerContext = (
   accountId: string,
   connectedStorageId?: string | null,
 ) => Promise<AccountWorkerContext>;
+
+function qualityFloorForRun(
+  global: QualityFloorBand | undefined,
+  events: ReadonlyArray<{ type: string; data?: Record<string, unknown> }>,
+) {
+  return qualityFloorSpread(
+    resolveQualityFloor({ global, override: qualityFloorOverrideFromAudit(events) }),
+  );
+}
 
 export type QueuedType2WorkerResult =
   | {
@@ -325,6 +341,7 @@ export async function runQueuedType2Workflow(input: {
   qualityPreference?: "high" | "medium";
   preferHdrOverResolution?: boolean;
   considerSourceClass?: boolean;
+  qualityFloor?: QualityFloorBand;
   patrolQualityUpgrade?: boolean;
   acquisitionSelectionPath?: AcquisitionSelectionPath;
   customIdentifierWords?: string[];
@@ -380,6 +397,7 @@ export async function runQueuedType2Workflow(input: {
         : { qualityPreference: deps.qualityPreference }),
       ...(deps.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
       ...(deps.considerSourceClass === false ? { considerSourceClass: false } : {}),
+      ...qualityFloorForRun(deps.qualityFloor, claimed.workflowRun.auditEvents),
       ...(qualityUpgrade ? { qualityUpgrade: true } : {}),
       ...(priorObtained.length > 0 ? { priorObtained } : {}),
       ...(deps.storageProvider === undefined
@@ -458,6 +476,7 @@ export async function runScheduledType3Monitoring(input: {
   qualityPreference?: "high" | "medium";
   preferHdrOverResolution?: boolean;
   considerSourceClass?: boolean;
+  qualityFloor?: QualityFloorBand;
   patrolQualityUpgrade?: boolean;
   acquisitionSelectionPath?: AcquisitionSelectionPath;
   customIdentifierWords?: string[];
@@ -620,6 +639,7 @@ export async function runScheduledType3Monitoring(input: {
           : { qualityPreference: deps.qualityPreference }),
         ...(deps.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
         ...(deps.considerSourceClass === false ? { considerSourceClass: false } : {}),
+        ...qualityFloorSpread(deps.qualityFloor),
         ...(deps.patrolQualityUpgrade ? { qualityUpgrade: true } : {}),
         ...(deps.storageProvider === undefined
           ? {}
@@ -706,6 +726,7 @@ async function patrolMovie(args: {
     qualityPreference: "high" | "medium" | undefined;
     preferHdrOverResolution: boolean;
     considerSourceClass: boolean;
+    qualityFloor: QualityFloorBand | undefined;
     patrolQualityUpgrade: boolean;
     storageProvider: string | undefined;
     assrtToken: string | undefined;
@@ -815,6 +836,7 @@ async function patrolMovie(args: {
         : { qualityPreference: deps.qualityPreference }),
       ...(deps.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
       ...(deps.considerSourceClass === false ? { considerSourceClass: false } : {}),
+      ...qualityFloorSpread(deps.qualityFloor),
       ...(obtained && deps.patrolQualityUpgrade ? { qualityUpgrade: true } : {}),
       ...(deps.storageProvider === undefined
         ? {}
@@ -981,6 +1003,7 @@ export async function runQueuedMovieAcquisition(input: {
   qualityPreference?: "high" | "medium";
   preferHdrOverResolution?: boolean;
   considerSourceClass?: boolean;
+  qualityFloor?: QualityFloorBand;
   patrolQualityUpgrade?: boolean;
   acquisitionSelectionPath?: AcquisitionSelectionPath;
   customIdentifierWords?: string[];
@@ -1025,6 +1048,7 @@ export async function runQueuedMovieAcquisition(input: {
         : { qualityPreference: deps.qualityPreference }),
       ...(deps.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
       ...(deps.considerSourceClass === false ? { considerSourceClass: false } : {}),
+      ...qualityFloorForRun(deps.qualityFloor, claimed.workflowRun.auditEvents),
       ...(qualityUpgrade ? { qualityUpgrade: true } : {}),
       ...(deps.storageProvider === undefined
         ? {}
@@ -1071,6 +1095,7 @@ export async function runQueuedSeriesInitialization(input: {
   qualityPreference?: "high" | "medium";
   preferHdrOverResolution?: boolean;
   considerSourceClass?: boolean;
+  qualityFloor?: QualityFloorBand;
   acquisitionSelectionPath?: AcquisitionSelectionPath;
   customIdentifierWords?: string[];
   storageParentDirectoryId: string;
@@ -1134,6 +1159,7 @@ export async function runQueuedSeriesInitialization(input: {
         : { qualityPreference: deps.qualityPreference }),
       ...(deps.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
       ...(deps.considerSourceClass === false ? { considerSourceClass: false } : {}),
+      ...qualityFloorForRun(deps.qualityFloor, claimed.workflowRun.auditEvents),
       ...(deps.storageProvider === undefined
         ? {}
         : { storageProvider: deps.storageProvider }),

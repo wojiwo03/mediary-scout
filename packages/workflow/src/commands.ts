@@ -10,7 +10,7 @@ import {
   type WorkflowKind,
   type WorkflowStatus,
 } from "./domain.js";
-import { QUALITY_UPGRADE_AUDIT_TYPE } from "./acquisition-v2/quality-ladder.js";
+import { QUALITY_UPGRADE_AUDIT_TYPE, qualityFloorAuditEvents, type QualityFloorSetting } from "./acquisition-v2/quality-ladder.js";
 import {
   ensureMediaLibraryDirectory,
   legacyMediaLibraryFolderName,
@@ -53,6 +53,8 @@ export async function queueTrackingInitialization(input: {
   /** When true, an already-tracked title queues a quality-upgrade run instead of
    *  returning already_tracked. Default off (conservative). */
   qualityUpgrade?: boolean;
+  /** Per-run hard floor override (`any` = disable global for this run). */
+  qualityFloor?: QualityFloorSetting;
 }): Promise<TrackingInitializationRequestResult> {
   const now = input.now ?? (() => new Date().toISOString());
   const workflowRunId = input.createWorkflowRunId?.() ?? crypto.randomUUID();
@@ -87,6 +89,7 @@ export async function queueTrackingInitialization(input: {
           message: `Queued tracking initialization workflow ${workflowRunId}`,
           data: { keyword: input.keyword },
         },
+        ...qualityFloorAuditEvents(input.qualityFloor),
       ],
     },
     episodes: initialEpisodes,
@@ -186,6 +189,7 @@ async function queueExistingTitleUpgrade(input: {
   now?: () => string;
   staleActiveRunTimeoutMs?: number;
   kind: Extract<WorkflowKind, "type2_init" | "movie_init">;
+  qualityFloor?: QualityFloorSetting;
 }): Promise<TrackingInitializationRequestResult> {
   const now = input.now ?? (() => new Date().toISOString());
   const workflowRunId = input.createWorkflowRunId?.() ?? crypto.randomUUID();
@@ -230,6 +234,7 @@ async function queueExistingTitleUpgrade(input: {
           message: `Queued quality-upgrade workflow ${workflowRunId}`,
           data: { keyword: input.keyword },
         },
+        ...qualityFloorAuditEvents(input.qualityFloor),
       ],
     },
     episodes: existing.episodes,
@@ -291,6 +296,7 @@ export async function queueSeriesInitialization(input: {
   createWorkflowRunId?: () => string;
   now?: () => string;
   staleActiveRunTimeoutMs?: number;
+  qualityFloor?: QualityFloorSetting;
 }): Promise<SeriesInitializationRequestResult> {
   const now = input.now ?? (() => new Date().toISOString());
   const workflowRunId = input.createWorkflowRunId?.() ?? crypto.randomUUID();
@@ -334,6 +340,7 @@ export async function queueSeriesInitialization(input: {
           message: `Queued series initialization workflow ${workflowRunId}`,
           data: { keyword: input.keyword, seasons: input.seasons },
         },
+        ...qualityFloorAuditEvents(input.qualityFloor),
       ],
     },
     episodes: [],
@@ -383,6 +390,7 @@ export async function queueMovieAcquisition(input: {
   now?: () => string;
   staleActiveRunTimeoutMs?: number;
   qualityUpgrade?: boolean;
+  qualityFloor?: QualityFloorSetting;
 }): Promise<MovieAcquisitionRequestResult> {
   const now = input.now ?? (() => new Date().toISOString());
   const workflowRunId = input.createWorkflowRunId?.() ?? crypto.randomUUID();
@@ -412,6 +420,7 @@ export async function queueMovieAcquisition(input: {
           message: `Queued movie acquisition workflow ${workflowRunId}`,
           data: { keyword: input.keyword },
         },
+        ...qualityFloorAuditEvents(input.qualityFloor),
       ],
     },
     episodes: [],

@@ -5,6 +5,8 @@ import { useState, useTransition } from "react";
 import { requestSeriesAction, type RequestTrackingActionResult } from "../app/actions";
 import { runAction } from "../lib/run-action";
 import { AcquireResultNotice, isLockedResult } from "./request-state";
+import { QualityFloorPicker, qualityFloorActionValue, type QualityFloorChoice } from "./quality-floor-picker";
+import type { QualityFloorBand } from "@media-track/workflow/quality-ladder";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { DemoAcquirePlayback } from "./demo-acquire-playback";
 import type { DemoAcquisitionEntry } from "../lib/demo-session";
@@ -14,6 +16,7 @@ export function RequestSeriesButton({
   candidateId,
   storageId,
   demoEntry,
+  globalQualityFloor,
 }: {
   candidateId: string;
   /** Tree model: the active workspace drive — acquisition lands HERE. REQUIRED
@@ -21,8 +24,10 @@ export function RequestSeriesButton({
   storageId: string | undefined;
   /** Demo only: recorded to the session library when the scripted playback ends. */
   demoEntry?: DemoAcquisitionEntry | undefined;
+  globalQualityFloor?: QualityFloorBand | undefined;
 }) {
   const [isPending, startTransition] = useTransition();
+  const [floorChoice, setFloorChoice] = useState<QualityFloorChoice>("default");
   const [result, setResult] = useState<RequestTrackingActionResult | null>(null);
   const isLocked = isLockedResult(result);
   // Read-only demo: clicking plays the scripted playback (the server action is gated).
@@ -45,6 +50,7 @@ export function RequestSeriesButton({
 
   return (
     <>
+      <div className="acquire-with-floor">
       <button
         className="primary-button series-button"
         type="button"
@@ -57,7 +63,10 @@ export function RequestSeriesButton({
           }
           startTransition(async () => {
             const r = await runAction(
-              () => requestSeriesAction({ candidateId, storageId }),
+              () => {
+                const floor = qualityFloorActionValue(floorChoice);
+                return requestSeriesAction({ candidateId, storageId, ...(floor ? { qualityFloor: floor } : {}) });
+              },
               (msg) => setResult({ status: "unsupported", message: msg }),
             );
             if (!r.ok) return;
@@ -72,6 +81,13 @@ export function RequestSeriesButton({
         )}
         {isLocked ? "已请求" : "获取全剧"}
       </button>
+      <QualityFloorPicker
+        globalFloor={globalQualityFloor}
+        value={floorChoice}
+        onChange={setFloorChoice}
+        disabled={isPending || isLocked}
+      />
+      </div>
       <AcquireResultNotice result={result} />
     </>
   );

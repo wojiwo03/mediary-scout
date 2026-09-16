@@ -15,7 +15,13 @@ import {
   uncoveredEpisodes,
   type CoverCandidate,
 } from "./cover-planner.js";
-import { scoreReleaseQuality, type QualityLadderPolicy } from "./quality-ladder.js";
+import {
+  BELOW_QUALITY_FLOOR_REASON,
+  formatQualityFloorLabel,
+  isBelowQualityFloor,
+  scoreReleaseQuality,
+  type QualityLadderPolicy,
+} from "./quality-ladder.js";
 import {
   airDateCodeForms,
   isIncompleteMovieDisc,
@@ -467,6 +473,23 @@ function originIsCN(target: RulesSelectorTarget): boolean {
   return (target.originCountries ?? []).includes("CN");
 }
 
+function emptySelectionReason(
+  rejected: RulesSelection["rejected"],
+  kind: "movie" | "tv",
+  floor: QualityLadderPolicy["resolutionFloor"],
+): string {
+  const floorHits = rejected.some((row) => row.reason === BELOW_QUALITY_FLOOR_REASON);
+  if (floorHits && floor !== undefined) {
+    const label = formatQualityFloorLabel(floor);
+    return kind === "movie"
+      ? `规则选片：没有达到画质下限（${label}）的可播放候选，低于此档不下载，留给巡检`
+      : `规则选片：没有达到画质下限（${label}）且能覆盖缺集的候选，低于此档不下载，留给巡检`;
+  }
+  return kind === "movie"
+    ? "规则选片：没有标题匹配且可播放的目标影片候选"
+    : "规则选片：没有能覆盖缺集的标题匹配候选";
+}
+
 function rejectMovieNoise(title: string, customWords?: readonly string[]): string | null {
   const titled = titledWithWords(title, customWords);
   const quality = parseReleaseMeta(title, parseOptions(customWords));
@@ -629,6 +652,10 @@ export function selectResourceCandidates(input: {
         rejected.push({ ...candidate, reason: noise });
         continue;
       }
+      if (isBelowQualityFloor(candidate.title, policy.resolutionFloor)) {
+        rejected.push({ ...candidate, reason: BELOW_QUALITY_FLOOR_REASON });
+        continue;
+      }
       if (preferZh && !originCN && looksLikeEnglishScene(titled) && chineseSubtitleScore(titled, true, false) < 0) {
         // Keep as last-resort raw: don't reject yet, just low-score.
       }
@@ -647,6 +674,10 @@ export function selectResourceCandidates(input: {
         });
     if (covered.length === 0) {
       rejected.push({ ...candidate, reason: "no-episode-coverage" });
+      continue;
+    }
+    if (isBelowQualityFloor(candidate.title, policy.resolutionFloor)) {
+      rejected.push({ ...candidate, reason: BELOW_QUALITY_FLOOR_REASON });
       continue;
     }
     if (preferZh && !originCN && looksLikeEnglishScene(titled)) {
@@ -681,7 +712,7 @@ export function selectResourceCandidates(input: {
         selected: [],
         eligible: [],
         rejected,
-        reason: "规则选片：没有标题匹配且可播放的目标影片候选",
+        reason: emptySelectionReason(rejected, "movie", policy.resolutionFloor),
       };
     }
     const skippedIncomplete =
@@ -720,7 +751,7 @@ export function selectResourceCandidates(input: {
       selected: [],
       eligible,
       rejected,
-      reason: "规则选片：没有能覆盖缺集的标题匹配候选",
+      reason: emptySelectionReason(rejected, "tv", policy.resolutionFloor),
     };
   }
   const selectedIds = new Set(selected.map((candidate) => candidate.candidateId));

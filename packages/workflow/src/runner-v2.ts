@@ -17,6 +17,7 @@ import type { ResourceProvider, StorageExecutor } from "./ports.js";
 import type { WorkflowRepository } from "./repository.js";
 import type { AcquisitionSelectionPath } from "./acquisition-v2/selection-mode.js";
 import { customIdentifierWordsSpread } from "./acquisition-v2/release-meta.js";
+import { qualityFloorSpread, type QualityFloorBand } from "./acquisition-v2/quality-ladder.js";
 
 /**
  * Phase 7d — production persist wrappers on the V2 engine. These mirror the old
@@ -49,6 +50,7 @@ interface TvV2Common {
   preferHdrOverResolution?: boolean;
   /** When false, encode/source class is ignored. Default true. */
   considerSourceClass?: boolean;
+  qualityFloor?: QualityFloorBand;
   qualityUpgrade?: boolean;
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
   storageProvider?: string;
@@ -79,6 +81,7 @@ function passthrough(input: TvV2Common): {
   qualityPreference?: "high" | "medium";
   preferHdrOverResolution?: boolean;
   considerSourceClass?: boolean;
+  qualityFloor?: QualityFloorBand;
   qualityUpgrade?: boolean;
   storageProvider?: string;
   assrtToken?: string;
@@ -92,6 +95,7 @@ function passthrough(input: TvV2Common): {
     ...(input.qualityPreference === undefined ? {} : { qualityPreference: input.qualityPreference }),
     ...(input.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
     ...(input.considerSourceClass === false ? { considerSourceClass: false } : {}),
+    ...qualityFloorSpread(input.qualityFloor),
     ...(input.qualityUpgrade ? { qualityUpgrade: true } : {}),
     ...(input.storageProvider === undefined ? {} : { storageProvider: input.storageProvider }),
     ...(input.assrtToken === undefined ? {} : { assrtToken: input.assrtToken }),
@@ -349,6 +353,7 @@ export async function runMovieAcquisitionV2AndPersist(input: {
   qualityPreference?: "high" | "medium";
   preferHdrOverResolution?: boolean;
   considerSourceClass?: boolean;
+  qualityFloor?: QualityFloorBand;
   qualityUpgrade?: boolean;
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
   storageProvider?: string;
@@ -382,6 +387,7 @@ export async function runMovieAcquisitionV2AndPersist(input: {
     ...(input.qualityPreference === undefined ? {} : { qualityPreference: input.qualityPreference }),
     ...(input.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
     ...(input.considerSourceClass === false ? { considerSourceClass: false } : {}),
+    ...qualityFloorSpread(input.qualityFloor),
     ...(input.qualityUpgrade ? { qualityUpgrade: true } : {}),
     ...(input.storageProvider === undefined ? {} : { storageProvider: input.storageProvider }),
     ...(input.assrtToken === undefined ? {} : { assrtToken: input.assrtToken }),

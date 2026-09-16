@@ -650,4 +650,46 @@ describe("runAcquisitionV2 — auto path confidence fallback", () => {
       ),
     ).toBe(true);
   });
+
+  it("movie: quality floor refuses a 720p-only set instead of transferring the only option", async () => {
+    const snapId = "snap_floor";
+    const provider: ResourceProvider = {
+      search: async ({ keyword }) =>
+        snapshot(snapId, keyword, [
+          candidate({ id: "low", snapshotId: snapId, index: 0, title: "盗梦空间 2010 720p WEB-DL 中字" }),
+        ]),
+    };
+    const executor = new FakeStorageExecutor({
+      directories: { staging: [], movie: [] },
+      transferOutcomes: {
+        low: {
+          status: "succeeded",
+          providerMessage: "must not run",
+          files: [videoFile("film", "盗梦空间.2010.720p.mkv", null)],
+        },
+      },
+    });
+
+    const result = await runAcquisitionV2({
+      provider,
+      executor,
+      model: throwingModel(),
+      workflowRunId: "run-rules-floor",
+      target: {
+        kind: "movie",
+        title: "盗梦空间",
+        aliases: ["Inception"],
+        year: 2010,
+        qualityPreference: "1080p",
+      },
+      stagingDirectoryId: "staging",
+      targetMovieDirectoryId: "movie",
+      acquisitionSelectionPath: "rules",
+      qualityPolicy: { resolutionFloor: "1080p" },
+    });
+
+    expect(result.coverage.coverageMet).toBe(false);
+    expect(result.outcome.transferAttempts).toEqual([]);
+    expect(result.text).toMatch(/画质下限/);
+  });
 });

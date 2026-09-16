@@ -85,4 +85,38 @@ describe("TaskSandbox — transferCandidate (snapshot-bound, into staging, force
     expect(result.attempt.providerMessage).toBe("链接已过期");
     expect(result.systemicBlock).toBeUndefined();
   });
+
+  it("refuses transferCandidate when the title is below the hard quality floor", async () => {
+    const provider = new FakeResourceProviderV2({
+      results: { show: [{ id: "low", title: "Show 720p 全集" }] },
+    });
+    const storage = new Storage115Simulator({
+      packs: { low: { files: [{ path: "Show - 01.mkv", sizeBytes: 1 }] } },
+    });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const sandbox = new TaskSandbox({
+      provider,
+      storage,
+      stagingDirectoryId,
+      qualityPolicy: { resolutionFloor: "1080p" },
+    });
+    const search = await sandbox.searchResources("show");
+    await expect(
+      sandbox.transferCandidate({ snapshotId: search.snapshot!.id, candidateId: "low" }),
+    ).rejects.toThrow(/SANDBOX_BELOW_QUALITY_FLOOR/);
+  });
+
+  it("allows transferCandidate when no floor is set (previous behavior)", async () => {
+    const provider = new FakeResourceProviderV2({
+      results: { show: [{ id: "low", title: "Show 720p 全集" }] },
+    });
+    const storage = new Storage115Simulator({
+      packs: { low: { files: [{ path: "Show - 01.mkv", sizeBytes: 1 }] } },
+    });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId });
+    const search = await sandbox.searchResources("show");
+    const result = await sandbox.transferCandidate({ snapshotId: search.snapshot!.id, candidateId: "low" });
+    expect(result.attempt.status).toBe("succeeded");
+  });
 });

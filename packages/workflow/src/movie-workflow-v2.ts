@@ -21,7 +21,7 @@ import type { DeadLinkStore } from "./acquisition-v2/dead-links.js";
 import { readLandedSize, type LandedSize } from "./acquisition-v2/landed-size.js";
 import type { AgentToolEvent } from "./acquisition-v2/activity.js";
 import { runAcquisitionV2 } from "./acquisition-v2/orchestrator.js";
-import { QUALITY_UPGRADE_AUDIT_TYPE, qualityLadderPolicyFromFlags } from "./acquisition-v2/quality-ladder.js";
+import { QUALITY_UPGRADE_AUDIT_TYPE, qualityLadderPolicyFromFlags, type QualityFloorBand } from "./acquisition-v2/quality-ladder.js";
 import { getAcquisitionQualityGuidance, getSearchRecipe } from "./acquisition-v2/search-profile.js";
 import { ensureMediaLibraryDirectory } from "./media-library-folder.js";
 import type { AcquisitionSelectionPath } from "./acquisition-v2/selection-mode.js";
@@ -54,6 +54,8 @@ export interface RunMovieAcquisitionV2Request {
   preferHdrOverResolution?: boolean;
   /** When false, encode/source class is ignored. Default true. */
   considerSourceClass?: boolean;
+  /** Hard resolution floor for this run (already resolved vs global/override). */
+  qualityFloor?: QualityFloorBand;
   /** Replace an already-obtained film when a strictly better candidate exists. */
   qualityUpgrade?: boolean;
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
@@ -90,6 +92,7 @@ export async function runMovieAcquisitionV2(
     ...(request.qualityPreference === undefined ? {} : { resolutionPreference: request.qualityPreference }),
     ...(request.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
     ...(request.considerSourceClass === false ? { considerSourceClass: false } : {}),
+    ...(request.qualityFloor === undefined ? {} : { resolutionFloor: request.qualityFloor }),
   });
   const qualityGuidance = getAcquisitionQualityGuidance({
     profile: "movie",

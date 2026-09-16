@@ -1,5 +1,7 @@
 import {
   formatQualityLadderSummary,
+  isQualityFloorSetting,
+  QUALITY_FLOOR_SETTING_VALUES,
   qualityLadderPolicyFromFlags,
 } from "@media-track/workflow/quality-ladder";
 import {
@@ -7,6 +9,7 @@ import {
   getAccountScopedSettings,
   getLlmConfig,
   getQualityPreference,
+  getQualityFloor,
   getPreferredLanguage,
   getPreferHdrOverResolution,
   getConsiderSourceClass,
@@ -20,6 +23,7 @@ import {
   LLM_API_KEY_SETTING_KEY,
   LLM_MODEL_ID_SETTING_KEY,
   QUALITY_PREFERENCE_SETTING_KEY,
+  QUALITY_FLOOR_SETTING_KEY,
   PREFER_HDR_OVER_RESOLUTION_SETTING_KEY,
   CONSIDER_SOURCE_CLASS_SETTING_KEY,
   UPGRADE_ON_REACQUIRE_SETTING_KEY,
@@ -41,6 +45,7 @@ type PushChannelKey = (typeof PUSH_CHANNEL_KEYS)[number];
 export interface AgentConfigView {
   llm: { baseURL: string | null; modelId: string | null; apiKey: string | null };
   qualityPreference: string | undefined;
+  qualityFloor: string | undefined;
   preferHdrOverResolution: boolean;
   considerSourceClass: boolean;
   upgradeOnReacquire: boolean;
@@ -77,10 +82,11 @@ export function isMaskedPlaceholder(value: string): boolean {
 export async function readAgentConfig(accountId: string): Promise<AgentConfigView> {
   const settings = getAccountScopedSettings(accountId);
   const repository = getWorkflowRepository();
-  const [llm, quality, language, sweepTime, prowlarr, storageRows, preferHdr, considerSource, upgradeOnReacquire, patrolUpgrade, selectionMode, identifierWords] =
+  const [llm, quality, qualityFloor, language, sweepTime, prowlarr, storageRows, preferHdr, considerSource, upgradeOnReacquire, patrolUpgrade, selectionMode, identifierWords] =
     await Promise.all([
       getLlmConfig(settings),
       getQualityPreference(settings),
+      getQualityFloor(settings),
       getPreferredLanguage(settings),
       getDailySweepTime(repository),
       getProwlarrConfig(settings),
@@ -113,6 +119,7 @@ export async function readAgentConfig(accountId: string): Promise<AgentConfigVie
       apiKey: maskSecret(llm.apiKey),
     },
     qualityPreference: quality,
+    qualityFloor,
     preferHdrOverResolution: preferHdr,
     considerSourceClass: considerSource,
     upgradeOnReacquire,
@@ -124,6 +131,7 @@ export async function readAgentConfig(accountId: string): Promise<AgentConfigVie
         ...(quality === undefined ? {} : { resolutionPreference: quality }),
         ...(preferHdr ? { preferHdrOverResolution: true } : {}),
         ...(considerSource ? {} : { considerSourceClass: false }),
+        ...(qualityFloor === undefined ? {} : { resolutionFloor: qualityFloor }),
       }),
     ),
     preferredLanguage: language,
@@ -145,6 +153,7 @@ export async function readAgentConfig(accountId: string): Promise<AgentConfigVie
 export interface AgentConfigWriteInput {
   llm?: { baseURL?: string; modelId?: string; apiKey?: string };
   qualityPreference?: string;
+  qualityFloor?: string;
   preferHdrOverResolution?: boolean;
   considerSourceClass?: boolean;
   upgradeOnReacquire?: boolean;
@@ -208,6 +217,19 @@ export async function writeAgentConfig(
     }
     await setAccount(QUALITY_PREFERENCE_SETTING_KEY, input.qualityPreference);
     updated.push("qualityPreference");
+  }
+
+  if (input.qualityFloor !== undefined) {
+    const floor = input.qualityFloor.trim().toLowerCase();
+    if (!isQualityFloorSetting(floor)) {
+      return {
+        ok: false,
+        field: "qualityFloor",
+        message: `无效画质下限，可选：${QUALITY_FLOOR_SETTING_VALUES.join(" / ")}`,
+      };
+    }
+    await setAccount(QUALITY_FLOOR_SETTING_KEY, floor);
+    updated.push("qualityFloor");
   }
 
   const boolWrites: Array<[boolean | undefined, string, string]> = [

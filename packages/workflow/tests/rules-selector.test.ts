@@ -13,7 +13,7 @@ import {
 } from "../src/acquisition-v2/rules-selector.js";
 import { joinReleaseTitleParts } from "../src/acquisition-v2/release-meta.js";
 import { movieTargetToRules, tvTargetToRules } from "../src/acquisition-v2/rules-task.js";
-import { qualityLadderPolicyFromFlags } from "../src/acquisition-v2/quality-ladder.js";
+import { qualityLadderPolicyFromFlags, BELOW_QUALITY_FLOOR_REASON } from "../src/acquisition-v2/quality-ladder.js";
 
 const high = qualityLadderPolicyFromFlags({ resolutionPreference: "high" });
 
@@ -750,5 +750,74 @@ describe("assessRulesConfidence", () => {
     });
     expect(report.confidence).toBe("low");
     expect(report.reasons).toContain("season-pack-without-span");
+  });
+});
+
+describe("selectResourceCandidates — quality floor hard reject", () => {
+  const movie = {
+    kind: "movie" as const,
+    title: "蝙蝠侠：黑暗骑士",
+    aliases: ["The Dark Knight"],
+    year: 2008,
+  };
+  const tv = {
+    kind: "tv" as const,
+    title: "Show",
+    aliases: [] as string[],
+    seasons: [1],
+    missingEpisodes: ["S01E01", "S01E02"],
+    originCountries: ["CN"],
+  };
+
+  it("global 1080p floor rejects 720p/SD even when they are the only candidates", () => {
+    const movieSel = selectResourceCandidates({
+      candidates: [cand("low", "蝙蝠侠：黑暗骑士 2008 720p WEB-DL 中字")],
+      target: movie,
+      policy: qualityLadderPolicyFromFlags({ resolutionFloor: "1080p" }),
+    });
+    expect(movieSel.selected).toEqual([]);
+    expect(movieSel.rejected.some((row) => row.reason === BELOW_QUALITY_FLOOR_REASON)).toBe(true);
+    expect(movieSel.reason).toMatch(/画质下限/);
+
+    const tvSel = selectResourceCandidates({
+      candidates: [cand("pack", "Show 全集 720p WEB-DL")],
+      target: tv,
+      policy: qualityLadderPolicyFromFlags({ resolutionFloor: "1080p" }),
+    });
+    expect(tvSel.selected).toEqual([]);
+    expect(tvSel.rejected.some((row) => row.reason === BELOW_QUALITY_FLOOR_REASON)).toBe(true);
+    expect(tvSel.reason).toMatch(/画质下限/);
+  });
+
+  it("per-run override can raise or disable the global floor", () => {
+    const raised = selectResourceCandidates({
+      candidates: [cand("fhd", "蝙蝠侠：黑暗骑士 2008 1080p WEB-DL 中字")],
+      target: movie,
+      policy: qualityLadderPolicyFromFlags({ resolutionFloor: "4k" }),
+    });
+    expect(raised.selected).toEqual([]);
+    expect(raised.rejected.some((row) => row.reason === BELOW_QUALITY_FLOOR_REASON)).toBe(true);
+
+    const disabled = selectResourceCandidates({
+      candidates: [cand("sd", "蝙蝠侠：黑暗骑士 2008 720p WEB-DL 中字")],
+      target: movie,
+      policy: qualityLadderPolicyFromFlags({}),
+    });
+    expect(disabled.selected.map((row) => row.candidateId)).toEqual(["sd"]);
+  });
+
+  it("below-floor packs never fill the multi-share cover as the only option", () => {
+    const selection = selectResourceCandidates({
+      candidates: [
+        cand("hi", "Show S01E01 1080p WEB-DL"),
+        cand("filler", "Show 全集 720p WEB-DL"),
+      ],
+      target: { ...tv, missingEpisodes: ["S01E01", "S01E02"] },
+      policy: qualityLadderPolicyFromFlags({ resolutionPreference: "high", resolutionFloor: "1080p" }),
+    });
+    expect(selection.selected.map((row) => row.candidateId)).toEqual(["hi"]);
+    expect(selection.rejected.some((row) => row.candidateId === "filler" && row.reason === BELOW_QUALITY_FLOOR_REASON)).toBe(
+      true,
+    );
   });
 });

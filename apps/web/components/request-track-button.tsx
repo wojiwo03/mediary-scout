@@ -13,6 +13,8 @@ import { runAction } from "../lib/run-action";
 import type { SearchActionState } from "@media-track/workflow/search-view";
 import { RequestedBadge } from "./request-state";
 import { AcquireProgressBadge } from "./acquire-progress-badge";
+import { QualityFloorPicker, qualityFloorActionValue, type QualityFloorChoice } from "./quality-floor-picker";
+import type { QualityFloorBand } from "@media-track/workflow/quality-ladder";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { DemoAcquirePlayback } from "./demo-acquire-playback";
 import type { DemoAcquisitionEntry } from "../lib/demo-session";
@@ -37,6 +39,7 @@ export function RequestTrackButton({
   disabled = false,
   storageId,
   demoEntry,
+  globalQualityFloor,
 }: {
   candidateId?: string;
   /** Production: the candidate's tmdbId, so the in-progress badge can match this
@@ -50,9 +53,11 @@ export function RequestTrackButton({
   /** Demo only: the candidate's display fields, recorded to the session library
    *  when the scripted playback finishes so the visitor sees it "land". */
   demoEntry?: DemoAcquisitionEntry;
+  globalQualityFloor?: QualityFloorBand | undefined;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [floorChoice, setFloorChoice] = useState<QualityFloorChoice>("default");
   const [result, setResult] = useState<RequestTrackingActionResult | null>(null);
   // Read-only demo: clicking 获取 plays a scripted, client-only acquisition (no
   // server action, which is gated server-side anyway).
@@ -124,7 +129,8 @@ export function RequestTrackButton({
 
   return (
     <div className="request-track">
-      <button
+      <div className="acquire-with-floor">
+        <button
         className="primary-button"
         type="button"
         disabled={isPending}
@@ -135,11 +141,15 @@ export function RequestTrackButton({
           }
           startTransition(async () => {
             const r = await runAction(
-              () => requestTrackingAction({
+              () => {
+                const floor = qualityFloorActionValue(floorChoice);
+                return requestTrackingAction({
                   ...(candidateId ? { candidateId } : {}),
                   currentState: actionState,
                   ...(storageId ? { storageId } : {}),
-                }),
+                  ...(floor ? { qualityFloor: floor } : {}),
+                });
+              },
               (msg) => setResult({ status: "unsupported", message: msg }),
             );
             if (!r.ok) return;
@@ -159,6 +169,15 @@ export function RequestTrackButton({
         )}
         {isPending ? (actionState === "can_reserve" ? "预定中" : "请求中") : label}
       </button>
+      {actionState === "can_reserve" ? null : (
+        <QualityFloorPicker
+          globalFloor={globalQualityFloor}
+          value={floorChoice}
+          onChange={setFloorChoice}
+          disabled={isPending}
+        />
+      )}
+      </div>
       {/* A non-queued result (e.g. unsupported / failed) fell through to the
           requestable button — surface its reason instead of swallowing it. */}
       {result ? <p className="request-result">{result.message}</p> : null}

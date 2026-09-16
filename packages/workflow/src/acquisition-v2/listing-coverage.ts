@@ -36,7 +36,7 @@
 import { episodeCode } from "../domain.js";
 import { episodeCodeFromFileName } from "../episode-code.js";
 import { MAX_BLACKBOX_PROBES, uncoveredEpisodes, type CoverCandidate } from "./cover-planner.js";
-import { scoreReleaseQuality, type QualityLadderPolicy } from "./quality-ladder.js";
+import { isBelowQualityFloor, scoreReleaseQuality, type QualityLadderPolicy } from "./quality-ladder.js";
 import {
   parseReleaseMeta,
   splitReleaseTitleParts,
@@ -248,6 +248,7 @@ export function pickOpaqueProbeCandidates(input: {
         ...(input.customWords && input.customWords.length > 0 ? { customWords: input.customWords } : {}),
       }),
     )
+    .filter((candidate) => !isBelowQualityFloor(candidate.title, policy.resolutionFloor))
     .map((candidate) => {
       const meta = parseReleaseMeta(candidate.title, parseOptions(input.customWords));
       const qualityScore = scoreReleaseQuality(meta, policy);

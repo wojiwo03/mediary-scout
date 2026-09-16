@@ -100,6 +100,17 @@ describe("interpretTool — real agent tool names → cleaned 中文 + phase", (
     });
   });
 
+  it("quality-floor refusals use dedicated Chinese activity lines", () => {
+    expect(
+      interpretTool("rulesSelectCandidates", {
+        reason: "规则选片：没有达到画质下限（1080p）的可播放候选，低于此档不下载，留给巡检",
+      }),
+    ).toEqual({ activity: "候选低于画质下限，不下载…", phase: "pick" });
+    expect(
+      interpretTool("transferCandidate", { error: "SANDBOX_BELOW_QUALITY_FLOOR: 低于画质下限（1080p），拒绝转存。" }),
+    ).toEqual({ activity: "低于画质下限，跳过转存…", phase: "transfer" });
+  });
+
   it("viewResourceSnapshot is the pre-warmed 活期文档 review → mapped (not the generic 处理中 fallback)", () => {
     const r = interpretTool("viewResourceSnapshot", {});
     expect(r.activity).not.toBe("处理中…");
