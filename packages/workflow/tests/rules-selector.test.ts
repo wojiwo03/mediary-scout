@@ -778,6 +778,13 @@ describe("selectResourceCandidates — quality floor hard reject", () => {
     expect(movieSel.selected).toEqual([]);
     expect(movieSel.rejected.some((row) => row.reason === BELOW_QUALITY_FLOOR_REASON)).toBe(true);
     expect(movieSel.reason).toMatch(/画质下限/);
+    expect(
+      assessRulesConfidence({
+        target: movie,
+        selection: movieSel,
+        candidateCount: 1,
+      }).confidence,
+    ).toBe("high");
 
     const tvSel = selectResourceCandidates({
       candidates: [cand("pack", "Show 全集 720p WEB-DL")],

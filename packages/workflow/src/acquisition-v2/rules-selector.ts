@@ -565,6 +565,16 @@ export function assessRulesConfidence(input: {
   const count = (reason: string) => rejected.filter((value) => value === reason).length;
 
   if (input.selection.selected.length === 0) {
+    // Hard floor correctly rejected every candidate: that is a decisive
+    // no-coverage, not an ambiguous parse. Escalating to the agent would only
+    // re-hit SANDBOX_BELOW_QUALITY_FLOOR and then hang the UI on 「正在收尾…」
+    // (finish with coverageMet:false used not to stop the loop).
+    const floorOnly =
+      input.selection.rejected.length > 0 &&
+      input.selection.rejected.every((row) => row.reason === BELOW_QUALITY_FLOOR_REASON);
+    if (floorOnly) {
+      return { confidence: "high", reasons: [] };
+    }
     if (count("no-episode-coverage") > 0) {
       reasons.push("no-episode-coverage");
     }

@@ -509,8 +509,9 @@ export async function runAcquisitionAgent(
     // Five stops: step cap (cost/runaway), repetition (agent crazy), systemic
     // transfer block (account quota/auth — every candidate will fail, stop grinding),
     // successful reportNoCoverage (terminal declaration — no second report), and
-    // successful finish (the symmetric terminal declaration — 复联4 live showed
-    // finish ×3 tail steps without a mechanical stop). The stops are independent
+    // successful finish (any error-free coverage summary — including unmet gaps /
+    // quality-floor wrap-up. Waiting for coverageMet:true left 「正在收尾…」 stuck
+    // while generateText requested another LLM turn). The stops are independent
     // and OR'd — each fires under disjoint conditions, so ordering is not semantic.
     stopWhen: [
       stepCountIs(maxSteps),

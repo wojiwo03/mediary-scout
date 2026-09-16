@@ -174,30 +174,49 @@ export function buildNoCoverageStop<TOOLS extends ToolSet = ToolSet>(): StopCond
   return ({ steps }) => hasSuccessfulNoCoverageReport(steps as ReadonlyArray<StepLike>);
 }
 
-/** Whether any step carries a SUCCESSFUL finish result — the coverage summary,
- *  error-free AND coverageMet:true. Mirrors hasSuccessfulNoCoverageReport: finish
- *  is the symmetric terminal declaration — 复联4 live (2026-07-17) showed the model
- *  calling finish ×3 in a row (~2 wasted steps) because only reportNoCoverage had
- *  a mechanical stop. Two cases deliberately do NOT stop:
- *  - {error} result (premature call stays recoverable);
- *  - coverageMet:false — unlike reportNoCoverage (whose §9 guard REJECTS a
- *    premature report), sandbox.finish() has no guard and always returns the
- *    summary, so a first-move premature finish would otherwise hard-kill the run
- *    with nothing done. Unmet coverage hands judgment back to the model; a model
- *    that loops finish anyway is caught by the repetition stop / step cap. */
+/**
+ * Successful `finish` is the terminal declaration — same contract as the tool
+ * description ("a successful finish ENDS the task immediately") and as
+ * reportNoCoverage. The UI maps `finish` to 「正在收尾…」 *before* execute; if
+ * the loop then requests another LLM turn, the ticker stays there until that
+ * turn returns (or hangs forever).
+ *
+ * Previously only `coverageMet:true` stopped, so an honest wrap-up with remaining
+ * gaps (quality-floor refusal, partial pack, agent calling finish instead of
+ * reportNoCoverage) kept generateText alive after the last progress event.
+ * {error} still does NOT stop — a refused finish stays recoverable.
+ */
 export function hasSuccessfulFinish(steps: ReadonlyArray<StepLike>): boolean {
   for (const step of steps) {
     if (!(step.toolCalls ?? []).some((c) => c.toolName === "finish")) {
       continue;
     }
     for (const result of step.toolResults ?? []) {
-      const output = result.output as { error?: unknown; coverageMet?: unknown } | undefined;
-      if (output && output.error === undefined && output.coverageMet === true) {
+      const output = unwrapFinishOutput(result.output);
+      if (output && output.error === undefined && typeof output.coverageMet === "boolean") {
         return true;
       }
     }
   }
   return false;
+}
+
+/** Read the finish summary from a tool result, including a one-level SDK wrapper. */
+function unwrapFinishOutput(raw: unknown): { error?: unknown; coverageMet?: unknown } | undefined {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+  const obj = raw as { error?: unknown; coverageMet?: unknown; value?: unknown; output?: unknown };
+  if (typeof obj.coverageMet === "boolean" || obj.error !== undefined) {
+    return obj;
+  }
+  if (obj.value && typeof obj.value === "object") {
+    return unwrapFinishOutput(obj.value);
+  }
+  if (obj.output && typeof obj.output === "object") {
+    return unwrapFinishOutput(obj.output);
+  }
+  return undefined;
 }
 
 /** A StopCondition that ends the loop once the agent has successfully declared finish. */

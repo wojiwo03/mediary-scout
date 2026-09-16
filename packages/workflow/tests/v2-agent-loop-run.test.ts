@@ -170,6 +170,26 @@ describe("runAcquisitionAgent — the real AI SDK tool-loop over the sandbox", (
     expect(result.coverage.coverageMet).toBe(false);
   });
 
+  it("诚实 finish（coverageMet:false）后循环立即收束 — 不再要额外 LLM 回合（正在收尾卡住）", async () => {
+    const { sandbox } = await setup(["S01E01"]);
+    await sandbox.searchResources("lycoris recoil");
+    const model = scriptedModel([
+      { tool: "finish", input: {} },
+      { tool: "searchResources", input: { keyword: "must-not-run" } },
+      { text: "done" },
+    ]);
+    const result = await runAcquisitionAgent({
+      sandbox,
+      model,
+      system: "You acquire media into the scoped sandbox.",
+      prompt: "Ensure S01E01 is obtained.",
+      maxSteps: 20,
+    });
+    expect(result.steps).toBe(1);
+    expect(result.coverage.coverageMet).toBe(false);
+    expect(result.coverage.missing).toEqual(["S01E01"]);
+  });
+
   it("病1: 无搜索证据的 reportNoCoverage 被拒（{error}）→ 循环继续", async () => {
     const { sandbox } = await setup(["S01E01"]);
     // 不预搜——§9 护栏会 throw，asEvidence 转成 {error} 返回。
