@@ -2,15 +2,22 @@ import { describe, expect, it } from "vitest";
 import {
   compareReleaseQuality,
   composeAcquisitionQualityGuidance,
+  describeQualityLadder,
   formatHdrLadderGuidance,
+  formatQualityLadderSummary,
+  formatReleaseQualityLabel,
+  formatTargetQualityLabel,
   HDR_LADDER_LINES,
+  parseAudioClass,
   parseHdrFormat,
   parseReleaseQuality,
   parseResolutionBand,
+  parseSourceClass,
   PATROL_GAP_ONLY_LINE,
   QUALITY_SEARCH_TOKEN_LAW,
   QUALITY_UPGRADE_LINES,
   shouldReplaceCoverage,
+  SOURCE_LADDER_LINES,
 } from "../src/acquisition-v2/quality-ladder.js";
 
 describe("parseHdrFormat", () => {
@@ -50,6 +57,34 @@ describe("parseReleaseQuality disc images", () => {
     expect(parseReleaseQuality("Movie.4K.BDMV.ISO").discImage).toBe(true);
     expect(parseReleaseQuality("沙丘 4K 蓝光原盘").discImage).toBe(true);
     expect(parseReleaseQuality("Movie.2160p.REMUX.mkv").discImage).toBe(false);
+  });
+});
+
+describe("parseSourceClass", () => {
+  it("reads Remux / BluRay / WEB-DL / WEBRip / HDTV / CAM", () => {
+    expect(parseSourceClass("Movie.2160p.REMUX.mkv")).toBe("remux");
+    expect(parseSourceClass("Show.1080p.BluRay.mkv")).toBe("bluray");
+    expect(parseSourceClass("沙丘 4K 蓝光")).toBe("bluray");
+    expect(parseSourceClass("Show.1080p.WEB-DL.mkv")).toBe("webdl");
+    expect(parseSourceClass("Show.1080p.WEBRip.mkv")).toBe("webrip");
+    expect(parseSourceClass("Show.720p.HDTV.mkv")).toBe("hdtv");
+    expect(parseSourceClass("Movie.CAM.mkv")).toBe("cam");
+    expect(parseSourceClass("电影 枪版")).toBe("cam");
+    expect(parseSourceClass("名称: 奥本海默")).toBe("unknown");
+  });
+
+  it("prefers Remux over a co-occurring BluRay token", () => {
+    expect(parseSourceClass("Movie.2160p.BluRay.REMUX.mkv")).toBe("remux");
+  });
+});
+
+describe("parseAudioClass", () => {
+  it("reads Atmos before TrueHD, then DTS-HD", () => {
+    expect(parseAudioClass("Movie.TrueHD.Atmos.mkv")).toBe("atmos");
+    expect(parseAudioClass("沙丘 杜比全景声")).toBe("atmos");
+    expect(parseAudioClass("Movie.TrueHD.7.1.mkv")).toBe("truehd");
+    expect(parseAudioClass("Movie.DTS-HD.MA.mkv")).toBe("dtshd");
+    expect(parseAudioClass("Show.1080p.AAC.mkv")).toBe("unknown");
   });
 });
 
@@ -101,6 +136,77 @@ describe("preferHdrOverResolution", () => {
   });
 });
 
+describe("source class and audio — richer post-recall ranking", () => {
+  const high = { resolutionPreference: "high" as const };
+
+  it("Remux beats WEB-DL at the same resolution and HDR", () => {
+    expect(
+      compareReleaseQuality("Dune.2160p.DV.REMUX.mkv", "Dune.2160p.DV.WEB-DL.mkv", high),
+    ).toBeGreaterThan(0);
+  });
+
+  it("BluRay beats WEBRip at the same resolution", () => {
+    expect(
+      compareReleaseQuality("Show.1080p.BluRay.mkv", "Show.1080p.WEBRip.mkv", high),
+    ).toBeGreaterThan(0);
+  });
+
+  it("does NOT treat unlabeled as worse than WEB-DL (missing labels are not punished)", () => {
+    expect(
+      shouldReplaceCoverage("Show.1080p.mkv", "Show.1080p.WEB-DL.mkv", high),
+    ).toBe(false);
+    expect(
+      compareReleaseQuality("Show.1080p.mkv", "Show.1080p.WEB-DL.mkv", high),
+    ).toBe(0);
+  });
+
+  it("BluRay may replace an unlabeled file at the same resolution", () => {
+    expect(
+      shouldReplaceCoverage("Show.1080p.mkv", "Show.1080p.BluRay.mkv", high),
+    ).toBe(true);
+  });
+
+  it("CAM loses to an unlabeled 1080p file", () => {
+    expect(
+      compareReleaseQuality("Show.1080p.mkv", "Show.1080p.CAM.mkv", high),
+    ).toBeGreaterThan(0);
+  });
+
+  it("does not let source class beat a higher resolution (resolution-first)", () => {
+    expect(
+      compareReleaseQuality("Dune.1080p.BluRay.REMUX.mkv", "Dune.2160p.WEB-DL.mkv", high),
+    ).toBeLessThan(0);
+  });
+
+  it("Atmos is only a tiebreaker at otherwise equal rungs", () => {
+    expect(
+      shouldReplaceCoverage("Show.1080p.WEB-DL.mkv", "Show.1080p.WEB-DL.Atmos.mkv", high),
+    ).toBe(true);
+    expect(
+      compareReleaseQuality("Show.1080p.WEB-DL.Atmos.mkv", "Show.2160p.WEB-DL.mkv", high),
+    ).toBeLessThan(0);
+  });
+
+  it("does not replace when the only difference is a missing audio tag vs DTS-HD? Atmos still wins; unlabeled vs DTS-HD is a soft upgrade", () => {
+    expect(
+      shouldReplaceCoverage("Show.1080p.WEB-DL.mkv", "Show.1080p.WEB-DL.DTS-HD.mkv", high),
+    ).toBe(true);
+    expect(
+      shouldReplaceCoverage("Show.1080p.WEB-DL.DTS-HD.mkv", "Show.1080p.WEB-DL.mkv", high),
+    ).toBe(false);
+  });
+
+  it("considerSourceClass false ignores encode class", () => {
+    const off = { resolutionPreference: "high" as const, considerSourceClass: false };
+    expect(
+      shouldReplaceCoverage("Show.1080p.mkv", "Show.1080p.BluRay.mkv", off),
+    ).toBe(false);
+    expect(
+      compareReleaseQuality("Show.1080p.BluRay.mkv", "Show.1080p.WEBRip.mkv", off),
+    ).toBe(0);
+  });
+});
+
 describe("shouldReplaceCoverage — upgrade decision", () => {
   const high = { resolutionPreference: "high" as const };
 
@@ -119,6 +225,12 @@ describe("shouldReplaceCoverage — upgrade decision", () => {
   it("never upgrades a playable file to a disc image", () => {
     expect(
       shouldReplaceCoverage("Show.1080p.mkv", "Show.4K.原盘.ISO", high),
+    ).toBe(false);
+  });
+
+  it("does not replace Remux with a lower encode even when HDR matches", () => {
+    expect(
+      shouldReplaceCoverage("Show.2160p.DV.REMUX.mkv", "Show.2160p.DV.WEB-DL.mkv", high),
     ).toBe(false);
   });
 
@@ -147,6 +259,24 @@ describe("guidance copy (prompt/skill shared strings)", () => {
     expect(g).toContain("1080p DV");
     expect(g).toContain(QUALITY_SEARCH_TOKEN_LAW);
     expect(g).toContain(HDR_LADDER_LINES[0]);
+    expect(g).toContain(SOURCE_LADDER_LINES[0]);
+    expect(g).toMatch(/Atmos/);
+  });
+
+  it("describeQualityLadder puts HDR first when preferHdrOverResolution is on", () => {
+    const axes = describeQualityLadder({ preferHdrOverResolution: true });
+    expect(axes[0]?.id).toBe("hdr");
+    expect(axes.find((axis) => axis.id === "source")?.enabled).toBe(true);
+    expect(formatQualityLadderSummary({ resolutionPreference: "high" })).toMatch(/比较顺序/);
+    expect(formatTargetQualityLabel({ resolutionPreference: "high" })).toMatch(/4K/);
+    expect(formatReleaseQualityLabel(parseReleaseQuality("Dune.2160p.DV.REMUX.Atmos.mkv"))).toMatch(
+      /4K.*杜比视界.*Remux.*Atmos/,
+    );
+  });
+
+  it("source-off guidance is explicit", () => {
+    const g = formatHdrLadderGuidance({ considerSourceClass: false });
+    expect(g).toMatch(/片源\/压制阶梯已关闭/);
   });
 
   it("HDR-over-resolution variant is explicit", () => {

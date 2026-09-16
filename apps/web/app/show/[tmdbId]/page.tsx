@@ -2,6 +2,10 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense, type ReactNode } from "react";
 import { TriangleAlert } from "lucide-react";
+import {
+  formatTargetQualityLabel,
+  qualityLadderPolicyFromFlags,
+} from "@media-track/workflow/quality-ladder";
 import { isMovieUnreleased } from "@media-track/workflow";
 import { AcquiringPoller } from "../../../components/acquiring-poller";
 import { AcquisitionLockProvider } from "../../../components/acquisition-lock";
@@ -10,9 +14,9 @@ import { BackLink } from "../../../components/back-link";
 import { MovieSynopsis } from "../../../components/movie-synopsis";
 import { RequestTrackButton } from "../../../components/request-track-button";
 import {
+  QualityUpgradePanel,
   RequestRemainingButton,
   RequestSeasonButton,
-  QualityUpgradeButton,
 } from "../../../components/title-action-buttons";
 import { UntrackButton } from "../../../components/untrack-button";
 import type { DemoAcquisitionEntry } from "../../../lib/demo-session";
@@ -23,7 +27,7 @@ import {
   type TitleHubView,
 } from "../../../lib/title-hub";
 import { seasonBadgeState } from "../../../lib/title-aggregate";
-import { resolveGlobalWorkspace } from "../../../lib/workflow-runtime";
+import { resolveGlobalWorkspace, getAccountScopedSettings, getCurrentAccountId, getQualityPreference, getPreferHdrOverResolution, getConsiderSourceClass } from "../../../lib/workflow-runtime";
 
 const aggregateBadge = {
   untracked: null,
@@ -114,6 +118,19 @@ async function ShowContent({
   const view = Number.isInteger(tmdbId)
     ? await getDetailView(tmdbId, workspace.connectedStorageId ?? undefined, typeHint)
     : null;
+  const settings = getAccountScopedSettings(await getCurrentAccountId());
+  const [quality, preferHdr, considerSource] = await Promise.all([
+    getQualityPreference(settings),
+    getPreferHdrOverResolution(settings),
+    getConsiderSourceClass(settings),
+  ]);
+  const targetLabel = formatTargetQualityLabel(
+    qualityLadderPolicyFromFlags({
+      ...(quality === undefined ? {} : { resolutionPreference: quality }),
+      ...(preferHdr ? { preferHdrOverResolution: true } : {}),
+      ...(considerSource ? {} : { considerSourceClass: false }),
+    }),
+  );
 
   const backLabel = from === "search" ? "搜索" : from === "library" ? "媒体库" : "返回";
   const backHref =
@@ -133,6 +150,7 @@ async function ShowContent({
             basePath={workspace.basePath}
             backLabel={backLabel}
             backHref={backHref}
+            targetLabel={targetLabel}
           />
         ) : (
           <TvHub
@@ -141,6 +159,7 @@ async function ShowContent({
             basePath={workspace.basePath}
             backLabel={backLabel}
             backHref={backHref}
+            targetLabel={targetLabel}
           />
         )
       ) : (
@@ -161,12 +180,14 @@ function TvHub({
   basePath,
   backLabel,
   backHref,
+  targetLabel,
 }: {
   view: TitleHubView;
   storageId: string | undefined;
   basePath: string;
   backLabel: string;
   backHref: string;
+  targetLabel: string;
 }) {
   const badge = aggregateBadge[view.aggregate];
   return (
@@ -259,6 +280,7 @@ function TvHub({
               storageId={storageId}
               basePath={basePath}
               acquiring={view.acquiring}
+              targetLabel={targetLabel}
               demoEntry={{
                 tmdbId: view.tmdbId,
                 title: view.title,
@@ -290,12 +312,14 @@ function MovieHub({
   basePath,
   backLabel,
   backHref,
+  targetLabel,
 }: {
   view: MovieHubView;
   storageId: string | undefined;
   basePath: string;
   backLabel: string;
   backHref: string;
+  targetLabel: string;
 }) {
   const meta = movieStateMeta[view.state];
   const activityHref = storageId ? `/activity?w=${encodeURIComponent(storageId)}` : "/activity";
@@ -334,7 +358,14 @@ function MovieHub({
               )}
             </div>
             <div className="hub-title-block">
-              <span className={`hub-badge tone-${meta.tone}`}>{meta.label}</span>
+              <div className="hub-badges">
+                <span className={`hub-badge tone-${meta.tone}`}>{meta.label}</span>
+                {view.state === "acquired" ? (
+                  <span className="hub-badge tone-teal" title="按偏好寻找严格更高的版本；失败不会删除现有文件">
+                    可升级画质
+                  </span>
+                ) : null}
+              </div>
               <h1>
                 {view.title} <span className="hub-year">({view.year})</span>
               </h1>
@@ -350,10 +381,11 @@ function MovieHub({
                   />
                 ) : null}
                 {view.state === "acquired" ? (
-                  <QualityUpgradeButton
+                  <QualityUpgradePanel
                     candidateId={movieCandidateId}
                     storageId={storageId}
                     titleAcquiring={view.acquiring}
+                    targetLabel={targetLabel}
                   />
                 ) : null}
                 {view.state === "acquiring" ? (
@@ -428,6 +460,7 @@ function SeasonRow({
   basePath,
   acquiring,
   demoEntry,
+  targetLabel,
 }: {
   season: TitleHubSeason;
   tmdbId: number;
@@ -437,6 +470,7 @@ function SeasonRow({
   basePath: string;
   acquiring: boolean;
   demoEntry?: DemoAcquisitionEntry | undefined;
+  targetLabel: string;
 }) {
   const total = season.totalEpisodes;
   const aired = Math.min(season.latestAiredEpisode, total);
@@ -513,10 +547,11 @@ function SeasonRow({
         </div>
         <div className="season-untrack-row">
           {season.obtainedCount > 0 ? (
-            <QualityUpgradeButton
+            <QualityUpgradePanel
               candidateId={`tmdb_tv_${tmdbId}_s${season.seasonNumber}`}
               storageId={storageId}
               titleAcquiring={acquiring}
+              targetLabel={targetLabel}
             />
           ) : null}
           <UntrackButton

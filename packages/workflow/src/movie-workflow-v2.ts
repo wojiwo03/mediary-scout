@@ -21,6 +21,7 @@ import type { DeadLinkStore } from "./acquisition-v2/dead-links.js";
 import { readLandedSize, type LandedSize } from "./acquisition-v2/landed-size.js";
 import type { AgentToolEvent } from "./acquisition-v2/activity.js";
 import { runAcquisitionV2 } from "./acquisition-v2/orchestrator.js";
+import { qualityLadderPolicyFromFlags } from "./acquisition-v2/quality-ladder.js";
 import { getAcquisitionQualityGuidance, getSearchRecipe } from "./acquisition-v2/search-profile.js";
 import { ensureMediaLibraryDirectory } from "./media-library-folder.js";
 
@@ -49,6 +50,8 @@ export interface RunMovieAcquisitionV2Request {
   qualityPreference?: "high" | "medium";
   /** HDR may outrank resolution (1080p DV > 4K SDR). Default off. */
   preferHdrOverResolution?: boolean;
+  /** When false, encode/source class is ignored. Default true. */
+  considerSourceClass?: boolean;
   /** Replace an already-obtained film when a strictly better candidate exists. */
   qualityUpgrade?: boolean;
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
@@ -81,10 +84,11 @@ export async function runMovieAcquisitionV2(
   const qualityGuidance = getAcquisitionQualityGuidance({
     profile: "movie",
     preference: request.qualityPreference,
-    policy: {
+    policy: qualityLadderPolicyFromFlags({
       ...(request.qualityPreference === undefined ? {} : { resolutionPreference: request.qualityPreference }),
       ...(request.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
-    },
+      ...(request.considerSourceClass === false ? { considerSourceClass: false } : {}),
+    }),
     ...(request.qualityUpgrade ? { qualityUpgrade: true } : {}),
   });
 

@@ -1,10 +1,15 @@
 import {
+  formatQualityLadderSummary,
+  qualityLadderPolicyFromFlags,
+} from "@media-track/workflow/quality-ladder";
+import {
   getWorkflowRepository,
   getAccountScopedSettings,
   getLlmConfig,
   getQualityPreference,
   getPreferredLanguage,
   getPreferHdrOverResolution,
+  getConsiderSourceClass,
   getUpgradeOnReacquire,
   getPatrolQualityUpgrade,
   getDailySweepTime,
@@ -14,6 +19,7 @@ import {
   LLM_MODEL_ID_SETTING_KEY,
   QUALITY_PREFERENCE_SETTING_KEY,
   PREFER_HDR_OVER_RESOLUTION_SETTING_KEY,
+  CONSIDER_SOURCE_CLASS_SETTING_KEY,
   UPGRADE_ON_REACQUIRE_SETTING_KEY,
   PATROL_QUALITY_UPGRADE_SETTING_KEY,
   PREFERRED_LANGUAGE_SETTING_KEY,
@@ -32,8 +38,11 @@ export interface AgentConfigView {
   llm: { baseURL: string | null; modelId: string | null; apiKey: string | null };
   qualityPreference: string | undefined;
   preferHdrOverResolution: boolean;
+  considerSourceClass: boolean;
   upgradeOnReacquire: boolean;
   patrolQualityUpgrade: boolean;
+  /** Read-only human summary of the active post-recall ladder. */
+  qualityLadderSummary: string;
   preferredLanguage: string | undefined;
   dailySweepTime: string;
   pansouBaseUrl: string | null;
@@ -60,7 +69,7 @@ export function isMaskedPlaceholder(value: string): boolean {
 export async function readAgentConfig(accountId: string): Promise<AgentConfigView> {
   const settings = getAccountScopedSettings(accountId);
   const repository = getWorkflowRepository();
-  const [llm, quality, language, sweepTime, prowlarr, storageRows, preferHdr, upgradeOnReacquire, patrolUpgrade] =
+  const [llm, quality, language, sweepTime, prowlarr, storageRows, preferHdr, considerSource, upgradeOnReacquire, patrolUpgrade] =
     await Promise.all([
       getLlmConfig(settings),
       getQualityPreference(settings),
@@ -69,6 +78,7 @@ export async function readAgentConfig(accountId: string): Promise<AgentConfigVie
       getProwlarrConfig(settings),
       repository.listConnectedStorages(accountId),
       getPreferHdrOverResolution(settings),
+      getConsiderSourceClass(settings),
       getUpgradeOnReacquire(settings),
       getPatrolQualityUpgrade(settings),
     ]);
@@ -94,8 +104,16 @@ export async function readAgentConfig(accountId: string): Promise<AgentConfigVie
     },
     qualityPreference: quality,
     preferHdrOverResolution: preferHdr,
+    considerSourceClass: considerSource,
     upgradeOnReacquire,
     patrolQualityUpgrade: patrolUpgrade,
+    qualityLadderSummary: formatQualityLadderSummary(
+      qualityLadderPolicyFromFlags({
+        ...(quality === undefined ? {} : { resolutionPreference: quality }),
+        ...(preferHdr ? { preferHdrOverResolution: true } : {}),
+        ...(considerSource ? {} : { considerSourceClass: false }),
+      }),
+    ),
     preferredLanguage: language,
     dailySweepTime: sweepTime,
     pansouBaseUrl: pansou,
@@ -116,6 +134,7 @@ export interface AgentConfigWriteInput {
   llm?: { baseURL?: string; modelId?: string; apiKey?: string };
   qualityPreference?: string;
   preferHdrOverResolution?: boolean;
+  considerSourceClass?: boolean;
   upgradeOnReacquire?: boolean;
   patrolQualityUpgrade?: boolean;
   preferredLanguage?: string;
@@ -179,6 +198,7 @@ export async function writeAgentConfig(
 
   const boolWrites: Array<[boolean | undefined, string, string]> = [
     [input.preferHdrOverResolution, PREFER_HDR_OVER_RESOLUTION_SETTING_KEY, "preferHdrOverResolution"],
+    [input.considerSourceClass, CONSIDER_SOURCE_CLASS_SETTING_KEY, "considerSourceClass"],
     [input.upgradeOnReacquire, UPGRADE_ON_REACQUIRE_SETTING_KEY, "upgradeOnReacquire"],
     [input.patrolQualityUpgrade, PATROL_QUALITY_UPGRADE_SETTING_KEY, "patrolQualityUpgrade"],
   ];

@@ -116,6 +116,7 @@ describe("prompt/skill quality ladder alignment (no drift)", () => {
     expect(search).toContain(HDR_LADDER_LINES[1]);
     expect(search).toContain(QUALITY_SEARCH_TOKEN_LAW);
     expect(search).toMatch(/DV|DoVi|杜比视界/);
+    expect(search).toMatch(/Remux|WEB-DL|片源/);
   });
 
   it("TV and MOVIE manuals carry upgrade + patrol-gap-only shared lines", async () => {

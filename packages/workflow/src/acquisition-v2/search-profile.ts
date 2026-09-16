@@ -171,7 +171,7 @@ export function getQualityGuidance(
   }
   // high
   const head =
-    "画质偏好:高(≈4K)。召回后优先选 2160p / 4K / UHD / REMUX 的【可播放视频文件】(mkv/mp4)。同分辨率再按 HDR 阶梯(DV > HDR10+ > HDR10 > SDR)。" +
+    "画质偏好:高(≈4K)。召回后优先选 2160p / 4K / UHD / REMUX 的【可播放视频文件】(mkv/mp4)。同分辨率再按 HDR 阶梯(DV > HDR10+ > HDR10 > SDR),然后片源/压制(Remux > BluRay > WEB-DL > WEBRip),音轨只作同分决胜。" +
     "⚠️ 避免蓝光原盘 / ISO / BDMV 整盘镜像:它动辄上百GB、多数设备无法直接播放,且不是单个视频文件——宁取 4K REMUX 视频,退一步取更低画质的视频版本,也不要整盘镜像。";
   const tail =
     "覆盖永远优先于画质:找不到 4K 就退取 1080P/蓝光视频,绝不为画质放弃任何一集/这部片。" + QUALITY_KEYWORD_LAW;
