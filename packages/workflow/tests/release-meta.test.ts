@@ -17,7 +17,7 @@ describe("parseReleaseMeta — MoviePilot-style golden titles", () => {
     expect(meta.hdr).toBe("dv");
     expect(meta.source).toBe("remux");
     expect(meta.audio).toBe("atmos");
-    expect(meta.resourceType).toBe("REMUX");
+    expect(meta.resourceType).toMatch(/REMUX/i);
     expect(meta.resourcePix).toMatch(/2160p|4k|uhd/i);
     expect(meta.resourceEffect).toEqual(expect.arrayContaining(["DoVi", "HDR10"]));
     expect(meta.releaseGroup).toMatch(/FRDS/i);
@@ -111,6 +111,124 @@ describe("parseReleaseMeta — MoviePilot-style golden titles", () => {
     expect(meta.videoBit).toBe("10bit");
     expect(meta.videoCodec).toBe("h264");
     expect(meta.audio).toBe("dtshd");
+  });
+
+  it("MoviePilot meta_cases: WEB-DL + fps + S01 without episode", () => {
+    const long = parseReleaseMeta("The Long Season 2017 2160p WEB-DL H265 120FPS AAC-XXX");
+    expect(long.resolution).toBe("4k");
+    expect(long.source).toBe("webdl");
+    expect(long.resourceType).toBe("WEB-DL");
+    expect(long.videoCodec).toBe("h265");
+    expect(long.fps).toBe(120);
+    expect(long.year).toBe(2017);
+
+    const cherry = parseReleaseMeta("Cherry Season S01 2014 2160p 60fps WEB-DL H265 AAC-XXX");
+    expect(cherry.seasons).toEqual([1]);
+    expect(cherry.episode).toBeUndefined();
+    expect(cherry.fps).toBe(60);
+    expect(cherry.year).toBe(2014);
+  });
+
+  it("MoviePilot meta_cases: Chinese fansub 第二季 + [11] + HEVC", () => {
+    const title =
+      "【爪爪字幕组】★7月新番[欢迎来到实力至上主义的教室 第二季/Youkoso Jitsuryoku Shijou Shugi no Kyoushitsu e S2][11][1080p][HEVC][GB][MP4][招募翻译校对]";
+    const meta = parseReleaseMeta(title);
+    expect(meta.releaseGroup).toMatch(/爪爪字幕组/);
+    expect(meta.seasons).toEqual([2]);
+    expect(meta.episode).toEqual({ from: 11, to: 11, complete: false });
+    expect(meta.resolution).toBe("1080p");
+    expect(meta.videoCodec).toBe("h265");
+    expect(meta.appliedWords.some((word) => word.includes("新番") || word.includes("招募"))).toBe(true);
+  });
+
+  it("MoviePilot meta_cases: 【04】日剧、#13 AI-Raws、[TV 08]", () => {
+    expect(parseReleaseMeta("【幻月字幕组】【22年日剧】【据幸存的六人所说】【04】【1080P】【中日双语】").episode).toEqual({
+      from: 4,
+      to: 4,
+      complete: false,
+    });
+    expect(
+      parseReleaseMeta("[AI-Raws] 逆境無頼カイジ #13 (BD HEVC 1920x1080 yuv444p10le FLAC)[7CFEE642].mkv").episode,
+    ).toEqual({ from: 13, to: 13, complete: false });
+    expect(
+      parseReleaseMeta("[秋叶原冥途战争][Akiba Maid Sensou][2022][WEB-DL][1080][TV Series][第01话][LeagueWEB]").episode
+        ?.from,
+    ).toBe(1);
+    expect(
+      parseReleaseMeta("[诛仙][Jade Dynasty][2022][WEB-DL][2160][TV Series][TV 08][LeagueWEB]").episode?.from,
+    ).toBe(8);
+  });
+
+  it("MoviePilot meta_cases: WEBDL-1080p, UHD BluRay, Blu-ray Remux, 3D, parenthesized year", () => {
+    const nine = parseReleaseMeta("9-1-1 - S04E03 - Future Tense WEBDL-1080p.mp4");
+    expect(nine.source).toBe("webdl");
+    expect(nine.seasons).toEqual([4]);
+    expect(nine.episode?.from).toBe(3);
+
+    const rock = parseReleaseMeta("30.Rock.S02E01.1080p.UHD.BluRay.X264-BORDURE.mkv");
+    expect(rock.resourceType).toMatch(/UHD/i);
+    expect(rock.resourceType).toMatch(/BluRay/i);
+    expect(rock.seasons).toEqual([2]);
+
+    const remux = parseReleaseMeta("Nande Koko ni Sensei ga!? 2019 Blu-ray Remux 1080p AVC LPCM");
+    expect(remux.resourceType).toMatch(/BluRay/i);
+    expect(remux.resourceType).toMatch(/REMUX/i);
+    expect(remux.source).toBe("remux");
+
+    const threeD = parseReleaseMeta(
+      "National.Parks.Adventure.AKA.America.Wild:.National.Parks.Adventure.3D.2016.1080p.Blu-ray.AVC.TrueHD.7.1",
+    );
+    expect(threeD.resourceEffect).toEqual(expect.arrayContaining(["3D"]));
+    expect(threeD.year).toBe(2016);
+
+    expect(parseReleaseMeta("哆啦A梦：大雄的宇宙小战争 2021 (2022) - 1080p.mp4").year).toBe(2022);
+    expect(parseReleaseMeta("Wonder Woman 1984 2020 BluRay 1080p Atmos TrueHD 7.1 X264-EPiC").year).toBe(2020);
+  });
+
+  it("IMAX / UNCUT / REPACK edition effects and SDTV", () => {
+    expect(parseReleaseMeta("Dune.2021.IMAX.2160p.WEB-DL").resourceEffect).toEqual(expect.arrayContaining(["IMAX"]));
+    expect(parseReleaseMeta("Movie.2020.1080p.BluRay.UNCUT.REPACK").resourceEffect).toEqual(
+      expect.arrayContaining(["UNCUT", "REPACK"]),
+    );
+    expect(parseReleaseQuality("Mr. Robot - S02E06 SDTV.mp4").source).toBe("hdtv");
+  });
+
+  it("bracketed 2160 without p, roman 第四季, and 第十三话", () => {
+    expect(parseReleaseQuality("[猎户不鸽发布组] 诛仙 [2160] [TV 08]").resolution).toBe("4k");
+    expect(parseReleaseMeta("[猎户不鸽发布组] 不死者之王 第四季 OVERLORD Ⅳ [02] [1080p]").seasons).toEqual([4]);
+    expect(parseReleaseMeta("进击的巨人 第二十一集").episode?.from).toBe(21);
+  });
+
+  it("WordsMatcher replacement / block / episode offset / media binding", () => {
+    const replaced = parseReleaseMeta("电影测试替换名称 (2024) 1080p", {
+      customWords: ["测试替换 => "],
+    });
+    expect(replaced.appliedWords).toEqual(expect.arrayContaining(["测试替换 => "]));
+    expect(replaced.cnName ?? replaced.parsedTitle ?? "").not.toMatch(/测试替换/);
+
+    const offset = parseReleaseMeta("进击的巨人 第08集 1080p", {
+      customWords: ["第 <> 集 >> EP+2"],
+    });
+    expect(offset.episode).toEqual({ from: 10, to: 10, complete: false });
+
+    const bound = parseReleaseMeta("狩猎 (2022) (tmdb-727340)/狩猎.mkv");
+    expect(bound.mediaBinding).toEqual({ source: "tmdb", id: "727340" });
+    expect(bound.year).toBe(2022);
+
+    const emby = parseReleaseMeta("Inception (2010) [tmdbid=27205] Inception.2010.1080p.mkv");
+    expect(emby.mediaBinding).toEqual({ source: "tmdb", id: "27205" });
+  });
+
+  it("specials are not regular episode coverage", () => {
+    const ova = parseReleaseMeta("[字幕组] 某科学的超电磁炮 OVA [01] [1080p]");
+    expect(ova.special).toBe(true);
+    expect(
+      mapTvCoverage({
+        title: "[字幕组] 某科学的超电磁炮 OVA [01] [1080p]",
+        seasons: [1],
+        missingEpisodes: ["S01E01"],
+      }),
+    ).toEqual([]);
   });
 });
 

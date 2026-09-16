@@ -1,6 +1,6 @@
 # 画质升级与 DV/HDR 阶梯
 
-采集在**召回之后**读候选标题选片（沙箱 agent 或确定性规则选片器共用同一套阶梯）。结构化解析对齐 [MoviePilot](https://github.com/jxxghp/MoviePilot) MetaInfo 能力（分辨率 / 片源 / HDR 效果 / 流媒体平台 / 视频音频编码 / 季集 / 制作组），实现见 `packages/workflow/src/acquisition-v2/release-meta.ts`。搜索始终用裸标题（片名/译名）；画质词（含 4K、DV、DoVi、HDR10+、HDR、杜比视界、Remux、WEB-DL、Atmos、超高清、无压）会被系统 strip，不要写进搜索关键词。
+采集在**召回之后**读候选标题选片（沙箱 agent 或确定性规则选片器共用同一套阶梯）。结构化解析对齐 [MoviePilot](https://github.com/jxxghp/MoviePilot) MetaInfo 能力（分辨率 / 片源 / HDR 与 IMAX/REPACK 等效果 / 流媒体平台 / 视频音频编码 / 帧率 / 季集含动漫绝对集号与识别词预处理 / 制作组 / tmdbid 绑定），实现见 `packages/workflow/src/acquisition-v2/release-meta.ts`（识别词语法见同目录 `words-matcher.ts`）。搜索始终用裸标题（片名/译名）；画质词（含 4K、DV、DoVi、HDR10+、HDR、杜比视界、Remux、WEB-DL、Atmos、超高清、无压）会被系统 strip，不要写进搜索关键词。
 
 ## 完整比较阶梯（默认开启，作召回后排序）
 

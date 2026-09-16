@@ -153,6 +153,10 @@ export function mapTvCoverage(input: {
     return [];
   }
 
+  const meta = parseReleaseMeta(input.title);
+  if (meta.special && !/[Ss]\d{1,2}[Ee]\d/.test(input.title)) {
+    return [];
+  }
   const span = parseEpisodeSpan(input.title);
   if (!span) {
     // Season-named pack with no episode span (e.g. "第二季 1080p") — treat as
@@ -185,6 +189,8 @@ function leftoverAfterTitle(candidateTitle: string, matchedTerm: string, year: n
     meta.audioCodec,
     meta.resourceType,
     meta.resourcePix,
+    meta.videoEncode,
+    meta.fps !== undefined ? `${meta.fps}fps` : undefined,
     ...meta.resourceEffect,
   ]) {
     if (!extra) {

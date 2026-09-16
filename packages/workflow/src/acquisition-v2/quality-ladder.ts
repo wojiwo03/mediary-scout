@@ -126,10 +126,10 @@ const HDR_VIVID_RE = /hdr[\s._-]*vivid|\bhdrvivid\b/i;
 const HDR_FAMILY_RE = /\bhlg\b|\bedr\b/i;
 const HDR10_RE = /\bhdr[\s._-]*10\b|\bhdr\b/i;
 const DISC_RE = /\.iso\b|\bbdmv\b|蓝光原盘|原盘|\biso\b/i;
-const RES_4K_RE = /2160p|\b4k\b|\buhd\b|3840\s*[x×]\s*2160|超高清/i;
-const RES_1080_RE = /1080\s*[pi]|\bfhd\b|全高清|1920\s*[x×]\s*1080|\b2k\b/i;
-const RES_720_RE = /720\s*[pi]/i;
-const RES_SD_RE = /480\s*[pi]|576\s*[pi]|540p|\bsd\b/i;
+const RES_4K_RE = /2160p|\b2160\b|\b4k\b|\buhd\b|3840\s*[x×]\s*2160|超高清|[\[(](?:2160|4k|uhd)[\])]/i;
+const RES_1080_RE = /1080\s*[pi]|\b1080\b|\bfhd\b|全高清|1920\s*[x×]\s*1080|\b2k\b|[\[(]1080[\])]/i;
+const RES_720_RE = /720\s*[pi]|[\[(]720[\])]/i;
+const RES_SD_RE = /480\s*[pi]|576\s*[pi]|540p|\bsd\b|[\[(](?:480|576)[\])]/i;
 /** Bare 超清 after 4K/超高清 have already been ruled out — 网盘常把它当 1080p. */
 const RES_ULTRA_CLEAR_RE = /超清/i;
 
@@ -138,7 +138,7 @@ const BLURAY_RE =
   /\bblu[\s._-]*ray\b|\bbd[\s._-]*rip\b|\bbluray\b|\bbdrip\b|\bhd[\s._-]*rip\b|\bhddvd\b|\bbd\b|蓝光/i;
 const WEBDL_RE = /\bweb[\s._-]*dl\b|\bwebdl\b|官源/i;
 const WEBRIP_RE = /\bweb[\s._-]*rip\b|\bwebrip\b/i;
-const HDTV_RE = /\bhdtv\b|\buhdtv\b|\bdvd[\s._-]*rip\b|电视录制/i;
+const HDTV_RE = /\bhdtv\b|\buhdtv\b|\bsdtv\b|\bdvd[\s._-]*rip\b|电视录制/i;
 const CAM_RE =
   /\bcamrip\b|\bhd[\s._-]*cams?\b|\bcam\b|\bhdts\b|枪版|抢版|抢先版|尝鲜版/i;
 

@@ -5,23 +5,32 @@
  * Field set and matching behavior follow MoviePilot MetaInfo / MetaBase /
  * MetaVideo / MetaAnime (https://github.com/jxxghp/MoviePilot, v3
  * `app/domain/meta/*`) as prior art — especially resource_pix, resource_type,
- * resource_effect, web_source, video/audio encode, part, release group, and
- * Chinese 第N季/集/话 plus anime absolute-episode forms. This module reimplements
- * those recognizers in TypeScript; it is not a copy of MoviePilot source.
+ * resource_effect, web_source, video/audio encode, part, release group,
+ * WordsMatcher preprocessing, explicit media-id tags, and Chinese 第N季/集/话
+ * plus anime absolute-episode forms. This module reimplements those
+ * recognizers in TypeScript; it is not a copy of MoviePilot source.
  */
+import { parseChineseNumber } from "./chinese-number.js";
 import {
-  parseAudioClass,
-  parseHdrFormat,
   parseReleaseQuality,
-  parseResolutionBand,
-  parseSourceClass,
   normalizeQualityText,
-  type AudioClass,
-  type HdrFormat,
   type ParsedReleaseQuality,
   type ResolutionBand,
   type SourceClass,
 } from "./quality-ladder.js";
+import {
+  extractExplicitMediaTags,
+  prepareTitle,
+  type MediaBinding,
+} from "./words-matcher.js";
+
+export { parseChineseNumber } from "./chinese-number.js";
+export {
+  prepareTitle,
+  extractExplicitMediaTags,
+  BUILTIN_IDENTIFIER_WORDS,
+  applyEpisodeOffsetExpr,
+} from "./words-matcher.js";
 
 export type VideoCodec = "h264" | "h265" | "av1" | "avc" | "hevc" | "xvid" | "unknown";
 
@@ -29,6 +38,15 @@ export interface ReleaseEpisodeSpan {
   from: number;
   to: number;
   complete: boolean;
+}
+
+export interface ParseReleaseMetaOptions {
+  /** MoviePilot-style identifier words (`from => to`, block, `front <> back >> EP±n`). */
+  customWords?: readonly string[];
+  /** Optional subtitle / description; season-episode tokens here override a bare title. */
+  subtitle?: string;
+  /** Skip built-in cloud-share noise words (tests / debugging). */
+  includeBuiltinWords?: boolean;
 }
 
 export interface ReleaseMeta extends ParsedReleaseQuality {
@@ -46,31 +64,31 @@ export interface ReleaseMeta extends ParsedReleaseQuality {
   resourcePix?: string;
   /** Raw source token (WEB-DL, BluRay, REMUX, …). */
   resourceType?: string;
-  /** HDR / edition effects in appearance order (DoVi, HDR10, REPACK, …). */
+  /** HDR / edition effects in appearance order (DoVi, HDR10, REPACK, IMAX, …). */
   resourceEffect: string[];
   /** Streaming platform (Netflix, Amazon, Disney+, 爱奇艺, …). */
   webSource?: string;
   videoCodec: VideoCodec;
-  /** Raw audio tag (Atmos, TrueHD, DDP 5.1, …). */
+  /** Raw video-encode token (H265, HEVC, x264, …). */
+  videoEncode?: string;
+  /** Raw audio tag (Atmos, TrueHD 7.1, DDP 5.1, …). */
   audioCodec?: string;
   videoBit?: "8bit" | "10bit" | "12bit";
   releaseGroup?: string;
+  fps?: number;
+  /** CJK title leftover after stripping tags. */
+  cnName?: string;
+  /** Latin title leftover after stripping tags. */
+  enName?: string;
+  /** Title after identifier words + media-id tags are applied. */
+  parsedTitle?: string;
+  appliedWords: string[];
+  mediaBinding?: MediaBinding;
+  /** OVA / 特别篇 / SP — do not map onto regular SxxExx coverage. */
+  special: boolean;
 }
 
-const CN_DIGIT: Record<string, number> = {
-  零: 0,
-  一: 1,
-  二: 2,
-  两: 2,
-  三: 3,
-  四: 4,
-  五: 5,
-  六: 6,
-  七: 7,
-  八: 8,
-  九: 9,
-  十: 10,
-};
+const MEDIA_EXT_RE = /\.(mkv|mp4|ts|m2ts|avi|mov|wmv|iso|rmvb|flv)$/i;
 
 /** MoviePilot `is_anime` heuristics (bracket + dash-episode, unless Sxx/EPxx). */
 const ANIME_BRACKET_RE = /【[+0-9XVPI-]+】\s*【/i;
@@ -78,6 +96,8 @@ const ANIME_SQUARE_RE = /\[[+0-9XVPI-]+]\s*\[/i;
 const ANIME_DASH_EP_RE = /\s+-\s+[\dv]{1,4}\s+/i;
 const VIDEO_SEASON_EP_RE =
   /S\d{2}\s*-\s*S\d{2}|S\d{2}|\s+S\d{1,2}|EP?\d{2,4}\s*-\s*EP?\d{2,4}|EP?\d{2,4}|\s+EP?\d{1,4}/i;
+
+const PIX_AS_EPISODE = new Set([480, 576, 720, 1080, 2160, 4320]);
 
 /**
  * Common WEB/PT streaming tags. Subset of MoviePilot StreamingPlatforms —
@@ -93,6 +113,7 @@ const WEB_PLATFORMS: Array<{ re: RegExp; name: string }> = [
   { re: /\bHBO(?:GO)?\b/i, name: "HBO" },
   { re: /\bHULU\b/i, name: "Hulu" },
   { re: /\bPMTP\b|Paramount\+/i, name: "Paramount+" },
+  { re: /\bPCOK\b|Peacock/i, name: "Peacock" },
   { re: /\bIQ\b|iQIYI|爱奇艺/i, name: "iQIYI" },
   { re: /\bWeTV\b|腾讯视频|腾讯/i, name: "WeTV" },
   { re: /优酷|\bYouku\b/i, name: "Youku" },
@@ -100,6 +121,14 @@ const WEB_PLATFORMS: Array<{ re: RegExp; name: string }> = [
   { re: /\bBaha\b/i, name: "Baha" },
   { re: /\bCR\b|Crunchyroll/i, name: "Crunchyroll" },
   { re: /\bBG\b|B-Global|Bilibili|哔哩哔哩/i, name: "Bilibili" },
+  { re: /\bVIU\b/i, name: "Viu" },
+  { re: /\bTVING\b/i, name: "TVING" },
+  { re: /\bHami(?:Video)?\b/i, name: "Hami Video" },
+  { re: /\bKKTV\b/i, name: "KKTV" },
+  { re: /\bHIDI\b|HIDIVE/i, name: "HIDIVE" },
+  { re: /\bFUNi\b|Funimation/i, name: "Funimation" },
+  { re: /\bSTAN\b/i, name: "Stan" },
+  { re: /\bDSCP\b|Discovery\+/i, name: "Discovery+" },
 ];
 
 const WEB_NEAR_RE =
@@ -107,47 +136,29 @@ const WEB_NEAR_RE =
 
 /** Built-in groups MoviePilot matches around - @ [ 】 (Chinese fansubs + PT). */
 const RELEASE_GROUP_RE =
-  /(?<=[-@\[￡【&])(?:ANi|HYSUB|KTXP|LoliHouse|MCE|SweetSub|MingY|(?:Lilith|NC)-Raws|FRDS|TTG|WiKi|NGB|CMCTV?|Our(?:Bits|TV)|HHWEB|HDH(?:ome|WEB)|PTHWEB|HDSWEB|MWeb|PTerWEB|Audies|beAst|FLTTH|Yumi|cXcY)(?=$|[@.\s\]\[】&])/i;
+  /(?<=[-@\[￡【&])(?:ANi|HYSUB|KTXP|LoliHouse|MCE|SweetSub|MingY|(?:Lilith|NC|AI)-Raws|FRDS|TTG|WiKi|NGB|CMCTV?|Our(?:Bits|TV)|HHWEB|HDH(?:ome|WEB)|PTHWEB|HDSWEB|MWeb|PTerWEB|Audies|beAst|FLTTH|Yumi|cXcY|ADWeb|LeagueWEB|EPiC|GM-Team|AnimeS)(?=$|[@.\s\]\[】&])/i;
 
 const FANSUB_BRACKET_RE =
-  /[【\[]([^\]】]{2,20}(?:字幕组|字幕社|字幕|Raws|House|Sub|手抄部|奶茶屋))[】\]]/;
+  /[【\[]([^\]】]{2,24}(?:字幕组|字幕社|字幕|Raws|House|Sub|手抄部|奶茶屋|发布组|压制组))[】\]]/;
 
 const PART_RE = /\b(?:part|cd|dvd|disk|disc)\s*([0-9abi]{1,2})\b/i;
 
 const VIDEO_BIT_RE = /(?<![A-Za-z0-9])(8|10|12)[\s._-]*bits?\b/i;
 
-const AUDIO_RAW_RE =
-  /\b(?:atmos|true[\s._-]*hd|dts[\s._-]*hd(?:[\s._-]*ma)?|dts[\s._:]*x|eac3|ddp?[\s._+-]?\d?(?:\.\d)?|dd\+|aac|flac|lpcm|ac3|opus)\b|杜比全景声|全景声/i;
+const AUDIO_TOKEN_RE =
+  /\b(?:atmos|true[\s._-]*hd|dts[\s._-]*hd(?:[\s._-]*ma)?|dts[\s._:]*x|eac3|ddp?[\s._+-]?\d?(?:\.\d)?|dd\+|aac|flac|lpcm|ac3|opus|e-?ac-?3)(?:[\s._-]*\d(?:\.\d)?)?\b|杜比全景声|全景声|\b[257]\.1\b|\b2\.0\b/gi;
 
 const EFFECT_TOKEN_RE =
-  /\b(?:sdr|hdr10(?:\+|p(?:lus)?)?|hdrvivid|hdr[\s._-]*vivid|hdr|dovi|dv|dolby[\s._-]*vision|hlg|edr|repack|hq|3d)\b|杜比视界/gi;
+  /\b(?:sdr|hdr10(?:\+|p(?:lus)?)?|hdrvivid|hdr[\s._-]*vivid|hdr|dovi|dv|dolby[\s._-]*vision|hlg|edr|repack|proper|rerip|hq|3d|imax|extended|uncut|unrated|unrate)\b|杜比视界|未删减|导演剪辑|加长版/gi;
 
-export function parseChineseNumber(raw: string): number | null {
-  const trimmed = raw.trim();
-  if (/^\d+$/.test(trimmed)) {
-    return Number(trimmed);
-  }
-  if (trimmed === "十") {
-    return 10;
-  }
-  if (trimmed.length === 2 && trimmed.startsWith("十")) {
-    const ones = CN_DIGIT[trimmed[1]!];
-    return ones === undefined ? null : 10 + ones;
-  }
-  if (trimmed.length === 2 && trimmed.endsWith("十")) {
-    const tens = CN_DIGIT[trimmed[0]!];
-    return tens === undefined ? null : tens * 10;
-  }
-  if (trimmed.length === 3 && trimmed[1] === "十") {
-    const tens = CN_DIGIT[trimmed[0]!];
-    const ones = CN_DIGIT[trimmed[2]!];
-    if (tens === undefined || ones === undefined) {
-      return null;
-    }
-    return tens * 10 + ones;
-  }
-  return CN_DIGIT[trimmed] ?? null;
-}
+const FPS_RE = /(?<![A-Za-z0-9])(\d{2,3})\s*fps\b/i;
+
+const VIDEO_ENCODE_RE = /\b(?:h[\s._-]*26[45]|x26[45]|hevc|avc|av1|xvid|divx|mpeg-?4)\b/i;
+
+const SPECIAL_RE = /特别篇|番外(?:篇)?|\bOVA\b|\bOAD\b|\bONA\b|(?<![A-Za-z])SP\d*(?![A-Za-z])/i;
+
+const NAME_NOISE_RE =
+  /合集|连载|日剧|美剧|韩剧|电视剧|动画片|动漫|欧美|超高清|全高清|超清|高清|无水印|下载|蓝光|最终季|版本|出品|台版|港版|未删减版|简繁内封|简中内封|简中内嵌|中日双语|国语中字|中字|国语|双语|[多中国英葡法俄日韩德意西印泰台港粤双文语简繁体特效内封官译外挂]+字幕|类型[:：]?\s*动画|TV Series|Animation|Movie|Documentar|Anime/gi;
 
 export function isAnimeTitle(name: string): boolean {
   if (!name) {
@@ -166,9 +177,13 @@ function uniqueSorted(values: number[]): number[] {
   return [...new Set(values)].sort((a, b) => a - b);
 }
 
+function isPlausibleEpisode(n: number): boolean {
+  return n >= 1 && n < 4000 && !PIX_AS_EPISODE.has(n) && !(n >= 1900 && n <= 2155);
+}
+
 export function parseNamedSeasons(title: string): number[] {
   const seasons: number[] = [];
-  const seasonRe = /第\s*([一二三四五六七八九十两\d]{1,3})\s*季/g;
+  const seasonRe = /第\s*([一二三四五六七八九十两\dIVXⅠ-Ⅻ]{1,4})\s*季/g;
   let match: RegExpExecArray | null;
   while ((match = seasonRe.exec(title)) !== null) {
     const n = parseChineseNumber(match[1]!);
@@ -230,8 +245,8 @@ export function parseEpisodeSpanFromTitle(title: string): ReleaseEpisodeSpan | n
   }
 
   const range =
-    /(?:E|EP|第)?\s*(\d{1,4})\s*[-~～至到]\s*(?:E|EP|第)?\s*(\d{1,4})\s*[集话話期幕]?/i.exec(title) ??
-    /(\d{1,4})\s*[-~～]\s*(\d{1,4})\s*[集话話期幕]/.exec(title);
+    /(?:E|EP|第)\s*(\d{1,4})\s*[-~～至到]\s*(?:E|EP|第)?\s*(\d{1,4})\s*[集话話期幕]?/i.exec(title) ??
+    /(\d{1,4})\s*[-~～至到]\s*(\d{1,4})\s*[集话話期幕]/.exec(title);
   if (range) {
     const from = Number(range[1]);
     const to = Number(range[2]);
@@ -260,28 +275,36 @@ export function parseEpisodeSpanFromTitle(title: string): ReleaseEpisodeSpan | n
   const single =
     /[Ss]\d{1,2}[Ee](\d{1,4})/.exec(title) ??
     /第\s*([0-9一二三四五六七八九十百零EP]+)\s*[集话話期幕]/.exec(title) ??
+    /\[TV\s+(\d{1,4})\]/i.exec(title) ??
     /\bE(?:P)?(\d{1,4})\b/i.exec(title) ??
     /\bEpisode\s+(\d{1,4})\b/i.exec(title);
   if (single) {
     const raw = single[1]!.replace(/[EP]/gi, "");
     const n = parseChineseNumber(raw) ?? Number(raw);
-    if (n >= 1 && n < 10000) {
+    if (isPlausibleEpisode(n)) {
       return { from: n, to: n, complete: false };
     }
   }
 
-  if (isAnimeTitle(title)) {
+  const hash = /#(\d{1,4})\b/.exec(title);
+  if (hash) {
+    const n = Number(hash[1]);
+    if (isPlausibleEpisode(n)) {
+      return { from: n, to: n, complete: false };
+    }
+  }
+
+  if (isAnimeTitle(title) || /[【\[]\d{1,4}(?:v\d+)?[】\]]/.test(title)) {
     const dash = /\s+-\s+(\d{1,4})(?:v\d+)?(?:\s+|$)/i.exec(title);
     if (dash) {
       const n = Number(dash[1]);
-      if (n >= 1 && n < 10000) {
+      if (isPlausibleEpisode(n)) {
         return { from: n, to: n, complete: false };
       }
     }
-    const bracket = /\[(\d{1,4})(?:v\d+)?\]/.exec(title);
-    if (bracket) {
+    for (const bracket of title.matchAll(/[【\[](\d{1,4})(?:v\d+)?[】\]]/g)) {
       const n = Number(bracket[1]);
-      if (n >= 1 && n < 4000) {
+      if (isPlausibleEpisode(n)) {
         return { from: n, to: n, complete: false };
       }
     }
@@ -312,6 +335,14 @@ function mapVideoCodec(title: string): VideoCodec {
     return "xvid";
   }
   return "unknown";
+}
+
+function detectVideoEncode(title: string): string | undefined {
+  const match = VIDEO_ENCODE_RE.exec(normalizeQualityText(title));
+  if (!match) {
+    return undefined;
+  }
+  return match[0].replace(/[\s._-]+/g, "").replace(/^h/i, "H").replace(/^x/i, "x");
 }
 
 function mapVideoBit(title: string): ReleaseMeta["videoBit"] {
@@ -365,10 +396,22 @@ function detectPart(title: string): string | undefined {
 
 function detectResourcePix(title: string, resolution: ResolutionBand): string | undefined {
   const text = normalizeQualityText(title);
-  const pix = /(\d{3,4})[pi]|([248])k|\buhd\b/i.exec(text);
+  const pix = /(\d{3,4})[pi]|([248])k|\buhd\b|(\d{3,4})\s*[x×]\s*(\d{3,4})|[\[(](2160|1080|720|480|576|4k|uhd)[\])]/i.exec(
+    text,
+  );
   if (pix) {
     if (pix[2]) {
       return `${pix[2]}k`;
+    }
+    if (pix[5]) {
+      const token = pix[5].toLowerCase();
+      if (token === "4k" || token === "uhd" || token === "2160") {
+        return token === "2160" ? "2160p" : token;
+      }
+      return `${token}p`;
+    }
+    if (pix[3] && pix[4]) {
+      return `${pix[4]}p`.toLowerCase();
     }
     if (pix[1]) {
       return `${pix[1]}p`;
@@ -386,14 +429,22 @@ function detectResourcePix(title: string, resolution: ResolutionBand): string | 
 
 function detectResourceType(title: string, source: SourceClass): string | undefined {
   const text = normalizeQualityText(title);
-  if (/\bremux\b|无压/i.test(text)) {
-    return "REMUX";
+  const parts: string[] = [];
+  if (/\buhd\b/i.test(text) && /\bblu/i.test(text)) {
+    parts.push("UHD");
   }
   if (/\bblu[\s._-]*ray\b|\bbluray\b/i.test(text)) {
-    return "BluRay";
+    parts.push("BluRay");
+  } else if (/\bbd[\s._-]*rip\b|\bbdrip\b/i.test(text)) {
+    parts.push("BDRip");
+  } else if (/\bbd\b/i.test(text) && !/\bbluray\b|\bblu[\s._-]*ray\b/i.test(text)) {
+    parts.push("BD");
   }
-  if (/\bbd[\s._-]*rip\b|\bbdrip\b/i.test(text)) {
-    return "BDRip";
+  if (/\bremux\b|无压/i.test(text)) {
+    parts.push("REMUX");
+  }
+  if (parts.length > 0) {
+    return parts.join(" ");
   }
   if (/\bweb[\s._-]*dl\b|\bwebdl\b|官源/i.test(text)) {
     return "WEB-DL";
@@ -401,7 +452,7 @@ function detectResourceType(title: string, source: SourceClass): string | undefi
   if (/\bweb[\s._-]*rip\b|\bwebrip\b/i.test(text)) {
     return "WEBRip";
   }
-  if (/\bhdtv\b|\buhdtv\b/i.test(text)) {
+  if (/\bhdtv\b|\buhdtv\b|\bsdtv\b/i.test(text)) {
     return "HDTV";
   }
   if (/\bhd[\s._-]*rip\b/i.test(text)) {
@@ -434,6 +485,14 @@ function detectEffects(title: string): string[] {
       label = "HDR10+";
     } else if (raw === "HDR10" || raw === "HDR") {
       label = raw === "HDR10" ? "HDR10" : "HDR";
+    } else if (raw === "IMAX") {
+      label = "IMAX";
+    } else if (raw === "3D") {
+      label = "3D";
+    } else if (/未删减|UNCUT|UNRATE/.test(raw)) {
+      label = "UNCUT";
+    } else if (/导演剪辑|加长版|EXTENDED/.test(raw)) {
+      label = "Extended";
     }
     if (!seen.has(label)) {
       seen.add(label);
@@ -444,9 +503,103 @@ function detectEffects(title: string): string[] {
 }
 
 function detectYear(title: string): number | undefined {
+  const paren = /\(\s*((?:19|20)\d{2})\s*\)/.exec(title);
+  if (paren) {
+    return Number(paren[1]);
+  }
   const years = [...title.matchAll(/\b((?:19|20)\d{2})\b/g)].map((match) => Number(match[1]));
   const plausible = years.filter((year) => year > 1900 && year < 2050);
-  return plausible[0];
+  return plausible.length > 0 ? plausible[plausible.length - 1] : undefined;
+}
+
+function detectFps(title: string): number | undefined {
+  const match = FPS_RE.exec(normalizeQualityText(title));
+  if (!match) {
+    return undefined;
+  }
+  const fps = Number(match[1]);
+  return fps >= 23 && fps <= 240 ? fps : undefined;
+}
+
+function detectAudioCodec(title: string): string | undefined {
+  const text = normalizeQualityText(title);
+  AUDIO_TOKEN_RE.lastIndex = 0;
+  const tokens: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = AUDIO_TOKEN_RE.exec(text)) !== null) {
+    const token = match[0].replace(/[\s._-]+/g, " ").trim();
+    if (!tokens.some((existing) => existing.toLowerCase() === token.toLowerCase())) {
+      tokens.push(token);
+    }
+  }
+  return tokens.length > 0 ? tokens.join(" ") : undefined;
+}
+
+function stripForNames(title: string): string {
+  let rest = title;
+  rest = rest.replace(FANSUB_BRACKET_RE, " ");
+  rest = rest.replace(RELEASE_GROUP_RE, " ");
+  rest = rest.replace(MEDIA_EXT_RE, " ");
+  rest = rest.replace(/\(\s*(?:19|20)\d{2}\s*\)/g, " ");
+  rest = rest.replace(/\b(?:19|20)\d{2}\b/g, " ");
+  rest = rest.replace(/第\s*[一二三四五六七八九十两\dIVXⅠ-Ⅻ]{1,4}\s*[季集话話期幕]/g, " ");
+  rest = rest.replace(/\bS\d{1,2}(?:E\d{1,4})?\b/gi, " ");
+  rest = rest.replace(/[【\[]\d{1,4}(?:v\d+)?[】\]]/g, " ");
+  rest = rest.replace(/\[TV\s+\d{1,4}\]/gi, " ");
+  rest = rest.replace(/#\d{1,4}\b/g, " ");
+  rest = rest.replace(NAME_NOISE_RE, " ");
+  rest = rest.replace(releaseMetaNoisePattern(), " ");
+  rest = rest.replace(/[-@][A-Za-z0-9]+$/g, " ");
+  rest = rest.replace(/[【\[\(].{0,40}[】\]\)]/g, " ");
+  return rest.replace(/[._]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function extractNames(title: string): { cnName?: string; enName?: string } {
+  const cleaned = stripForNames(title);
+  if (!cleaned) {
+    return {};
+  }
+  const slash = cleaned.split(/\s*\/\s*/).map((part) => part.trim()).filter(Boolean);
+  if (slash.length >= 2) {
+    const left = slash[0]!;
+    const right = slash[slash.length - 1]!;
+    const leftCjk = /[\u4e00-\u9fff]/.test(left);
+    const rightCjk = /[\u4e00-\u9fff]/.test(right);
+    if (leftCjk && !rightCjk) {
+      return omitEmptyNames({ cnName: left, enName: titleCaseName(right) });
+    }
+    if (rightCjk && !leftCjk) {
+      return omitEmptyNames({ cnName: right, enName: titleCaseName(left) });
+    }
+  }
+  const cjk = cleaned.match(/[\u4e00-\u9fff0-9：:·\-—]{2,}/g)?.join(" ").trim();
+  const latin = cleaned
+    .replace(/[\u4e00-\u9fff]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return omitEmptyNames({
+    ...(cjk ? { cnName: cjk } : {}),
+    ...(latin && /[A-Za-z]{2,}/.test(latin) ? { enName: titleCaseName(latin) } : {}),
+  });
+}
+
+function titleCaseName(value: string): string {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => (word === word.toUpperCase() && word.length <= 3 ? word : word[0]!.toUpperCase() + word.slice(1).toLowerCase()))
+    .join(" ");
+}
+
+function omitEmptyNames(value: { cnName?: string; enName?: string }): { cnName?: string; enName?: string } {
+  const out: { cnName?: string; enName?: string } = {};
+  if (value.cnName && value.cnName.length >= 1) {
+    out.cnName = value.cnName;
+  }
+  if (value.enName && value.enName.length >= 2) {
+    out.enName = value.enName;
+  }
+  return out;
 }
 
 function omitUndefined<T extends Record<string, unknown>>(value: T): T {
@@ -463,22 +616,51 @@ function omitUndefined<T extends Record<string, unknown>>(value: T): T {
  * Recognize a Chinese cloud-share title, PT torrent name, or on-disk filename
  * into MoviePilot-comparable structured meta + the local quality-ladder enums.
  */
-export function parseReleaseMeta(title: string): ReleaseMeta {
-  const quality = parseReleaseQuality(title);
-  const episode = parseEpisodeSpanFromTitle(title);
-  const videoBit = mapVideoBit(title);
-  const audioRaw = AUDIO_RAW_RE.exec(normalizeQualityText(title))?.[0];
-  const year = detectYear(title);
-  const part = detectPart(title);
-  const webSource = detectWebSource(title);
-  const releaseGroup = detectReleaseGroup(title);
-  const resourcePix = detectResourcePix(title, quality.resolution);
-  const resourceType = detectResourceType(title, quality.source);
+export function parseReleaseMeta(title: string, options: ParseReleaseMetaOptions = {}): ReleaseMeta {
+  const prepared = prepareTitle(title, options.customWords ?? [], {
+    includeBuiltin: options.includeBuiltinWords,
+  });
+  const tagged = extractExplicitMediaTags(prepared.title);
+  const working = [tagged.title, options.subtitle].filter((part) => part && part.trim().length > 0).join(" ");
+  const stem = working.replace(MEDIA_EXT_RE, "");
+  const quality = parseReleaseQuality(stem);
+  const namedSeasons = parseNamedSeasons(stem);
+  const parsedEpisode = parseEpisodeSpanFromTitle(stem);
+  const episode =
+    tagged.beginEpisode !== undefined
+      ? {
+          from: tagged.beginEpisode,
+          to: tagged.endEpisode ?? tagged.beginEpisode,
+          complete: false,
+        }
+      : parsedEpisode;
+  const seasons =
+    tagged.beginSeason !== undefined
+      ? uniqueSorted(
+          tagged.endSeason !== undefined && tagged.endSeason >= tagged.beginSeason
+            ? Array.from({ length: tagged.endSeason - tagged.beginSeason + 1 }, (_, i) => tagged.beginSeason! + i)
+            : [tagged.beginSeason],
+        )
+      : namedSeasons;
+  const videoBit = mapVideoBit(stem);
+  const audioCodec = detectAudioCodec(stem);
+  const year = detectYear(stem);
+  const part = detectPart(stem);
+  const webSource = detectWebSource(stem);
+  const releaseGroup = detectReleaseGroup(title) ?? detectReleaseGroup(stem);
+  const resourcePix = detectResourcePix(stem, quality.resolution);
+  const resourceType = detectResourceType(stem, quality.source);
+  const names = extractNames(stem);
+  const fps = detectFps(stem);
+  const videoEncode = detectVideoEncode(stem);
   return omitUndefined({
     ...quality,
-    seasons: parseNamedSeasons(title),
-    resourceEffect: detectEffects(title),
-    videoCodec: mapVideoCodec(title),
+    seasons,
+    resourceEffect: detectEffects(stem),
+    videoCodec: mapVideoCodec(stem),
+    appliedWords: prepared.appliedWords,
+    special: SPECIAL_RE.test(stem),
+    parsedTitle: stem,
     ...(episode ? { episode } : {}),
     ...(year === undefined ? {} : { year }),
     ...(part === undefined ? {} : { part }),
@@ -486,12 +668,16 @@ export function parseReleaseMeta(title: string): ReleaseMeta {
     ...(releaseGroup === undefined ? {} : { releaseGroup }),
     ...(resourcePix === undefined ? {} : { resourcePix }),
     ...(resourceType === undefined ? {} : { resourceType }),
-    ...(audioRaw === undefined ? {} : { audioCodec: audioRaw }),
+    ...(audioCodec === undefined ? {} : { audioCodec }),
     ...(videoBit === undefined ? {} : { videoBit }),
+    ...(fps === undefined ? {} : { fps }),
+    ...(videoEncode === undefined ? {} : { videoEncode }),
+    ...(tagged.binding ? { mediaBinding: tagged.binding } : {}),
+    ...names,
   });
 }
 
 /** Tokens the leftover/sequel heuristic should ignore (quality + meta tags). */
 export function releaseMetaNoisePattern(): RegExp {
-  return /hdr\s*10\s*\+|1080\s*[pi]|2160p|720\s*[pi]|4k|uhd|hdr10plus|hdr10p?|\bhdr\b|\bdv\b|dovi|dolby|remux|web-?dl|webrip|bluray|bdrip|hdtv|uhdtv|hddvd|hdrip|dvdrip|atmos|truehd|dts|eac3|ddp?|aac|flac|lpcm|h\.?26[45]|x26[45]|hevc|avc|av1|10bit|8bit|中字|国语|双语|字幕|超高清|全高清|超清|无压|官源|蓝光|杜比视界|mkv|mp4|ts|complete|全集|完结|更新至|分享|磁力|\biso\b|bdmv|原盘|amzn|netflix|\bnf\b|atvp|dsnp|hmax|hulu|pmtp|iqiyi|wetv|webdl|repack|\bpart\d|\bcd\d|\bdisc\d/gi;
+  return /hdr\s*10\s*\+|1080\s*[pi]|2160p|720\s*[pi]|4k|uhd|hdr10plus|hdr10p?|\bhdr\b|\bdv\b|dovi|dolby|remux|web-?dl|webrip|bluray|bdrip|hdtv|uhdtv|sdtv|hddvd|hdrip|dvdrip|atmos|truehd|dts|eac3|ddp?|aac|flac|lpcm|h\.?26[45]|x26[45]|hevc|avc|av1|10bit|8bit|中字|国语|双语|字幕|超高清|全高清|超清|无压|官源|蓝光|杜比视界|mkv|mp4|ts|complete|全集|完结|更新至|分享|磁力|\biso\b|bdmv|原盘|amzn|netflix|\bnf\b|atvp|dsnp|hmax|hulu|pmtp|iqiyi|wetv|webdl|repack|proper|imax|\bpart\d|\bcd\d|\bdisc\d|\bfps\b|tmdbid|doubanid/gi;
 }
