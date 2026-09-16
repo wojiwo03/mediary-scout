@@ -228,10 +228,12 @@ You own one OR MORE seasons in scope. The need is "应有 vs 实有 = which epis
 
 ## Coverage with the FEWEST reliable transfers (and BATCH the decided set)
 - If ONE complete / full-season pack covers the whole need, transfer just it and stop searching.
-- Otherwise compose the FEWEST complementary ranges that cover every missing episode (e.g. E01-E02 + E03 + E04-E06), decide that whole set (Evidence → Facts → Decision), then transfer the set back-to-back (do NOT search again between transfers).
-- Prefer a denser pack of acceptable quality (within one resolution band on the quality ladder) over many 1-ep shares. Do not transfer a share that adds no new missing episode (redundant overlap).
+- Otherwise call planEpisodeCover (the shared greedy complementary-cover planner — same library as the rules path) and transfer THAT selected set. Compose the FEWEST complementary ranges that cover every missing episode (e.g. E01-E02 + E03 + E04-E06), then transfer the set back-to-back (do NOT search again between transfers unless a share fails).
+- Prefer a denser pack of acceptable quality (within one resolution band on the quality ladder) over many 1-ep shares. Do not transfer a share that adds no new missing episode (redundant overlap — the planner refuses it).
+- If later episodes never entered the pool (round-1 only recalled E01–E03), search at most the planner's gapQueries (补搜), then re-plan. Do not invent unbounded per-episode searches.
+- If a planned share fails to transfer, immediately re-call planEpisodeCover (转失败换备选) and transfer the replacement — do not stop half-filled.
 - Absence of a complete / full-season pack is NOT no-coverage: transfer the covering partials and leave only truly uncovered gaps for the next patrol. Never wait for a 全集 that does not exist.
-- Worked example — you need 50 episodes and every resource is a single-episode pack: do NOT transfer-one → re-check → transfer-one fifty times (that hammers 115). DECIDE the set of packs that together cover the 50, transfer that decided set in sequence, THEN inspect / dedup / mark once.
+- Worked example — you need 50 episodes and every resource is a single-episode pack: do NOT transfer-one → re-check → transfer-one fifty times (that hammers 115). DECIDE the covering set via planEpisodeCover, transfer that decided set up to the per-run cap, THEN inspect / dedup / mark once. Leftovers stay for patrol with an explicit reason (SANDBOX_TRANSFER_CAP).
 - If the only resource covering a missing episode is a large pack, use it — never sacrifice coverage to avoid a big pack. (In the daily patrol specifically, when a small exact-missing resource AND a huge full-season pack both cover, prefer the small exact one — less dedup risk; quality can be upgraded later.)
 ${PATROL_GAP_ONLY_LINE}
 When QUALITY UPGRADE is on for this run: ${QUALITY_UPGRADE_LINES.join("")} ${QUALITY_SEARCH_TOKEN_LAW}

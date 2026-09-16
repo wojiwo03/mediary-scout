@@ -104,6 +104,65 @@ describe("buildSandboxToolSet — the agent's tool surface over the cage", () =>
     expect(summary.coverageMet).toBe(false);
     expect(summary.missing).toEqual(["S01E02"]);
   });
+
+  it("TV planEpisodeCover uses the shared greedyCover set and refuses redundant overlaps", async () => {
+    const provider = new FakeResourceProviderV2({
+      results: {
+        Show: [
+          { id: "a", title: "Show 1-2集 1080p WEB-DL" },
+          { id: "b", title: "Show 第3集 1080p WEB-DL" },
+          { id: "c", title: "Show 4-6集 1080p WEB-DL" },
+          { id: "dup", title: "Show 1-2集 720p WEB-DL" },
+        ],
+      },
+    });
+    const storage = new Storage115Simulator({
+      packs: {
+        a: { files: [{ path: "Show - 01.mkv", sizeBytes: 9 }, { path: "Show - 02.mkv", sizeBytes: 9 }] },
+        b: { files: [{ path: "Show - 03.mkv", sizeBytes: 9 }] },
+        c: { files: [{ path: "Show - 04.mkv", sizeBytes: 9 }] },
+        dup: { files: [{ path: "Show - 01.dup.mkv", sizeBytes: 4 }] },
+      },
+    });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const targetSeasonDirectoryId = await storage.createDirectory({ name: "Season 1", parentId: "root" });
+    const missing = ["S01E01", "S01E02", "S01E03", "S01E04", "S01E05", "S01E06"];
+    const sandbox = new TaskSandbox({
+      provider,
+      storage,
+      stagingDirectoryId,
+      targetSeasonDirectoryIds: { 1: targetSeasonDirectoryId },
+      need: missing,
+      titleTerms: ["Show"],
+    });
+    await sandbox.primeRawSnapshot("Show");
+    const tools = buildSandboxToolSet(sandbox, {
+      coverPlan: {
+        target: {
+          kind: "tv",
+          title: "Show",
+          aliases: [],
+          seasons: [1],
+          missingEpisodes: missing,
+          originCountries: ["CN"],
+        },
+      },
+    });
+    expect(Object.keys(tools)).toContain("planEpisodeCover");
+
+    const plan = (await call(tools.planEpisodeCover, {})) as {
+      selected: Array<{ candidateId: string }>;
+      redundantCandidateIds: string[];
+      reason: string;
+    };
+    expect(plan.selected.map((row) => row.candidateId).sort()).toEqual(["a", "b", "c"]);
+    expect(plan.redundantCandidateIds).toContain("dup");
+    expect(plan.reason).toMatch(/用 3 个分享补齐/);
+
+    const snapshotId = sandbox.listObservedSnapshots()[0]!.id;
+    const refused = await call(tools.transferCandidate, { snapshotId, candidateId: "dup" });
+    expect(refused.error).toMatch(/REDUNDANT_COVERAGE|不补新缺集|重叠/);
+  });
 });
 
 describe("readSkill description — section list derived from the single source of truth", () => {

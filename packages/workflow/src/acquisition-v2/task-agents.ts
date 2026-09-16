@@ -1,9 +1,10 @@
 import type { LanguageModel } from "ai";
-import { runAcquisitionAgent, type AcquisitionAgentResult } from "./agent-loop.js";
+import { runAcquisitionAgent, type AcquisitionAgentResult, type CoverPlanContext } from "./agent-loop.js";
 import type { AgentToolEvent } from "./activity.js";
 import type { TaskSandbox } from "./sandbox.js";
 import { skillIndexForAgent } from "./skill.js";
 import { getStorageBrand } from "../storage-brands.js";
+import type { QualityLadderPolicy } from "./quality-ladder.js";
 
 /**
  * The 字字泣血 mandate: the agent MUST read its skill manual before acting and
@@ -35,14 +36,14 @@ The system enforces hard guards you cannot override: a capped search budget, sco
 Files keep their ORIGINAL names. Do not rename anything. Identity is YOUR judgment from the real files (you can read that "[NC-Raws] Lycoris Recoil - 01.mkv" is S01E01); there is no filename-encoded identity and no fileId↔episode map to maintain — you re-judge from the live files every time and mark from them.`;
 
 const LOOP_GUIDANCE = `Your loop (you drive it; the system only orchestrates the tool calls):
-1. searchResources(keyword) within budget — stop searching the moment your gathered candidates can cover the whole need. One fully-covering resource is enough; do not pile on overlapping packs.
-2. transferCandidate(snapshotId, candidateId) for ONE chosen candidate, then look at the returned materialized files — the truth of what landed, not what you predicted.
+1. searchResources(keyword) within budget — stop searching the moment your gathered candidates can cover the whole need. One fully-covering resource is enough; do not pile on overlapping packs. After viewResourceSnapshot, call planEpisodeCover (free; same complementary-cover planner as the rules path) and treat its selected set as the transfer list.
+2. transferCandidate(snapshotId, candidateId) for ONE chosen candidate from that plan, then look at the returned materialized files — the truth of what landed, not what you predicted. If a transfer fails, call planEpisodeCover again (转失败换备选) instead of picking a redundant overlap. If uncovered holes remain, search at most the returned gapQueries (补搜), then re-plan — do not hammer extra keywords.
 3. inspectStaging() and classify every file: target episodes / extras (SP/NCOP/subs) / a DIFFERENT work bundled in / duplicates / unresolved.
 4. Plan the FULL distribution FIRST (Evidence → Facts → Decision): for each still-missing episode decide its staging file id, that video's subtitle id(s), and its season — confirm the plan covers EXACTLY the missing episodes. THEN submit it as ONE call: moveToSeason({moves:[{season,fileIds}]}) — each move names its season, each video's subtitles ride in the SAME season's fileIds. A multi-season / complete-series pack is distributed in a single plan with one move per season; episodes a season ALREADY has are NOT recopied (check inspectTargetDir(season) first). THEN verify the returned {seasons,staging} and fix any misplacement with another call (moves are cheap, not transfer-budget).
 5. moveToSeason lands each file FLAT in its Season dir (extracted OUT of its resource wrapper) — media must NOT stay nested in its own wrapper directory, or scrapers read the nesting as different versions of the same episode. The wrappers and anything you didn't move stay in staging and get wiped wholesale in step 8 — you do NOT peel each wrapper.
 6. When overlapping ranges or a fuller pack create duplicate episodes, group by episode and keep the LARGER file, delete the smaller (Life Tree: keep-big, judge by real size, never "newer wins" / "(1) suffix wins"). deleteFiles executes your grouping.
 7. markObtained(codes) — declare the episode codes you obtained (e.g. ["S01E13","S02E07"]). Do it ONLY after you have moved the files in, deduped, and your inspectTargetDir shows the real episodes in place. The system does NOT re-read to second-guess you and there is no fileId — mark from your own judgment, and never mark before the files are actually placed.
-8. discardStaging wipes the WHOLE staging directory in one shot — leftover episodes / duplicate packs / a bundled different work / wrappers / covers are discarded wholesale; keep ONLY what you moved into the seasons (do NOT isolate or hand-classify residue). Then finish() when the need is covered. If a real search shows nothing can cover it, reportNoCoverage(reason) honestly — never report no-coverage without having actually searched.
+8. discardStaging wipes the WHOLE staging directory in one shot — leftover episodes / duplicate packs / a bundled different work / wrappers / covers are discarded wholesale; keep ONLY what you moved into the seasons (do NOT isolate or hand-classify residue). Then finish() when the need is covered. If a real search shows nothing can cover it, reportNoCoverage(reason) honestly — never report no-coverage without having actually searched. If the transfer cap fires (SANDBOX_TRANSFER_CAP), leave remaining missing for the next patrol with an explicit reason — do not grind 50 single-file episodes in one run.
 
 Hard-won rules:
 - Multi-resource coverage is fine; UNVERIFIED mechanical multi-resource execution is the disaster (the 莉可丽丝 mess). After each transfer, re-read what actually landed and what is still missing before deciding whether you even need another resource — a pack you thought covered 1-8 may have covered 1-13, in which case STOP.
@@ -185,7 +186,7 @@ Target matching:
 - A candidate must clearly refer to the target title. Reject lookalikes that only matched keyword noise. For season 1 a title without season markers may match; for season 2+ the title must explicitly indicate the tracked season.
 - Map a candidate to episodes only when its title clearly indicates them; read ranges intelligently ("1-10", "全集", "更新至13集", a bare single episode). If coverage is unclear, do not transfer "to see what is inside".
 
-Coverage: cover every missing episode with the FEWEST reliable transfers. Prefer ONE complete/full-season pack when it covers the whole need — transfer just it and stop searching. Only when no single pack covers the need, compose the fewest complementary ranges (e.g. E01-E02 + E03 + E04-E06) and stop once every missing episode is covered once. Prefer a denser pack of acceptable quality (within one resolution band on the quality ladder) over many 1-ep shares. Absence of a complete/full-season pack is NOT no-coverage — transfer the covering partials and leave only truly uncovered gaps. Do not transfer a share that adds no new missing episode (redundant overlap). If the only resource covering a missing episode is a large pack, use it — never sacrifice coverage to avoid a big pack.
+Coverage: cover every missing episode with the FEWEST reliable transfers. Call planEpisodeCover (the shared greedy complementary-cover planner — the same library the rules path uses) after reading the snapshot; transfer THAT selected set. Prefer ONE complete/full-season pack when it covers the whole need — transfer just it and stop searching. Only when no single pack covers the need, compose the fewest complementary ranges (e.g. E01-E02 + E03 + E04-E06) and stop once every missing episode is covered once. Prefer a denser pack of acceptable quality (within one resolution band on the quality ladder) over many 1-ep shares. Absence of a complete/full-season pack is NOT no-coverage — transfer the covering partials and leave only truly uncovered gaps. Do not transfer a share that adds no new missing episode (redundant overlap — the planner will refuse it). If a planned share fails to transfer, re-call planEpisodeCover for 转失败换备选. If later episodes never entered the pool, search the planner's gapQueries (补搜) then re-plan — bounded, not one query per episode. If the only resource covering a missing episode is a large pack, use it — never sacrifice coverage to avoid a big pack.
 
 Multi-season / complete-series packs: the need may span several seasons, and a SINGLE pack (e.g. "Breaking Bad Complete Series" / "全五季") may cover them all. Transfer it ONCE, then submit ONE distribution plan mapping the files to EACH season at once: moveToSeason({moves:[{season:1,fileIds:[...]},{season:2,fileIds:[...]}]}) — each video's subtitles ride in the same season's fileIds. Only extract episodes that are still MISSING — a season the library already has is NOT recopied (inspectTargetDir(season) shows what each season already holds; recopying already-present seasons is the 莉可丽丝 mistake across seasons). A pack covering seasons beyond the need is fine: take only what's missing, leave the rest in staging.
 
@@ -275,6 +276,8 @@ export interface RunTvAnimeRequest extends TaskAgentPromptOptions {
   apiCallCount?: () => number | undefined;
   /** SOFT-warning threshold derived from the configured hard budget. */
   budgetSoftAt?: number;
+  qualityPolicy?: QualityLadderPolicy;
+  customIdentifierWords?: readonly string[];
 }
 
 export interface RunMovieRequest extends TaskAgentPromptOptions {
@@ -290,17 +293,32 @@ export interface RunMovieRequest extends TaskAgentPromptOptions {
 }
 
 export async function runTvAnimeTaskAgent(request: RunTvAnimeRequest): Promise<AcquisitionAgentResult> {
-  const { sandbox, model, target, maxSteps, onProgress, apiCallCount, budgetSoftAt, ...promptOptions } = request;
+  const { sandbox, model, target, maxSteps, onProgress, apiCallCount, budgetSoftAt, qualityPolicy, customIdentifierWords, ...promptOptions } = request;
   const seasonsLabel =
     target.seasons.length === 1 ? `season ${target.seasons[0]}` : `seasons ${target.seasons.join(", ")}`;
   const prompt = `Acquire the missing episodes for "${target.title}"${target.aliases.length ? ` (aliases: ${target.aliases.join(", ")})` : ""}, ${seasonsLabel}.
 Missing episodes (the coverage need — may span multiple seasons): ${target.missingEpisodes.join(", ")}.
-If one pack covers multiple seasons, distribute its files in ONE plan with a move per season (moveToSeason({moves:[{season,fileIds}]})) and take only still-missing episodes — never recopy a season already present. Cover every missing episode with the fewest reliable transfers: prefer one complete pack; if resources are scattered (E01-E02 + E03 + E04-E06), pick a minimal complementary set — do not report no-coverage just because a 全集 is absent, and do not transfer redundant overlaps. Keep each season directory clean, mark what truly landed, then finish.`;
+If one pack covers multiple seasons, distribute its files in ONE plan with a move per season (moveToSeason({moves:[{season,fileIds}]})) and take only still-missing episodes — never recopy a season already present. Cover every missing episode with the fewest reliable transfers: call planEpisodeCover (shared greedyCover planner) and transfer that selected complementary set — do not report no-coverage just because a 全集 is absent, and do not transfer redundant overlaps. Keep each season directory clean, mark what truly landed, then finish.`;
+  const coverPlan: CoverPlanContext = {
+    target: {
+      kind: "tv",
+      title: target.title,
+      aliases: target.aliases,
+      seasons: target.seasons,
+      missingEpisodes: target.missingEpisodes,
+      ...(target.tmdbId === undefined ? {} : { tmdbId: target.tmdbId }),
+      ...(promptOptions.originCountries ? { originCountries: promptOptions.originCountries } : {}),
+      ...(promptOptions.preferredLanguage ? { preferredLanguage: promptOptions.preferredLanguage } : {}),
+    },
+    ...(qualityPolicy ? { policy: qualityPolicy } : {}),
+    ...(customIdentifierWords && customIdentifierWords.length > 0 ? { customIdentifierWords } : {}),
+  };
   return runAcquisitionAgent({
     sandbox,
     model,
     system: buildTvAnimeSystemPrompt(promptOptions),
     prompt,
+    coverPlan,
     ...(promptOptions.storageProvider === undefined ? {} : { storageProvider: promptOptions.storageProvider }),
     ...(promptOptions.subtitle ? { subtitle: true } : {}),
     ...(maxSteps === undefined ? {} : { maxSteps }),

@@ -9,10 +9,20 @@ import {
   splitReleaseTitleParts,
   type ParseReleaseMetaOptions,
 } from "./release-meta.js";
+import {
+  candidatesFromSnapshots,
+  describeTvSelection,
+  gapSearchQueries,
+  greedyCover,
+  isTransferCapError,
+  MAX_GAP_RESEARCH_ROUNDS,
+  transferAttemptSucceeded,
+} from "./cover-planner.js";
 import type { TaskSandbox } from "./sandbox.js";
 import {
   selectResourceCandidates,
   assessRulesConfidence,
+  planTvCover,
   type RankedRulesCandidate,
   type RulesSelectorCandidate,
   type RulesSelectorTarget,
@@ -91,18 +101,7 @@ function asEvidence<T>(run: () => Promise<T>): Promise<T | { error: string }> {
 }
 
 function snapshotsToCandidates(sandbox: TaskSandbox): RulesSelectorCandidate[] {
-  const out: RulesSelectorCandidate[] = [];
-  const seen = new Set<string>();
-  for (const snapshot of sandbox.listObservedSnapshots()) {
-    for (const candidate of snapshot.candidates) {
-      if (seen.has(candidate.id)) {
-        continue;
-      }
-      seen.add(candidate.id);
-      out.push({ snapshotId: snapshot.id, candidateId: candidate.id, title: candidate.title });
-    }
-  }
-  return out;
+  return candidatesFromSnapshots(sandbox.listObservedSnapshots());
 }
 
 async function searchAliases(sandbox: TaskSandbox, target: RulesSelectorTarget, onProgress?: (event: AgentToolEvent) => void): Promise<void> {
@@ -186,63 +185,90 @@ export function inferEpisodeCodeFromListingPath(
 }
 
 function transferSucceeded(result: unknown): boolean {
-  if (!result || typeof result !== "object" || "error" in result) {
+  return transferAttemptSucceeded(result);
+}
+
+async function runGapResearch(
+  sandbox: TaskSandbox,
+  target: RulesSelectorTarget,
+  policy: QualityLadderPolicy,
+  words: readonly string[] | undefined,
+  onProgress?: (event: AgentToolEvent) => void,
+): Promise<boolean> {
+  const missing = target.missingEpisodes ?? [];
+  if (target.kind !== "tv" || missing.length === 0) {
     return false;
   }
-  if ("attempt" in result) {
-    const attempt = (result as { attempt?: { status?: string } }).attempt;
-    if (attempt?.status === "succeeded") {
-      return true;
+  let didSearch = false;
+  for (let round = 0; round < MAX_GAP_RESEARCH_ROUNDS; round += 1) {
+    const plan = planTvCover({
+      candidates: snapshotsToCandidates(sandbox),
+      target,
+      policy,
+      ...(words && words.length > 0 ? { customIdentifierWords: words } : {}),
+      remainingMissing: missing,
+      gapRound: round,
+    });
+    if (plan.uncovered.length === 0 || plan.gapQueries.length === 0) {
+      break;
     }
-    if (attempt?.status === "failed") {
-      return false;
+    let searchedThisRound = false;
+    for (const keyword of plan.gapQueries) {
+      emit(onProgress, "searchResources", { keyword, gapResearch: true });
+      const result = await asEvidence(() => sandbox.searchResources(keyword));
+      if (result && typeof result === "object" && "refused" in result && result.refused) {
+        return didSearch;
+      }
+      searchedThisRound = true;
+      didSearch = true;
+    }
+    if (!searchedThisRound) {
+      break;
     }
   }
-  if ("staging" in result) {
-    const staging = (result as { staging?: Array<{ isVideo?: boolean }> }).staging;
-    return Array.isArray(staging) && staging.some((file) => file.isVideo);
+  return didSearch;
+}
+
+async function lightGapSearch(
+  sandbox: TaskSandbox,
+  target: RulesSelectorTarget,
+  remaining: readonly string[],
+  onProgress?: (event: AgentToolEvent) => void,
+): Promise<boolean> {
+  const queries = gapSearchQueries({
+    title: target.title,
+    aliases: target.aliases,
+    missing: remaining,
+    round: 0,
+  });
+  if (queries.length === 0) {
+    return false;
   }
-  return false;
+  let searched = false;
+  for (const keyword of queries) {
+    emit(onProgress, "searchResources", { keyword, gapResearch: true });
+    const result = await asEvidence(() => sandbox.searchResources(keyword));
+    if (result && typeof result === "object" && "refused" in result && result.refused) {
+      return searched;
+    }
+    searched = true;
+  }
+  return searched;
 }
 
 async function transferRanked(
   sandbox: TaskSandbox,
   selected: RankedRulesCandidate[],
-  movie: boolean,
   onProgress?: (event: AgentToolEvent) => void,
 ): Promise<{ systemicBlock?: string; landed: boolean }> {
   if (selected.length === 0) {
     return { landed: false };
   }
-  if (movie) {
-    for (const candidate of selected) {
-      emit(onProgress, "transferCandidate", {
-        snapshotId: candidate.snapshotId,
-        candidateId: candidate.candidateId,
-      });
-      const result = await asEvidence(() =>
-        sandbox.transferCandidate({ snapshotId: candidate.snapshotId, candidateId: candidate.candidateId }),
-      );
-      if (result && typeof result === "object" && "error" in result) {
-        continue;
-      }
-      if (result && typeof result === "object" && "systemicBlock" in result && result.systemicBlock) {
-        return { systemicBlock: result.systemicBlock.reason, landed: false };
-      }
-      if (result && typeof result === "object" && "staging" in result && result.staging.some((file) => file.isVideo)) {
-        return { landed: true };
-      }
-    }
-    return { landed: false };
-  }
-
-  const remaining = new Set(selected.flatMap((candidate) => candidate.coveredEpisodes));
   for (const candidate of selected) {
-    const gain = candidate.coveredEpisodes.filter((code) => remaining.has(code));
-    if (gain.length === 0) {
-      continue;
-    }
-    emit(onProgress, "transferCandidate", { snapshotId: candidate.snapshotId, candidateId: candidate.candidateId });
+    emit(onProgress, "transferCandidate", {
+      snapshotId: candidate.snapshotId,
+      candidateId: candidate.candidateId,
+    });
     const result = await asEvidence(() =>
       sandbox.transferCandidate({ snapshotId: candidate.snapshotId, candidateId: candidate.candidateId }),
     );
@@ -252,15 +278,132 @@ async function transferRanked(
     if (result && typeof result === "object" && "systemicBlock" in result && result.systemicBlock) {
       return { systemicBlock: result.systemicBlock.reason, landed: false };
     }
-    if (transferSucceeded(result)) {
-      for (const code of gain) {
-        remaining.delete(code);
+    if (result && typeof result === "object" && "staging" in result && result.staging.some((file) => file.isVideo)) {
+      return { landed: true };
+    }
+  }
+  return { landed: false };
+}
+
+async function transferTvWithRefill(input: {
+  sandbox: TaskSandbox;
+  target: RulesSelectorTarget;
+  policy: QualityLadderPolicy;
+  words: readonly string[] | undefined;
+  eligible: RankedRulesCandidate[];
+  missing: readonly string[];
+  onProgress?: (event: AgentToolEvent) => void;
+}): Promise<{
+  systemicBlock?: string;
+  landed: boolean;
+  transferred: RankedRulesCandidate[];
+  remaining: string[];
+  refill: boolean;
+  transferCap: boolean;
+}> {
+  const { sandbox, target, policy, words, onProgress } = input;
+  const remaining = new Set(input.missing);
+  let eligible = [...input.eligible];
+  const exclude = new Set<string>();
+  const succeeded = new Set<string>();
+  const transferred: RankedRulesCandidate[] = [];
+  let refill = false;
+  let transferCap = false;
+  let didLightResearch = false;
+
+  const unused = (): RankedRulesCandidate[] =>
+    eligible.filter((candidate) => !exclude.has(candidate.candidateId) && !succeeded.has(candidate.candidateId));
+
+  while (remaining.size > 0) {
+    const plan = greedyCover(unused(), [...remaining]);
+    if (plan.length === 0) {
+      if (didLightResearch) {
+        break;
+      }
+      didLightResearch = true;
+      const searched = await lightGapSearch(sandbox, target, [...remaining], onProgress);
+      if (!searched) {
+        break;
+      }
+      const refreshed = selectWithWords(snapshotsToCandidates(sandbox), { ...target, missingEpisodes: [...remaining] }, policy, words);
+      eligible = refreshed.eligible ?? refreshed.selected;
+      continue;
+    }
+
+    for (const candidate of plan) {
+      const gain = candidate.coveredEpisodes.filter((code) => remaining.has(code));
+      if (gain.length === 0) {
+        continue;
+      }
+      emit(onProgress, "transferCandidate", {
+        snapshotId: candidate.snapshotId,
+        candidateId: candidate.candidateId,
+      });
+      const result = await asEvidence(() =>
+        sandbox.transferCandidate({ snapshotId: candidate.snapshotId, candidateId: candidate.candidateId }),
+      );
+      if (result && typeof result === "object" && "error" in result) {
+        if (isTransferCapError(result.error)) {
+          transferCap = true;
+          const staging = await asEvidence(() => sandbox.inspectStaging());
+          return {
+            landed: Array.isArray(staging) && staging.some((file) => file.isVideo),
+            transferred,
+            remaining: [...remaining],
+            refill,
+            transferCap,
+          };
+        }
+        exclude.add(candidate.candidateId);
+        refill = true;
+        const next = greedyCover(unused(), [...remaining]);
+        emit(onProgress, "rulesSelectCandidates", {
+          refill: true,
+          shareCount: next.length,
+          selected: next.map((item) => item.candidateId),
+          reason: "转失败换备选",
+        });
+        break;
+      }
+      if (result && typeof result === "object" && "systemicBlock" in result && result.systemicBlock) {
+        return {
+          systemicBlock: result.systemicBlock.reason,
+          landed: false,
+          transferred,
+          remaining: [...remaining],
+          refill,
+          transferCap,
+        };
+      }
+      if (transferSucceeded(result)) {
+        succeeded.add(candidate.candidateId);
+        transferred.push(candidate);
+        for (const code of gain) {
+          remaining.delete(code);
+        }
+      } else {
+        exclude.add(candidate.candidateId);
+        refill = true;
+        const next = greedyCover(unused(), [...remaining]);
+        emit(onProgress, "rulesSelectCandidates", {
+          refill: true,
+          shareCount: next.length,
+          selected: next.map((item) => item.candidateId),
+          reason: "转失败换备选",
+        });
+        break;
       }
     }
   }
+
   const staging = await asEvidence(() => sandbox.inspectStaging());
-  const landed = Array.isArray(staging) && staging.some((file) => file.isVideo);
-  return { landed };
+  return {
+    landed: Array.isArray(staging) && staging.some((file) => file.isVideo),
+    transferred,
+    remaining: [...remaining],
+    refill,
+    transferCap,
+  };
 }
 
 async function organizeTv(
@@ -384,8 +527,12 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
     candidates = snapshotsToCandidates(sandbox);
   }
 
+  const didGapResearch = await runGapResearch(sandbox, target, policy, words, onProgress);
+  candidates = snapshotsToCandidates(sandbox);
+
   emit(onProgress, "viewResourceSnapshot", {});
   const selection = selectWithWords(candidates, target, policy, words);
+  const reasonExtras = { gapResearch: didGapResearch };
 
   if (request.escalateOnLowConfidence) {
     const report = assessRulesConfidence({
@@ -412,8 +559,11 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
 
   emit(onProgress, "rulesSelectCandidates", {
     selected: selection.selected.map((candidate) => candidate.candidateId),
-    reason: selection.reason,
+    reason: target.kind === "tv"
+      ? describeTvSelection(selection.selected, target.missingEpisodes ?? [], reasonExtras)
+      : selection.reason,
     shareCount: selection.selected.length,
+    ...(didGapResearch ? { gapResearch: true } : {}),
   });
 
   if (selection.selected.length === 0) {
@@ -444,14 +594,13 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
     }
   }
 
-  const transfer = await transferRanked(sandbox, selection.selected, target.kind === "movie", onProgress);
-  if (transfer.systemicBlock) {
-    emit(onProgress, "finish", {});
-    const coverage = await sandbox.finish();
-    return { text: `转存系统故障：${transfer.systemicBlock}`, steps: 1, coverage };
-  }
-
   if (target.kind === "movie") {
+    const transfer = await transferRanked(sandbox, selection.selected, onProgress);
+    if (transfer.systemicBlock) {
+      emit(onProgress, "finish", {});
+      const coverage = await sandbox.finish();
+      return { text: `转存系统故障：${transfer.systemicBlock}`, steps: 1, coverage };
+    }
     emit(onProgress, "flattenMovie", {});
     await asEvidence(() => sandbox.flattenMovie());
     emit(onProgress, "inspectStaging", {});
@@ -474,20 +623,40 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
     return { text: selection.reason, steps: 1, coverage };
   }
 
+  const missing = target.missingEpisodes ?? [];
+  const transfer = await transferTvWithRefill({
+    sandbox,
+    target,
+    policy,
+    words,
+    eligible: selection.eligible ?? selection.selected,
+    missing,
+    ...(onProgress ? { onProgress } : {}),
+  });
+  if (transfer.systemicBlock) {
+    emit(onProgress, "finish", {});
+    const coverage = await sandbox.finish();
+    return { text: `转存系统故障：${transfer.systemicBlock}`, steps: 1, coverage };
+  }
+
+  const tvReason = describeTvSelection(transfer.transferred.length > 0 ? transfer.transferred : selection.selected, missing, {
+    ...reasonExtras,
+    refill: transfer.refill,
+    transferCap: transfer.transferCap,
+  });
   const marked = await organizeTv(sandbox, target.seasons ?? [1], onProgress, words);
   if (marked.length > 0) {
     emit(onProgress, "markObtained", { codes: marked });
     await sandbox.markObtained({ codes: marked });
   } else if (!transfer.landed) {
-    const reason = selection.reason;
-    await asEvidence(() => sandbox.reportNoCoverage(reason));
-    emit(onProgress, "reportNoCoverage", { reason });
+    await asEvidence(() => sandbox.reportNoCoverage(tvReason));
+    emit(onProgress, "reportNoCoverage", { reason: tvReason });
   }
   emit(onProgress, "discardStaging", {});
   await asEvidence(() => sandbox.discardStaging());
   emit(onProgress, "finish", {});
   const coverage = await sandbox.finish();
-  return { text: selection.reason, steps: 1, coverage };
+  return { text: tvReason, steps: 1, coverage };
 }
 
 export function movieTargetToRules(target: MovieTarget, extras?: { originCountries?: string[]; preferredLanguage?: string }): RulesSelectorTarget {

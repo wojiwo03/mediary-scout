@@ -259,7 +259,14 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
 
   const runAgent = () =>
     request.target.kind === "tv"
-      ? runTvAnimeTaskAgent({ ...common, target: stripKind(request.target) })
+      ? runTvAnimeTaskAgent({
+          ...common,
+          target: stripKind(request.target),
+          ...(request.qualityPolicy === undefined ? {} : { qualityPolicy: request.qualityPolicy }),
+          ...customIdentifierWordsSpread(
+            request.customIdentifierWords ? [...request.customIdentifierWords] : undefined,
+          ),
+        })
       : runMovieTaskAgent({ ...common, target: stripKind(request.target) });
 
   let usedPath: ResolvedAcquisitionSelectionPath;

@@ -12,6 +12,10 @@ describe("interpretTool — real agent tool names → cleaned 中文 + phase", (
       activity: "正在搜索资源:斗破苍穹 4K",
       phase: "search",
     });
+    expect(interpretTool("searchResources", { keyword: "庆余年 4-10集", gapResearch: true })).toEqual({
+      activity: "正在补搜缺集:庆余年 4-10集",
+      phase: "search",
+    });
   });
 
   it("transfer / transferUntilLanded → transfer phase", () => {
@@ -76,6 +80,14 @@ describe("interpretTool — real agent tool names → cleaned 中文 + phase", (
     });
     expect(interpretTool("rulesSelectCandidates", { shareCount: 3, reason: "规则选片：用 3 个分享补齐 S01E01–E06" })).toEqual({
       activity: "用 3 个分享补齐缺集…",
+      phase: "pick",
+    });
+    expect(interpretTool("rulesSelectCandidates", { refill: true, shareCount: 2, reason: "转失败换备选" })).toEqual({
+      activity: "转失败换备选…",
+      phase: "pick",
+    });
+    expect(interpretTool("planEpisodeCover", {})).toEqual({
+      activity: "正在规划最少分享补齐…",
       phase: "pick",
     });
   });

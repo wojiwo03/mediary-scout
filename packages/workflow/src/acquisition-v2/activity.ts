@@ -38,6 +38,9 @@ export function interpretTool(toolName: string, args: Record<string, unknown> = 
       if (args.fallback === "agent") {
         return { activity: "规则拿不准，改走智能选片…", phase: "pick" };
       }
+      if (args.refill === true) {
+        return { activity: "转失败换备选…", phase: "pick" };
+      }
       {
         const shareCount = typeof args.shareCount === "number" ? args.shareCount : 0;
         if (shareCount > 1) {
@@ -45,6 +48,17 @@ export function interpretTool(toolName: string, args: Record<string, unknown> = 
         }
       }
       return { activity: "正在按规则筛选候选…", phase: "pick" };
+    case "planEpisodeCover":
+      if (args.refill === true) {
+        return { activity: "转失败换备选…", phase: "pick" };
+      }
+      {
+        const shareCount = typeof args.shareCount === "number" ? args.shareCount : 0;
+        if (shareCount > 1) {
+          return { activity: `用 ${shareCount} 个分享补齐缺集…`, phase: "pick" };
+        }
+      }
+      return { activity: "正在规划最少分享补齐…", phase: "pick" };
     case "viewResourceSnapshot":
       // The pre-warmed 活期文档 review: the agent is browsing the system's
       // already-searched raw candidates (free, read-only) before deciding. It is
@@ -53,6 +67,9 @@ export function interpretTool(toolName: string, args: Record<string, unknown> = 
       return { activity: "正在浏览候选资源…", phase: "search" };
     case "searchResources": {
       const keyword = String(args.keyword ?? "").trim();
+      if (args.gapResearch === true) {
+        return { activity: keyword ? `正在补搜缺集:${keyword}` : "正在补搜缺集…", phase: "search" };
+      }
       return { activity: keyword ? `正在搜索资源:${keyword}` : "正在搜索资源…", phase: "search" };
     }
     case "transferCandidate":
