@@ -114,6 +114,27 @@ describe("queueTrackingInitialization — quality upgrade of an already-tracked 
     expect(snap?.workflowRun.status).toBe("queued");
     expect(snap?.workflowRun.auditEvents.some((event) => event.type === "quality_upgrade")).toBe(true);
   });
+
+  it("persists a per-run quality_floor audit override without changing the global default", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture();
+
+    const queued = await queueTrackingInitialization({
+      title,
+      season,
+      keyword: "Show",
+      repository,
+      createWorkflowRunId: () => "run_floor",
+      now: fixedNow,
+      qualityFloor: "1080p",
+    });
+    expect(queued.status).toBe("queued");
+    const snap = await repository.getWorkflowRunSnapshot("run_floor");
+    expect(snap?.workflowRun.auditEvents.some((event) => event.type === "quality_floor")).toBe(true);
+    expect(snap?.workflowRun.auditEvents.find((event) => event.type === "quality_floor")?.data).toEqual({
+      resolutionFloor: "1080p",
+    });
+  });
 });
 
 function trackedFixture(): { title: MediaTitle; season: TrackedSeason } {

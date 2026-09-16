@@ -23,7 +23,8 @@ import {
   type TitleHubView,
 } from "../../../lib/title-hub";
 import { seasonBadgeState } from "../../../lib/title-aggregate";
-import { resolveGlobalWorkspace } from "../../../lib/workflow-runtime";
+import { resolveGlobalWorkspace, getAccountScopedSettings, getCurrentAccountId, getQualityFloor } from "../../../lib/workflow-runtime";
+import type { QualityFloorBand } from "@media-track/workflow/quality-ladder";
 
 const aggregateBadge = {
   untracked: null,
@@ -114,6 +115,7 @@ async function ShowContent({
   const view = Number.isInteger(tmdbId)
     ? await getDetailView(tmdbId, workspace.connectedStorageId ?? undefined, typeHint)
     : null;
+  const globalQualityFloor = await getQualityFloor(getAccountScopedSettings(await getCurrentAccountId()));
 
   const backLabel = from === "search" ? "搜索" : from === "library" ? "媒体库" : "返回";
   const backHref =
@@ -133,6 +135,7 @@ async function ShowContent({
             basePath={workspace.basePath}
             backLabel={backLabel}
             backHref={backHref}
+            globalQualityFloor={globalQualityFloor}
           />
         ) : (
           <TvHub
@@ -141,6 +144,7 @@ async function ShowContent({
             basePath={workspace.basePath}
             backLabel={backLabel}
             backHref={backHref}
+            globalQualityFloor={globalQualityFloor}
           />
         )
       ) : (
@@ -161,12 +165,14 @@ function TvHub({
   basePath,
   backLabel,
   backHref,
+  globalQualityFloor,
 }: {
   view: TitleHubView;
   storageId: string | undefined;
   basePath: string;
   backLabel: string;
   backHref: string;
+  globalQualityFloor?: QualityFloorBand | undefined;
 }) {
   const badge = aggregateBadge[view.aggregate];
   return (
@@ -223,6 +229,7 @@ function TvHub({
                 tmdbId={view.tmdbId}
                 storageId={storageId}
                 titleAcquiring={view.acquiring}
+                globalQualityFloor={globalQualityFloor}
                 label={
                   view.aggregate === "untracked"
                     ? "获取所有季"
@@ -259,6 +266,7 @@ function TvHub({
               storageId={storageId}
               basePath={basePath}
               acquiring={view.acquiring}
+              globalQualityFloor={globalQualityFloor}
               demoEntry={{
                 tmdbId: view.tmdbId,
                 title: view.title,
@@ -290,12 +298,14 @@ function MovieHub({
   basePath,
   backLabel,
   backHref,
+  globalQualityFloor,
 }: {
   view: MovieHubView;
   storageId: string | undefined;
   basePath: string;
   backLabel: string;
   backHref: string;
+  globalQualityFloor?: QualityFloorBand | undefined;
 }) {
   const meta = movieStateMeta[view.state];
   const activityHref = storageId ? `/activity?w=${encodeURIComponent(storageId)}` : "/activity";
@@ -358,6 +368,7 @@ function MovieHub({
                     actionState={unreleased ? "can_reserve" : "can_request"}
                     label={unreleased ? "预定" : "获取"}
                     storageId={storageId}
+                    globalQualityFloor={globalQualityFloor}
                   />
                 ) : null}
                 {view.state === "acquired" ? (
@@ -440,6 +451,7 @@ function SeasonRow({
   basePath,
   acquiring,
   demoEntry,
+  globalQualityFloor,
 }: {
   season: TitleHubSeason;
   tmdbId: number;
@@ -449,6 +461,7 @@ function SeasonRow({
   basePath: string;
   acquiring: boolean;
   demoEntry?: DemoAcquisitionEntry | undefined;
+  globalQualityFloor?: QualityFloorBand | undefined;
 }) {
   const total = season.totalEpisodes;
   const aired = Math.min(season.latestAiredEpisode, total);
@@ -492,6 +505,7 @@ function SeasonRow({
           seasonNumber={season.seasonNumber}
           storageId={storageId}
           titleAcquiring={acquiring}
+          globalQualityFloor={globalQualityFloor}
           demoEntry={demoEntry}
         />
       </li>

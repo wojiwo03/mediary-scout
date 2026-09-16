@@ -49,6 +49,7 @@ import {
   getAcquisitionSelectionMode,
   PREFERRED_LANGUAGE_SETTING_KEY,
   QUALITY_PREFERENCE_SETTING_KEY,
+  QUALITY_FLOOR_SETTING_KEY,
   CUSTOM_IDENTIFIER_WORDS_SETTING_KEY,
   LLM_BASE_URL_SETTING_KEY,
   LLM_MODEL_ID_SETTING_KEY,
@@ -319,6 +320,7 @@ async function QualityPreferenceSection() {
   await connection();
   const repository = getAccountScopedSettings(await getCurrentAccountId());
   const initial = (await repository.getSetting(QUALITY_PREFERENCE_SETTING_KEY)) ?? "any";
+  const qualityFloor = (await repository.getSetting(QUALITY_FLOOR_SETTING_KEY)) ?? "any";
   const preferHdr = await getPreferHdrOverResolution(repository);
   const considerSource = await getConsiderSourceClass(repository);
   const upgradeOnReacquire = await getUpgradeOnReacquire(repository);
@@ -333,12 +335,13 @@ async function QualityPreferenceSection() {
             偏好画质
           </h2>
           <p className="panel-note">
-            优先获取的画质档位（覆盖优先，找不到不留缺）。比较阶梯只在召回后读候选标题，搜索仍用裸标题。
+            偏好是软排序；「低于此画质不下载」是硬性下限。比较阶梯只在召回后读候选标题，搜索仍用裸标题。
           </p>
         </div>
       </div>
       <QualityPreferenceForm
         initial={initial}
+        qualityFloor={qualityFloor}
         preferHdrOverResolution={preferHdr}
         considerSourceClass={considerSource}
         upgradeOnReacquire={upgradeOnReacquire}

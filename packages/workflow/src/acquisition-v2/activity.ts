@@ -41,6 +41,9 @@ export function interpretTool(toolName: string, args: Record<string, unknown> = 
       if (args.refill === true) {
         return { activity: "转失败换备选…", phase: "pick" };
       }
+      if (String(args.reason ?? "").includes("画质下限")) {
+        return { activity: "候选低于画质下限，不下载…", phase: "pick" };
+      }
       {
         const shareCount = typeof args.shareCount === "number" ? args.shareCount : 0;
         if (shareCount > 1) {
@@ -78,6 +81,9 @@ export function interpretTool(toolName: string, args: Record<string, unknown> = 
     }
     case "transferCandidate":
     case "transferUntilLanded":
+      if (String(args.error ?? args.refused ?? "").includes("BELOW_QUALITY_FLOOR") || String(args.reason ?? "").includes("画质下限")) {
+        return { activity: "低于画质下限，跳过转存…", phase: "transfer" };
+      }
       return { activity: "正在转存到网盘…", phase: "transfer" };
     case "inspectStaging":
       return { activity: "正在核对落盘的视频文件…", phase: "verify" };

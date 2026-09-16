@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { Check, ChevronDown, LoaderCircle } from "lucide-react";
 import {
   QUALITY_UPGRADE_MODE_COPY,
+  parseQualityFloorSetting,
   qualityLadderPolicyFromFlags,
+  type QualityFloorSetting,
   type ResolutionPreference,
 } from "@media-track/workflow/quality-ladder";
 import { saveQualityPreferenceAction } from "../app/actions";
@@ -16,6 +18,13 @@ import {
 import { runAction } from "../lib/run-action";
 import { QualityLadderVisual } from "./quality-ladder-visual";
 
+const FLOORS: Array<{ key: QualityFloorSetting; label: string; hint: string }> = [
+  { key: "any", label: "不限", hint: "没有硬性下限，找不到目标画质时仍可取更低档" },
+  { key: "720p", label: "720p", hint: "低于 720p / SD 不下载，留给巡检" },
+  { key: "1080p", label: "1080p", hint: "低于 1080p 不下载，哪怕是唯一候选也不凑合" },
+  { key: "4k", label: "4K", hint: "低于 4K / 2160p 不下载，留给巡检" },
+];
+
 const QUALITIES = [
   { key: "any", label: "不限", hint: "有更高就挑更高，不强制 4K 或 1080p" },
   { key: "high", label: "高画质", hint: "优先约 4K / 2160p 的可播放视频" },
@@ -24,12 +33,14 @@ const QUALITIES = [
 
 export function QualityPreferenceForm({
   initial,
+  qualityFloor,
   preferHdrOverResolution,
   considerSourceClass,
   upgradeOnReacquire,
   patrolQualityUpgrade,
 }: {
   initial: string;
+  qualityFloor: string;
   preferHdrOverResolution: boolean;
   considerSourceClass: boolean;
   upgradeOnReacquire: boolean;
@@ -38,6 +49,9 @@ export function QualityPreferenceForm({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [value, setValue] = useState(initial || "any");
+  const [floor, setFloor] = useState<QualityFloorSetting>(
+    qualityFloor === "4k" || qualityFloor === "1080p" || qualityFloor === "720p" ? qualityFloor : "any",
+  );
   const [hdrFirst, setHdrFirst] = useState(preferHdrOverResolution);
   const [sourceOn, setSourceOn] = useState(considerSourceClass);
   const [upgrade, setUpgrade] = useState(upgradeOnReacquire);
@@ -61,15 +75,18 @@ export function QualityPreferenceForm({
   }, []);
 
   const policy = useMemo(
-    () =>
-      qualityLadderPolicyFromFlags({
+    () => {
+      const floorBand = parseQualityFloorSetting(floor);
+      return qualityLadderPolicyFromFlags({
         ...(value === "high" || value === "medium"
           ? { resolutionPreference: value as ResolutionPreference }
           : {}),
         ...(hdrFirst ? { preferHdrOverResolution: true } : {}),
         ...(sourceOn ? {} : { considerSourceClass: false }),
-      }),
-    [value, hdrFirst, sourceOn],
+        ...(floorBand === undefined ? {} : { resolutionFloor: floorBand }),
+      });
+    },
+    [value, hdrFirst, sourceOn, floor],
   );
 
   const handleSave = () => {
@@ -81,6 +98,7 @@ export function QualityPreferenceForm({
         () =>
           saveQualityPreferenceAction({
             quality: value,
+            qualityFloor: floor,
             preferHdrOverResolution: hdrFirst,
             considerSourceClass: sourceOn,
             upgradeOnReacquire: upgrade,
@@ -105,7 +123,7 @@ export function QualityPreferenceForm({
   return (
     <div className="push-form">
       <p className="panel-note" style={{ marginBottom: 12 }}>
-        下面的顺序只用于<strong>召回之后</strong>读候选标题选片。搜索仍用裸片名；找不到目标画质时覆盖优先，不会留缺。
+        下面的顺序只用于<strong>召回之后</strong>读候选标题选片。搜索仍用裸片名。偏好是软排序；「低于此画质不下载」才是硬性下限——低于下限的候选一律不转存，留给巡检。
       </p>
 
       <p className="quality-section-label">分辨率档位</p>
@@ -121,6 +139,26 @@ export function QualityPreferenceForm({
           >
             <strong>{quality.label}</strong>
             <span>{quality.hint}</span>
+          </button>
+        ))}
+      </div>
+
+      <p className="quality-section-label">低于此画质不下载</p>
+      <p className="panel-note" style={{ marginBottom: 8 }}>
+        硬性下限，不是排序。低于此档的候选一律不转存，哪怕是唯一资源也留给巡检，而不是降档凑合。未标注分辨率的标题不因此拒绝。
+      </p>
+      <div className="quality-choice-grid" role="radiogroup" aria-label="画质下限">
+        {FLOORS.map((option) => (
+          <button
+            key={option.key}
+            type="button"
+            role="radio"
+            aria-checked={floor === option.key}
+            className={`quality-choice${floor === option.key ? " is-active" : ""}`}
+            onClick={() => setFloor(option.key)}
+          >
+            <strong>{option.label}</strong>
+            <span>{option.hint}</span>
           </button>
         ))}
       </div>

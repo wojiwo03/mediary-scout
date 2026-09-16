@@ -27,6 +27,29 @@ export type ResolutionPreference = "high" | "medium";
 export type SourceClass = "remux" | "bluray" | "webdl" | "webrip" | "hdtv" | "cam" | "unknown";
 export type AudioClass = "atmos" | "truehd" | "dtshd" | "unknown";
 
+/**
+ * Hard minimum resolution that may be transferred. Independent of the soft
+ * preference ladder (`resolutionPreference`). `unknown` is not a floor — we
+ * only reject when a title parses to a *known* lower band.
+ */
+export type QualityFloorBand = Exclude<ResolutionBand, "unknown">;
+
+/** Persisted / per-run override, including explicit 不限 (`any`). */
+export const QUALITY_FLOOR_SETTING_VALUES = ["any", "720p", "1080p", "4k"] as const;
+export type QualityFloorSetting = (typeof QUALITY_FLOOR_SETTING_VALUES)[number];
+
+export const QUALITY_FLOOR_LABEL: Record<QualityFloorBand, string> = {
+  "4k": "4K",
+  "1080p": "1080p",
+  "720p": "720p",
+  sd: "SD",
+};
+
+/** Rules-selector / activity reject code. */
+export const BELOW_QUALITY_FLOOR_REASON = "below-quality-floor";
+
+export const QUALITY_FLOOR_AUDIT_TYPE = "quality_floor";
+
 export interface QualityLadderPolicy {
   /** User resolution preference. undefined = 不限 (weak 4K > 1080p > 720p). */
   resolutionPreference?: ResolutionPreference;
@@ -41,6 +64,12 @@ export interface QualityLadderPolicy {
    * are not punished.
    */
   considerSourceClass?: boolean;
+  /**
+   * Hard resolution floor. Candidates that parse *below* this band must not be
+   * transferred — even if they are the only option (leave the gap for patrol).
+   * Unmarked (`unknown`) titles are not rejected. undefined = no floor.
+   */
+  resolutionFloor?: QualityFloorBand;
 }
 
 /**
@@ -51,12 +80,97 @@ export function qualityLadderPolicyFromFlags(input: {
   resolutionPreference?: ResolutionPreference;
   preferHdrOverResolution?: boolean;
   considerSourceClass?: boolean;
+  resolutionFloor?: QualityFloorBand;
 }): QualityLadderPolicy {
   return {
     ...(input.resolutionPreference === undefined ? {} : { resolutionPreference: input.resolutionPreference }),
     ...(input.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
     ...(input.considerSourceClass === false ? { considerSourceClass: false } : {}),
+    ...(input.resolutionFloor === undefined ? {} : { resolutionFloor: input.resolutionFloor }),
   };
+}
+
+export function isQualityFloorSetting(value: string | null | undefined): value is QualityFloorSetting {
+  const v = value?.trim().toLowerCase();
+  return v === "any" || v === "720p" || v === "1080p" || v === "4k";
+}
+
+export function isQualityFloorBand(value: string | null | undefined): value is QualityFloorBand {
+  const v = value?.trim().toLowerCase();
+  return v === "4k" || v === "1080p" || v === "720p" || v === "sd";
+}
+
+/** Global setting: `any` / unset / garbage → no floor. `sd` is not a persistable floor. */
+export function parseQualityFloorSetting(value: string | null | undefined): QualityFloorBand | undefined {
+  const v = value?.trim().toLowerCase();
+  return v === "720p" || v === "1080p" || v === "4k" ? v : undefined;
+}
+
+/**
+ * Per-run override wins: `any` disables the global floor for this run;
+ * a band replaces it; omitted keeps the global default.
+ */
+export function resolveQualityFloor(input: {
+  global?: QualityFloorBand | undefined;
+  override?: QualityFloorSetting | undefined;
+}): QualityFloorBand | undefined {
+  if (input.override === "any") {
+    return undefined;
+  }
+  if (input.override !== undefined) {
+    return parseQualityFloorSetting(input.override);
+  }
+  return input.global;
+}
+
+export function qualityFloorSpread(floor: QualityFloorBand | undefined): {
+  qualityFloor?: QualityFloorBand;
+} {
+  return floor === undefined ? {} : { qualityFloor: floor };
+}
+
+export function qualityFloorOverrideSpread(override: QualityFloorSetting | undefined): {
+  qualityFloor?: QualityFloorSetting;
+} {
+  return override === undefined ? {} : { qualityFloor: override };
+}
+
+export function formatQualityFloorLabel(floor: QualityFloorBand | undefined): string {
+  return floor === undefined ? "不限" : QUALITY_FLOOR_LABEL[floor];
+}
+
+export function qualityFloorAuditEvents(override: QualityFloorSetting | undefined): Array<{
+  type: string;
+  message: string;
+  data: Record<string, unknown>;
+}> {
+  if (override === undefined) {
+    return [];
+  }
+  const label = override === "any" ? "不限（本次覆盖全局）" : formatQualityFloorLabel(override);
+  return [
+    {
+      type: QUALITY_FLOOR_AUDIT_TYPE,
+      message: `本次画质下限：${label}（低于此档不下载）`,
+      data: { resolutionFloor: override },
+    },
+  ];
+}
+
+export function qualityFloorOverrideFromAudit(
+  events: ReadonlyArray<{ type: string; data?: Record<string, unknown> }>,
+): QualityFloorSetting | undefined {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i];
+    if (event?.type !== QUALITY_FLOOR_AUDIT_TYPE) {
+      continue;
+    }
+    const raw = event.data?.["resolutionFloor"];
+    if (typeof raw === "string" && isQualityFloorSetting(raw)) {
+      return raw;
+    }
+  }
+  return undefined;
 }
 
 export interface ParsedReleaseQuality {
@@ -118,6 +232,51 @@ const AUDIO_RANK: Record<AudioClass, number> = {
  */
 export const QUALITY_RESOLUTION_BAND = 1000;
 const RES_WEIGHT = QUALITY_RESOLUTION_BAND;
+
+/**
+ * Absolute resolution rank for the hard floor (never the medium-preference
+ * inversion where 4K scores 0). 4K always meets a 1080p floor.
+ */
+function floorRank(band: ResolutionBand): number {
+  return RESOLUTION_RANK_HIGH[band];
+}
+
+/**
+ * Whether a parsed (or raw-title) release may be transferred under `floor`.
+ * No floor → always true. Unmarked resolution fail-opens (cannot prove below).
+ */
+export function meetsQualityFloor(
+  parsed: ParsedReleaseQuality | ResolutionBand,
+  floor: QualityFloorBand | undefined,
+): boolean {
+  if (floor === undefined) {
+    return true;
+  }
+  const resolution = typeof parsed === "string" ? parsed : parsed.resolution;
+  if (resolution === "unknown") {
+    return true;
+  }
+  return floorRank(resolution) >= floorRank(floor);
+}
+
+export function isBelowQualityFloor(
+  titleOrParsed: string | ParsedReleaseQuality,
+  floor: QualityFloorBand | undefined,
+): boolean {
+  if (floor === undefined) {
+    return false;
+  }
+  const parsed = typeof titleOrParsed === "string" ? parseReleaseQuality(titleOrParsed) : titleOrParsed;
+  return !meetsQualityFloor(parsed, floor);
+}
+
+export function belowQualityFloorMessage(floor: QualityFloorBand): string {
+  return `低于画质下限（${formatQualityFloorLabel(floor)}），拒绝转存。留给巡检，不凑合下载。`;
+}
+
+export function sandboxBelowQualityFloorError(floor: QualityFloorBand): string {
+  return `SANDBOX_BELOW_QUALITY_FLOOR: ${belowQualityFloorMessage(floor)}`;
+}
 const HDR_WEIGHT = 100;
 const SOURCE_WEIGHT = 10;
 const AUDIO_WEIGHT = 1;
@@ -314,6 +473,9 @@ export const AUDIO_LADDER_LINES = [
 export const QUALITY_SEARCH_TOKEN_LAW =
   "画质/HDR/片源/音轨词(4K/1080P/DV/DoVi/HDR10+/HDR/杜比视界/蓝光/Remux/WEB-DL/WEBRip/Atmos)只在召回后读标题判,绝不进搜索关键词(系统也会 strip;要从预搜活期文档里选)。";
 
+export const QUALITY_FLOOR_SKILL_LINE =
+  "HARD QUALITY FLOOR: when this run's QUALITY PREFERENCE block names a 硬性画质下限, candidates BELOW that resolution MUST NOT be transferred — even if they are the only covering option. Leave the gap for patrol (reportNoCoverage). The sandbox refuses those transfers (SANDBOX_BELOW_QUALITY_FLOOR). Unmarked resolution is not rejected. This hard floor overrides coverage-first / 凑合下载.";
+
 export const QUALITY_UPGRADE_LINES = [
   "QUALITY UPGRADE(本次已开启替换):已入库的正片/集也可以被更高阶候选替换,不只补缺。",
   "先 inspectTargetDir 读现有文件名,再在活期文档里找【严格更高】的候选(默认分辨率优先,其次 HDR,再次片源/压制,音轨仅同分决胜;同等或更低不要换)。",
@@ -323,6 +485,19 @@ export const QUALITY_UPGRADE_LINES = [
 
 export const PATROL_GAP_ONLY_LINE =
   "定时巡检默认只补缺(缺集 / 未入库);与「定时画质升级」是两项独立任务、共用同一巡检时间。未打开画质升级时,不会因为库里已有更低画质就自动全库升级。";
+
+export function formatQualityFloorGuidance(policy: QualityLadderPolicy = {}): string {
+  const floor = policy.resolutionFloor;
+  if (floor === undefined) {
+    return "";
+  }
+  const label = formatQualityFloorLabel(floor);
+  return (
+    `⛔ 硬性画质下限（压过「覆盖优先」）:低于 ${label} 的候选禁止转存/下载,即使它是唯一候选也不许凑合。` +
+    `找不到达标资源就 reportNoCoverage 留缺给巡检,绝不为凑覆盖降档。` +
+    `标题未标分辨率的不因此拒绝。画质词仍不进搜索关键词。`
+  );
+}
 
 export function formatHdrLadderGuidance(policy: QualityLadderPolicy = {}): string {
   const cross =
@@ -356,6 +531,7 @@ export function composeAcquisitionQualityGuidance(input: {
   qualityUpgrade?: boolean;
 }): string {
   const parts = [
+    formatQualityFloorGuidance(input.policy ?? {}),
     input.resolutionGuidance,
     formatHdrLadderGuidance(input.policy ?? {}),
     input.qualityUpgrade ? formatQualityUpgradeGuidance() : PATROL_GAP_ONLY_LINE,
@@ -468,7 +644,11 @@ export function formatQualityLadderSummary(policy: QualityLadderPolicy = {}): st
   const axes = describeQualityLadder(policy).filter((axis) => axis.enabled);
   const order = axes.map((axis) => axis.title).join(" → ");
   const lines = axes.map((axis) => `${axis.title}（${axis.hint}）：${axis.rungs.map((rung) => rung.label).join(" > ")}`);
-  return `比较顺序：${order}。${lines.join("。")}。覆盖优先；画质词不进搜索关键词。`;
+  const floor =
+    policy.resolutionFloor === undefined
+      ? "无硬性下限"
+      : `硬性下限：低于 ${formatQualityFloorLabel(policy.resolutionFloor)} 不下载（即使是唯一候选也留缺给巡检）`;
+  return `比较顺序：${order}。${lines.join("。")}。${floor}。覆盖优先仅适用于达到下限的候选；画质词不进搜索关键词。`;
 }
 
 export function formatTargetQualityLabel(policy: QualityLadderPolicy = {}): string {
@@ -482,7 +662,11 @@ export function formatTargetQualityLabel(policy: QualityLadderPolicy = {}): stri
     ? "HDR 优先于分辨率"
     : "同分辨率再比杜比视界 > HDR10+ > HDR10";
   const source = sourceParticipates(policy) ? "片源 Remux > 蓝光 > WEB-DL" : "不考虑片源类型";
-  return `${res} · ${hdr} · ${source}`;
+  const floor =
+    policy.resolutionFloor === undefined
+      ? "无硬性下限"
+      : `低于 ${formatQualityFloorLabel(policy.resolutionFloor)} 不下载`;
+  return `${res} · ${hdr} · ${source} · ${floor}`;
 }
 
 const RES_LABEL: Record<ResolutionBand, string> = {

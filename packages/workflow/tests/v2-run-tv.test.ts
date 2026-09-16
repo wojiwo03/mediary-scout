@@ -200,6 +200,43 @@ describe("runTvAcquisitionV2 — single TV entry over the V2 engine", () => {
     expect(none.system).toContain("QUALITY PREFERENCE");
   });
 
+  it("threads resolutionFloor into the agent prompt as a hard 下限", async () => {
+    function capturingModel(sink: { system: string }) {
+      return new MockLanguageModelV3({
+        doGenerate: async (options: unknown) => {
+          const prompt = (options as { prompt?: unknown }).prompt;
+          const system = (Array.isArray(prompt) ? prompt : []).find(
+            (m: { role?: string }) => m.role === "system",
+          );
+          sink.system = JSON.stringify(system ?? prompt);
+          return {
+            content: [{ type: "tool-call" as const, toolCallId: "c1", toolName: "reportNoCoverage", input: JSON.stringify({ reason: "x" }) }],
+            finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const },
+            usage: USAGE,
+            warnings: [],
+          };
+        },
+      });
+    }
+    const usTvTitle = { ...title, type: "tv", originCountries: ["US"] } as unknown as MediaTitle;
+    const sink = { system: "" };
+    await runTvAcquisitionV2({
+      title: usTvTitle,
+      mode: "type2",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K" }],
+      categoryParentId: "tv_root",
+      resourceProvider: emptyProvider(),
+      storage: new FakeStorageExecutor(),
+      model: capturingModel(sink),
+      qualityFloor: "1080p",
+      workflowRunId: "run-tv-floor",
+      now: () => "2026-06-15T00:00:00.000Z",
+    });
+    expect(sink.system).toContain("硬性画质下限");
+    expect(sink.system).toContain("1080p");
+    expect(sink.system).toMatch(/禁止转存|不下载/);
+  });
+
   it("multi-season series → builds a season intent per season, distinct verify-or-created dirs", async () => {
     const storage = new FakeStorageExecutor();
     const result = await runTvAcquisitionV2({

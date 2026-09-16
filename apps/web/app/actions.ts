@@ -3,6 +3,15 @@
 import { revalidatePath } from "next/cache";
 import { queueCandidateSeries, queueCandidateTracking, reserveCandidate } from "../lib/workflow-runtime";
 import { assertNotDemo } from "../lib/demo-mode";
+import type { QualityFloorSetting } from "@media-track/workflow";
+
+function qualityFloorOverride(value: string | undefined): { qualityFloor?: QualityFloorSetting } {
+  const v = value?.trim().toLowerCase();
+  if (v === "any" || v === "720p" || v === "1080p" || v === "4k") {
+    return { qualityFloor: v };
+  }
+  return {};
+}
 
 /**
  * Acquire-time LLM pre-check (issue #52). Returns a not-started result carrying
@@ -171,6 +180,8 @@ export async function requestTrackingAction(input?: {
   currentState?: "can_request" | "already_tracked" | "active_workflow" | "can_reserve" | "reserved";
   /** Tree model: the active workspace drive — acquisition lands HERE, not the primary. */
   storageId?: string;
+  /** Per-run floor override; omit to use the account default. */
+  qualityFloor?: QualityFloorSetting;
 }): Promise<RequestTrackingActionResult> {
   assertNotDemo();
   if (input?.currentState === "already_tracked") {
@@ -215,7 +226,11 @@ export async function requestTrackingAction(input?: {
     if (preflight) {
       return preflight;
     }
-    const request = await queueCandidateTracking(input.candidateId, input.storageId);
+    const request = await queueCandidateTracking(
+      input.candidateId,
+      input.storageId,
+      qualityFloorOverride(input.qualityFloor),
+    );
     if (request.status === "already_tracked") {
       return {
         status: "already_tracked",
@@ -254,13 +269,18 @@ export async function requestSeriesAction(input: {
   // primary) so a non-primary acquisition can't silently mis-route. See note on
   // requestSeasonAction.
   storageId: string | undefined;
+  qualityFloor?: QualityFloorSetting;
 }): Promise<RequestTrackingActionResult> {
   assertNotDemo();
   const preflight = await acquireLlmNotConfigured();
   if (preflight) {
     return preflight;
   }
-  const request = await queueCandidateSeries(input.candidateId, input.storageId);
+  const request = await queueCandidateSeries(
+    input.candidateId,
+    input.storageId,
+    qualityFloorOverride(input.qualityFloor),
+  );
   if (request.status === "already_tracked") {
     return { status: "already_tracked", message: "全剧已追踪，后台会继续按缺集状态检查。" };
   }
@@ -319,6 +339,7 @@ export async function requestSeasonAction(input: {
   // non-primary (e.g. quark) acquisition to the primary drive and the run never
   // shows on the workspace the user is looking at.
   storageId: string | undefined;
+  qualityFloor?: QualityFloorSetting;
 }): Promise<RequestTrackingActionResult> {
   assertNotDemo();
   const preflight = await acquireLlmNotConfigured();
@@ -326,7 +347,12 @@ export async function requestSeasonAction(input: {
     return preflight;
   }
   const { queueSeasonTracking } = await import("../lib/title-hub");
-  const request = await queueSeasonTracking(input.tmdbId, input.seasonNumber, input.storageId);
+  const request = await queueSeasonTracking(
+    input.tmdbId,
+    input.seasonNumber,
+    input.storageId,
+    qualityFloorOverride(input.qualityFloor),
+  );
   if (request.status === "already_tracked") {
     return { status: "already_tracked", message: "本季已追踪。" };
   }
@@ -347,6 +373,7 @@ export async function requestRemainingAction(input: {
   // primary) so a non-primary acquisition can't silently mis-route. See note on
   // requestSeasonAction.
   storageId: string | undefined;
+  qualityFloor?: QualityFloorSetting;
 }): Promise<RequestTrackingActionResult> {
   assertNotDemo();
   const preflight = await acquireLlmNotConfigured();
@@ -354,7 +381,7 @@ export async function requestRemainingAction(input: {
     return preflight;
   }
   const { queueRemainingSeasons } = await import("../lib/title-hub");
-  const request = await queueRemainingSeasons(input.tmdbId, input.storageId);
+  const request = await queueRemainingSeasons(input.tmdbId, input.storageId, qualityFloorOverride(input.qualityFloor));
   if (request.status === "already_tracked") {
     return { status: "already_tracked", message: "所有季都已在追踪。" };
   }
@@ -513,6 +540,7 @@ export async function saveQualityPreferenceAction(input: {
   considerSourceClass: boolean;
   upgradeOnReacquire: boolean;
   patrolQualityUpgrade: boolean;
+  qualityFloor: string;
 }): Promise<PushSettingsActionResult> {
   assertNotDemo();
   try {
@@ -520,6 +548,7 @@ export async function saveQualityPreferenceAction(input: {
       getWorkflowRepository,
       getCurrentAccountId,
       QUALITY_PREFERENCE_SETTING_KEY,
+      QUALITY_FLOOR_SETTING_KEY,
       PREFER_HDR_OVER_RESOLUTION_SETTING_KEY,
       CONSIDER_SOURCE_CLASS_SETTING_KEY,
       UPGRADE_ON_REACQUIRE_SETTING_KEY,
@@ -528,6 +557,12 @@ export async function saveQualityPreferenceAction(input: {
     const repository = getWorkflowRepository();
     const accountId = await getCurrentAccountId();
     await repository.setAccountSetting(accountId, QUALITY_PREFERENCE_SETTING_KEY, input.quality.trim());
+    const floor = input.qualityFloor.trim().toLowerCase();
+    await repository.setAccountSetting(
+      accountId,
+      QUALITY_FLOOR_SETTING_KEY,
+      floor === "4k" || floor === "1080p" || floor === "720p" ? floor : "any",
+    );
     await repository.setAccountSetting(
       accountId,
       PREFER_HDR_OVER_RESOLUTION_SETTING_KEY,

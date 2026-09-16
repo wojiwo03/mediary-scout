@@ -5,12 +5,14 @@ import {
   isMovieUnreleased,
   prepareSeriesTarget,
   qualityLadderPolicyFromFlags,
+  qualityFloorOverrideSpread,
   queueSeriesInitialization,
   queueTrackingInitialization,
   summarizeLandedQuality,
   type EpisodeStatusCell,
   type MediaTitle,
   type PreparedSeriesTarget,
+  type QualityFloorSetting,
   type QualityLadderPolicy,
   type UpgradeOpportunityView,
 } from "@media-track/workflow";
@@ -31,6 +33,7 @@ import {
   getConsiderSourceClass,
   getCurrentAccountId,
   getPreferHdrOverResolution,
+  getQualityFloor,
   getQualityPreference,
   getTmdbAccesses,
   getWorkflowRepository,
@@ -179,15 +182,17 @@ async function seriesTargetFor(tmdbId: number): Promise<PreparedSeriesTarget | n
 
 async function loadQualityPolicy(): Promise<QualityLadderPolicy> {
   const settings = getAccountScopedSettings(await getCurrentAccountId());
-  const [quality, preferHdr, considerSource] = await Promise.all([
+  const [quality, preferHdr, considerSource, floor] = await Promise.all([
     getQualityPreference(settings),
     getPreferHdrOverResolution(settings),
     getConsiderSourceClass(settings),
+    getQualityFloor(settings),
   ]);
   return qualityLadderPolicyFromFlags({
     ...(quality === undefined ? {} : { resolutionPreference: quality }),
     ...(preferHdr ? { preferHdrOverResolution: true } : {}),
     ...(considerSource ? {} : { considerSourceClass: false }),
+    ...(floor === undefined ? {} : { resolutionFloor: floor }),
   });
 }
 
@@ -392,9 +397,14 @@ export async function queueSeasonTracking(
   tmdbId: number,
   seasonNumber: number,
   storageId?: string,
+  options?: { qualityFloor?: QualityFloorSetting },
 ): Promise<CandidateTrackingRequestResult> {
   const scope = await getActiveWorkspaceScope(storageId);
-  return queueCandidateTracking(`tmdb_tv_${tmdbId}_s${seasonNumber}`, scope.connectedStorageId);
+  return queueCandidateTracking(
+    `tmdb_tv_${tmdbId}_s${seasonNumber}`,
+    scope.connectedStorageId,
+    qualityFloorOverrideSpread(options?.qualityFloor),
+  );
 }
 
 /**
@@ -406,6 +416,7 @@ export async function queueSeasonTracking(
 export async function queueRemainingSeasons(
   tmdbId: number,
   storageId?: string,
+  options?: { qualityFloor?: QualityFloorSetting },
 ): Promise<CandidateTrackingRequestResult> {
   const repository = getWorkflowRepository();
   const scope = await getActiveWorkspaceScope(storageId);
@@ -436,6 +447,7 @@ export async function queueRemainingSeasons(
     repository,
     accountId: scope.accountId,
     connectedStorageId: scope.connectedStorageId,
+    ...qualityFloorOverrideSpread(options?.qualityFloor),
   });
   return {
     status: request.status === "queued" ? "queued" : request.status,

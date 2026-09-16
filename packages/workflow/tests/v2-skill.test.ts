@@ -132,6 +132,9 @@ describe("prompt/skill quality ladder alignment (no drift)", () => {
     expect(tv).toContain(QUALITY_UPGRADE_LINES[0]);
     expect(movie).toContain(QUALITY_UPGRADE_LINES[0]);
     expect(movie).toMatch(/Dolby Vision|HDR 阶梯|DV/);
+    const { QUALITY_FLOOR_SKILL_LINE } = await import("../src/acquisition-v2/quality-ladder.js");
+    expect(tv).toContain(QUALITY_FLOOR_SKILL_LINE);
+    expect(movie).toContain(QUALITY_FLOOR_SKILL_LINE);
   });
 
   it("DEDUP keep-larger yields to the ladder only on QUALITY UPGRADE runs", () => {

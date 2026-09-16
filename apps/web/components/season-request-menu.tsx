@@ -11,6 +11,8 @@ import {
 import { runAction } from "../lib/run-action";
 import { AcquireResultNotice, isLockedResult } from "./request-state";
 import { AcquireProgressBadge } from "./acquire-progress-badge";
+import { QualityFloorPicker, qualityFloorActionValue, type QualityFloorChoice } from "./quality-floor-picker";
+import type { QualityFloorBand } from "@media-track/workflow/quality-ladder";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { DemoAcquirePlayback } from "./demo-acquire-playback";
 import type { DemoAcquisitionEntry } from "../lib/demo-session";
@@ -30,6 +32,7 @@ export function SeasonRequestMenu({
   allLabel = "获取所有季",
   storageId,
   demoEntry,
+  globalQualityFloor,
 }: {
   tmdbId: number;
   /** Seasons still available to request (untracked only). */
@@ -45,11 +48,13 @@ export function SeasonRequestMenu({
   storageId: string | undefined;
   /** Demo only: recorded to the session library when the scripted playback ends. */
   demoEntry?: DemoAcquisitionEntry | undefined;
+  globalQualityFloor?: QualityFloorBand | undefined;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<number | "all">("all");
+  const [floorChoice, setFloorChoice] = useState<QualityFloorChoice>("default");
   // The scope ACTUALLY requested (set at submit). The single-season path requests
   // `onlySeason` while `selected` stays "all", so the locked badge must read this,
   // not `selected`, to match the right season's run.
@@ -99,11 +104,12 @@ export function SeasonRequestMenu({
       // setOpen(false) 必须先关菜单(状态机);失败也要关,否则菜单卡住。
       setOpen(false);
       // 必须 catch(见 runAction 注释)。失败走 onError 显示固定文案。
+      const floor = qualityFloorActionValue(floorChoice);
       const r = await runAction(
         () =>
           selected === "all"
-            ? requestRemainingAction({ tmdbId, storageId })
-            : requestSeasonAction({ tmdbId, seasonNumber: selected, storageId }),
+            ? requestRemainingAction({ tmdbId, storageId, ...(floor ? { qualityFloor: floor } : {}) })
+            : requestSeasonAction({ tmdbId, seasonNumber: selected, storageId, ...(floor ? { qualityFloor: floor } : {}) }),
         (msg) => setResult({ status: "unsupported", message: msg }),
       );
       if (!r.ok) return;
@@ -122,6 +128,7 @@ export function SeasonRequestMenu({
     const isRemainingOfMany = totalSeasonCount > 1;
     return (
       <>
+        <div className="acquire-with-floor">
         <button
           className="primary-button"
           type="button"
@@ -135,8 +142,14 @@ export function SeasonRequestMenu({
             startTransition(async () => {
               // 与多季路径保持一致:必须 catch,失败也 refresh 清锁
               // (Copilot round 2 抓到的漏网调用点)。
+              const floor = qualityFloorActionValue(floorChoice);
               const r = await runAction(
-                () => requestSeasonAction({ tmdbId, seasonNumber: onlySeason, storageId }),
+                () => requestSeasonAction({
+                  tmdbId,
+                  seasonNumber: onlySeason,
+                  storageId,
+                  ...(floor ? { qualityFloor: floor } : {}),
+                }),
                 (msg) => {
                   setResult({ status: "unsupported", message: msg });
                   router.refresh();
@@ -151,12 +164,20 @@ export function SeasonRequestMenu({
           {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <Plus size={14} aria-hidden />}
           {isRemainingOfMany ? `获取第 ${onlySeason} 季` : "获取"}
         </button>
+        <QualityFloorPicker
+          globalFloor={globalQualityFloor}
+          value={floorChoice}
+          onChange={setFloorChoice}
+          disabled={isPending}
+        />
+        </div>
         <AcquireResultNotice result={result} />
       </>
     );
   }
 
   return (
+    <div className="acquire-with-floor">
     <div className="season-menu">
       <button className="primary-button" type="button" disabled={isPending} onClick={submit}>
         {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <Plus size={14} aria-hidden />}
@@ -211,6 +232,13 @@ export function SeasonRequestMenu({
         </ul>
       ) : null}
       <AcquireResultNotice result={result} />
+    </div>
+    <QualityFloorPicker
+      globalFloor={globalQualityFloor}
+      value={floorChoice}
+      onChange={setFloorChoice}
+      disabled={isPending}
+    />
     </div>
   );
 }

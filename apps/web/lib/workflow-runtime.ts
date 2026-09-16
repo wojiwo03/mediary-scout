@@ -86,6 +86,11 @@ import {
   resolveAcquisitionSelectionPath,
   type AcquisitionSelectionMode,
   type AcquisitionSelectionPath,
+  parseQualityFloorSetting,
+  qualityFloorSpread,
+  qualityFloorOverrideSpread,
+  type QualityFloorBand,
+  type QualityFloorSetting,
   parseIdentifierWordLines,
   customIdentifierWordsSpread,
 } from "@media-track/workflow";
@@ -775,7 +780,7 @@ export async function getWorkflowStatusView(
 export async function queueCandidateTracking(
   candidateId: string,
   connectedStorageId?: string | null,
-  options?: { qualityUpgrade?: boolean },
+  options?: { qualityUpgrade?: boolean; qualityFloor?: QualityFloorSetting },
 ): Promise<CandidateTrackingRequestResult> {
   let accountId: string;
   try {
@@ -797,6 +802,7 @@ export async function queueCandidateTracking(
   const qualityUpgrade =
     options?.qualityUpgrade === true || (await getUpgradeOnReacquire(settings));
   const upgrade = qualityUpgrade ? { qualityUpgrade: true as const } : {};
+  const floor = qualityFloorOverrideSpread(options?.qualityFloor);
 
   const movieTmdbId = parseMovieCandidateId(candidateId);
   if (movieTmdbId !== null) {
@@ -811,6 +817,7 @@ export async function queueCandidateTracking(
       accountId,
       connectedStorageId: workspace.id,
       ...upgrade,
+      ...floor,
     });
     return {
       status: request.status === "queued" ? "queued" : request.status,
@@ -835,6 +842,7 @@ export async function queueCandidateTracking(
     accountId,
     connectedStorageId: workspace.id,
     ...upgrade,
+    ...floor,
   });
   const status = request.status === "completed" ? "queued" : request.status;
 
@@ -905,7 +913,7 @@ function buildAccountContextResolver(): ResolveAccountWorkerContext {
     // specific drive it was queued onto.
     const scoped = getAccountScopedSettings(accountId);
     const parents = await getWorkerStorageParents(accountId, connectedStorageId);
-    const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade, acquisitionSelectionPath, customIdentifierWords } =
+    const { model, preferredLanguage, qualityPreference, qualityFloor, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade, acquisitionSelectionPath, customIdentifierWords } =
       await getAgentModel(scoped);
     // The run's drive brand selects its resource sources (quark→PanSou quark-only;
     // 115→PanSou+Prowlarr). null when no drive resolves → default 115 fallback.
@@ -920,6 +928,7 @@ function buildAccountContextResolver(): ResolveAccountWorkerContext {
       ...(assrtToken === undefined ? {} : { assrtToken }),
       ...(preferredLanguage === undefined ? {} : { preferredLanguage }),
       ...(qualityPreference === undefined ? {} : { qualityPreference }),
+      ...qualityFloorSpread(qualityFloor),
       ...(preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
       ...(considerSourceClass === false ? { considerSourceClass: false } : {}),
       ...(patrolQualityUpgrade ? { patrolQualityUpgrade: true } : {}),
@@ -976,10 +985,11 @@ export async function runNextQueuedWorkflow() {
   // The user's language preference is standing context baked into the agent
   // instance (one global preference), so every workflow — movie, series, type2,
   // anime — searches with it. No per-workflow plumbing.
-  const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade, acquisitionSelectionPath, customIdentifierWords } =
+  const { model, preferredLanguage, qualityPreference, qualityFloor, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade, acquisitionSelectionPath, customIdentifierWords } =
     await getAgentModel(getAccountScopedSettings(accountId));
   const language = preferredLanguage === undefined ? {} : { preferredLanguage };
   const quality = qualityPreference === undefined ? {} : { qualityPreference };
+  const floor = qualityFloorSpread(qualityFloor);
   const hdr = preferHdrOverResolution ? { preferHdrOverResolution: true as const } : {};
   const source = considerSourceClass === false ? { considerSourceClass: false as const } : {};
   const patrolUpgrade = patrolQualityUpgrade ? { patrolQualityUpgrade: true as const } : {};
@@ -997,6 +1007,7 @@ export async function runNextQueuedWorkflow() {
     model,
     ...language,
     ...quality,
+    ...floor,
     ...hdr,
     ...source,
     ...patrolUpgrade,
@@ -1018,6 +1029,7 @@ export async function runNextQueuedWorkflow() {
     model,
     ...language,
     ...quality,
+    ...floor,
     ...hdr,
     ...source,
     ...selection,
@@ -1038,6 +1050,7 @@ export async function runNextQueuedWorkflow() {
     model,
     ...language,
     ...quality,
+    ...floor,
     ...hdr,
     ...source,
     ...patrolUpgrade,
@@ -1071,6 +1084,7 @@ export async function getPreferredLanguage(
 export const PREFERRED_LANGUAGE_SETTING_KEY = "preferred_language";
 
 export const QUALITY_PREFERENCE_SETTING_KEY = "quality_preference";
+export const QUALITY_FLOOR_SETTING_KEY = "quality_floor";
 export const PREFER_HDR_OVER_RESOLUTION_SETTING_KEY = "prefer_hdr_over_resolution";
 export const CONSIDER_SOURCE_CLASS_SETTING_KEY = "consider_source_class";
 export const UPGRADE_ON_REACQUIRE_SETTING_KEY = "upgrade_on_reacquire";
@@ -1087,6 +1101,13 @@ export async function getQualityPreference(
 ): Promise<"high" | "medium" | undefined> {
   const value = (await repository.getSetting(QUALITY_PREFERENCE_SETTING_KEY))?.trim();
   return value === "high" || value === "medium" ? value : undefined;
+}
+
+/** Hard resolution floor. undefined = 不限 (previous behavior). */
+export async function getQualityFloor(
+  repository: { getSetting(key: string): Promise<string | null> },
+): Promise<QualityFloorBand | undefined> {
+  return parseQualityFloorSetting(await repository.getSetting(QUALITY_FLOOR_SETTING_KEY));
 }
 
 function parseBoolSetting(value: string | null | undefined): boolean {
@@ -1478,6 +1499,7 @@ async function pushNotificationsSince(
 export async function queueCandidateSeries(
   candidateId: string,
   connectedStorageId?: string | null,
+  options?: { qualityFloor?: QualityFloorSetting },
 ): Promise<CandidateTrackingRequestResult> {
   const parsed = parseTvCandidateId(candidateId);
   if (!parsed) {
@@ -1499,6 +1521,7 @@ export async function queueCandidateSeries(
   if (workspace.frozen) {
     return { status: "unsupported", message: "该网盘已掉线，请重新扫码绑定同一个 115 后再获取。" };
   }
+  const floor = qualityFloorOverrideSpread(options?.qualityFloor);
   if (process.env.MEDIA_TRACK_SEARCH_PROVIDER === "tmdb") {
     const target = await prepareSeriesTarget({
       tmdbId: parsed.tmdbId,
@@ -1512,6 +1535,7 @@ export async function queueCandidateSeries(
       repository: getWorkflowRepository(),
       accountId,
       connectedStorageId: workspace.id,
+      ...floor,
     });
     return {
       status: request.status === "queued" ? "queued" : request.status,
@@ -1544,6 +1568,7 @@ export async function queueCandidateSeries(
     repository: getWorkflowRepository(),
     accountId,
     connectedStorageId: workspace.id,
+    ...floor,
   });
   return {
     status: request.status === "queued" ? "queued" : request.status,
@@ -1668,7 +1693,7 @@ export async function runScheduledType3(options?: {
     await hydratePan115CookieFromDb();
     const sync = tmdbSeasonMetadataSync();
     const accountId = await getCurrentAccountId();
-    const { model, preferredLanguage, qualityPreference, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade, acquisitionSelectionPath, customIdentifierWords } =
+    const { model, preferredLanguage, qualityPreference, qualityFloor, preferHdrOverResolution, considerSourceClass, patrolQualityUpgrade, acquisitionSelectionPath, customIdentifierWords } =
       await getAgentModel(getAccountScopedSettings(accountId));
     const parents = await getWorkerStorageParents(accountId);
     result = await runScheduledType3Monitoring({
@@ -1678,6 +1703,7 @@ export async function runScheduledType3(options?: {
       model,
       ...(preferredLanguage === undefined ? {} : { preferredLanguage }),
       ...(qualityPreference === undefined ? {} : { qualityPreference }),
+      ...qualityFloorSpread(qualityFloor),
       ...(preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
       ...(considerSourceClass === false ? { considerSourceClass: false } : {}),
       ...(patrolQualityUpgrade ? { patrolQualityUpgrade: true } : {}),
@@ -2483,6 +2509,7 @@ async function getAgentModel(repository: {
   model: ReturnType<typeof createAgentModelFromEnv>;
   preferredLanguage: string | undefined;
   qualityPreference: "high" | "medium" | undefined;
+  qualityFloor: QualityFloorBand | undefined;
   preferHdrOverResolution: boolean;
   considerSourceClass: boolean;
   upgradeOnReacquire: boolean;
@@ -2495,6 +2522,7 @@ async function getAgentModel(repository: {
   const adapter = env.MEDIA_TRACK_AGENT_ADAPTER === "vercel-ai" ? "vercel-ai" : "fake";
   const preferredLanguage = await getPreferredLanguage(repository);
   const qualityPreference = await getQualityPreference(repository);
+  const qualityFloor = await getQualityFloor(repository);
   const preferHdrOverResolution = await getPreferHdrOverResolution(repository);
   const considerSourceClass = await getConsiderSourceClass(repository);
   const upgradeOnReacquire = await getUpgradeOnReacquire(repository);
@@ -2523,6 +2551,7 @@ async function getAgentModel(repository: {
       model: createStubAcquisitionModel(),
       preferredLanguage,
       qualityPreference,
+      qualityFloor,
       preferHdrOverResolution,
       considerSourceClass,
       upgradeOnReacquire,
@@ -2543,6 +2572,7 @@ async function getAgentModel(repository: {
     model,
     preferredLanguage,
     qualityPreference,
+    qualityFloor,
     preferHdrOverResolution,
     considerSourceClass,
     upgradeOnReacquire,

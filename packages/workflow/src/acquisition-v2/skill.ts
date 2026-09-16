@@ -2,6 +2,7 @@ import {
   AUDIO_LADDER_LINES,
   HDR_LADDER_LINES,
   PATROL_GAP_ONLY_LINE,
+  QUALITY_FLOOR_SKILL_LINE,
   QUALITY_SEARCH_TOKEN_LAW,
   QUALITY_UPGRADE_LINES,
   SOURCE_LADDER_LINES,
@@ -198,7 +199,7 @@ The candidate must be THIS film — not a remake, sequel, prequel, or same-IP di
 - Reject "蝙蝠侠：黑暗骑士崛起" (2012) when the target is "蝙蝠侠：黑暗骑士" (2008).
 - Reject a 1990 version when the target is a later remake.
 - When identity is unclear, do NOT transfer speculatively.
-Reject packs / collections / box sets / multi-part / anything structured like seasons — a movie is a single film. Reject disc images too: a 蓝光原盘 / ISO / BDMV full-disc dump (often 50–100GB+, isVideo=false) is NOT a usable film — you need ONE playable video file (mkv/mp4/ts). Among confirmed identity matches prefer the highest quality VIDEO stated transparently (4K REMUX/video > 1080p > 720p); then apply the HDR ladder inside the same resolution, then source/encode class, then audio as a soft tiebreaker. ${HDR_LADDER_LINES[0]} ${HDR_LADDER_LINES[1]} ${SOURCE_LADDER_LINES[0]} ${AUDIO_LADDER_LINES[0]} Prefer a 4K REMUX or even a lower-quality video over a 原盘/ISO even when the disc image is nominally higher quality. Magnets and 115 shares both transfer instantly — judge on identity/quality, never on link type. When QUALITY UPGRADE is on: ${QUALITY_UPGRADE_LINES.join("")}
+Reject packs / collections / box sets / multi-part / anything structured like seasons — a movie is a single film. Reject disc images too: a 蓝光原盘 / ISO / BDMV full-disc dump (often 50–100GB+, isVideo=false) is NOT a usable film — you need ONE playable video file (mkv/mp4/ts). Among confirmed identity matches prefer the highest quality VIDEO stated transparently (4K REMUX/video > 1080p > 720p); then apply the HDR ladder inside the same resolution, then source/encode class, then audio as a soft tiebreaker. ${HDR_LADDER_LINES[0]} ${HDR_LADDER_LINES[1]} ${SOURCE_LADDER_LINES[0]} ${AUDIO_LADDER_LINES[0]} ${QUALITY_FLOOR_SKILL_LINE} Prefer a 4K REMUX or even a lower-quality video over a 原盘/ISO even when the disc image is nominally higher quality. Magnets and 115 shares both transfer instantly — judge on identity/quality, never on link type. When QUALITY UPGRADE is on: ${QUALITY_UPGRADE_LINES.join("")}
 
 ## Two transfer tools — pick by the situation
 - transferCandidate(snapshotId, candidateId): ONE candidate at a time. Use it for a single obvious share, or for a MAGNET (a magnet does NOT fail loud — only the landing point in inspectStaging tells you whether it 秒传'd; so transfer, then inspect).
@@ -235,6 +236,7 @@ You own one OR MORE seasons in scope. The need is "应有 vs 实有 = which epis
 - Absence of a complete / full-season pack is NOT no-coverage: transfer the covering partials and leave only truly uncovered gaps for the next patrol. Never wait for a 全集 that does not exist.
 - Worked example — you need 50 episodes and every resource is a single-episode pack: do NOT transfer-one → re-check → transfer-one fifty times (that hammers 115). DECIDE the covering set via planEpisodeCover, transfer that decided set up to the per-run cap, THEN inspect / dedup / mark once. Leftovers stay for patrol with an explicit reason (SANDBOX_TRANSFER_CAP).
 - If the only resource covering a missing episode is a large pack, use it — never sacrifice coverage to avoid a big pack. (In the daily patrol specifically, when a small exact-missing resource AND a huge full-season pack both cover, prefer the small exact one — less dedup risk; quality can be upgraded later.)
+${QUALITY_FLOOR_SKILL_LINE}
 ${PATROL_GAP_ONLY_LINE}
 When QUALITY UPGRADE is on for this run: ${QUALITY_UPGRADE_LINES.join("")} ${QUALITY_SEARCH_TOKEN_LAW}
 

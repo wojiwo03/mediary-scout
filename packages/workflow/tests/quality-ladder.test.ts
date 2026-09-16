@@ -10,15 +10,22 @@ import {
   describeUpgradeOpportunity,
   hasQualityEvidence,
   HDR_LADDER_LINES,
+  isBelowQualityFloor,
   landedQualityTitlesFromAcquisition,
+  meetsQualityFloor,
   parseAudioClass,
   parseHdrFormat,
+  parseQualityFloorSetting,
   parseReleaseQuality,
   parseResolutionBand,
   parseSourceClass,
   PATROL_GAP_ONLY_LINE,
+  QUALITY_FLOOR_AUDIT_TYPE,
   QUALITY_SEARCH_TOKEN_LAW,
   QUALITY_UPGRADE_LINES,
+  qualityFloorAuditEvents,
+  qualityFloorOverrideFromAudit,
+  resolveQualityFloor,
   shouldReplaceCoverage,
   shouldScheduleQualityUpgrade,
   SOURCE_LADDER_LINES,
@@ -398,5 +405,53 @@ describe("true upgrade detection — current vs preference target", () => {
     });
     expect(titles).toEqual(["沙丘2 2024 1080P WEB-DL 中字"]);
     expect(summarizeLandedQuality(titles, high).current?.resolution).toBe("1080p");
+  });
+});
+
+describe("quality floor — hard reject (not ranking)", () => {
+  it("parse / resolve: any and unset mean no floor; override wins including any→disable", () => {
+    expect(parseQualityFloorSetting(null)).toBeUndefined();
+    expect(parseQualityFloorSetting("any")).toBeUndefined();
+    expect(parseQualityFloorSetting("1080p")).toBe("1080p");
+    expect(parseQualityFloorSetting(" 4K ")).toBe("4k");
+    expect(resolveQualityFloor({ global: "1080p" })).toBe("1080p");
+    expect(resolveQualityFloor({ global: "1080p", override: "4k" })).toBe("4k");
+    expect(resolveQualityFloor({ global: "1080p", override: "any" })).toBeUndefined();
+    expect(resolveQualityFloor({ override: "720p" })).toBe("720p");
+  });
+
+  it("rejects known bands below the floor; 4K still meets 1080p under medium preference", () => {
+    expect(meetsQualityFloor("unknown", "1080p")).toBe(true);
+    expect(meetsQualityFloor(parseReleaseQuality("Show.720p.mkv"), "1080p")).toBe(false);
+    expect(meetsQualityFloor(parseReleaseQuality("Show.1080p.mkv"), "1080p")).toBe(true);
+    expect(meetsQualityFloor(parseReleaseQuality("Show.2160p.mkv"), "1080p")).toBe(true);
+    expect(isBelowQualityFloor("庆余年 720p 全集", "1080p")).toBe(true);
+    expect(isBelowQualityFloor("庆余年 全集", "1080p")).toBe(false);
+    expect(isBelowQualityFloor("庆余年 720p", undefined)).toBe(false);
+  });
+
+  it("audit round-trips the per-run override including any", () => {
+    expect(qualityFloorAuditEvents(undefined)).toEqual([]);
+    const events = qualityFloorAuditEvents("1080p");
+    expect(events[0]?.type).toBe(QUALITY_FLOOR_AUDIT_TYPE);
+    expect(events[0]?.message).toMatch(/1080p/);
+    expect(qualityFloorOverrideFromAudit(events)).toBe("1080p");
+    expect(qualityFloorOverrideFromAudit(qualityFloorAuditEvents("any"))).toBe("any");
+  });
+
+  it("guidance prepends the hard floor over 覆盖优先; no floor keeps previous copy", () => {
+    const none = composeAcquisitionQualityGuidance({ resolutionGuidance: "画质偏好:高。" });
+    expect(none).not.toContain("硬性画质下限");
+    expect(formatQualityLadderSummary({})).toMatch(/无硬性下限/);
+
+    const floored = composeAcquisitionQualityGuidance({
+      resolutionGuidance: "画质偏好:高。",
+      policy: { resolutionFloor: "1080p" },
+    });
+    expect(floored.startsWith("⛔")).toBe(true);
+    expect(floored).toContain("1080p");
+    expect(floored).toContain("禁止转存");
+    expect(formatQualityLadderSummary({ resolutionFloor: "1080p" })).toMatch(/硬性下限/);
+    expect(formatTargetQualityLabel({ resolutionFloor: "4k" })).toMatch(/低于 4K 不下载/);
   });
 });

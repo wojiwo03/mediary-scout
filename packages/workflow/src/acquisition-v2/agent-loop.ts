@@ -331,7 +331,7 @@ export function buildSandboxToolSet(
     },
     transferCandidate: {
       description:
-        "Transfer ONE snapshot-bound candidate into staging, then read back the TRUE materialized files. The candidate must come from a snapshot you searched this task. Refused once coverage is already met. TV/anime: transfer the planEpisodeCover selected set; redundant overlaps are refused.",
+        "Transfer ONE snapshot-bound candidate into staging, then read back the TRUE materialized files. The candidate must come from a snapshot you searched this task. Refused once coverage is already met. TV/anime: transfer the planEpisodeCover selected set; redundant overlaps are refused. Below the run's hard quality floor (SANDBOX_BELOW_QUALITY_FLOOR) is refused even if it is the only candidate.",
       inputSchema: z.object({ snapshotId: z.string(), candidateId: z.string() }),
       execute: async (args: { snapshotId: string; candidateId: string }) => {
         if (coverSession) {
@@ -408,7 +408,7 @@ export function buildSandboxToolSet(
   if (options.movie) {
     tools["transferUntilLanded"] = {
       description:
-        'Movie only. Transfer a PRIORITY-ORDERED list of candidates you judged to be the SAME target film (best resource first), stopping at the FIRST that 秒传-lands; the rest are abandoned. FAIL-LOUD SHARE LINKS ONLY (115/夸克/天翼/123 转存分享 all qualify) — magnets do NOT fail loud, so for a magnet use transferCandidate and verify via inspectStaging. YOU pick the set (a keyword search returns same-named DIFFERENT works — never hand it everything); the system just burns through the dead links for you (链接已过期/分享已取消/错误的链接 are common). Returns {landed, transferredCandidateId, attempts}. If an attempt reports no_target_change with nothing landed (a large share\'s async server-side copy can outlast the settle window — a possible FALSE miss), the tool STOPS instead of burning the next candidate: re-read via inspectStaging first, then decide. Use this when several shares for the one film may be dead/black-box; for a single obvious share, transferCandidate is fine.',
+        'Movie only. Transfer a PRIORITY-ORDERED list of candidates you judged to be the SAME target film (best resource first), stopping at the FIRST that 秒传-lands; the rest are abandoned. FAIL-LOUD SHARE LINKS ONLY (115/夸克/天翼/123 转存分享 all qualify) — magnets do NOT fail loud, so for a magnet use transferCandidate and verify via inspectStaging. YOU pick the set (a keyword search returns same-named DIFFERENT works — never hand it everything); the system just burns through the dead links for you (链接已过期/分享已取消/错误的链接 are common). Candidates below this run\'s hard quality floor are skipped (not transferred) and recorded as SANDBOX_BELOW_QUALITY_FLOOR. Returns {landed, transferredCandidateId, attempts}. If an attempt reports no_target_change with nothing landed (a large share\'s async server-side copy can outlast the settle window — a possible FALSE miss), the tool STOPS instead of burning the next candidate: re-read via inspectStaging first, then decide. Use this when several shares for the one film may be dead/black-box; for a single obvious share, transferCandidate is fine.',
       inputSchema: z.object({ candidateIds: z.array(z.string()) }),
       execute: (args: { candidateIds: string[] }) => asEvidence(() => sandbox.transferUntilLanded(args)),
     };

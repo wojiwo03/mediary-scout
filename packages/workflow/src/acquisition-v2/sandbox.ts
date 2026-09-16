@@ -14,6 +14,12 @@ import { animeSearchTabooWarnings, type SearchProfile } from "./search-profile.j
 import type { AuditEvent } from "../domain.js";
 import { isMergedSourceEvidenceUsable, type MergedSourceHealth } from "../resource-source-health.js";
 import { MAX_TV_TRANSFERS_PER_RUN, transferCapMessage } from "./cover-planner.js";
+import {
+  isBelowQualityFloor,
+  sandboxBelowQualityFloorError,
+  type QualityFloorBand,
+  type QualityLadderPolicy,
+} from "./quality-ladder.js";
 
 /** Quality / subtitle / source tokens that PanSou share titles almost never carry,
  *  so appending them collapses recall (实测归零). Case-insensitive; word-ish so
@@ -122,6 +128,8 @@ export interface TaskSandboxOptions {
   /** Pre-seed markObtained so an upgrade run of an already-covered title starts
    *  coverage-met (transfers then rely on qualityUpgrade). */
   priorObtainedMarks?: readonly string[];
+  /** Hard resolution floor: transfers of below-floor titles are refused. */
+  qualityPolicy?: QualityLadderPolicy;
 }
 
 export interface SearchToolResult {
@@ -176,6 +184,7 @@ export class TaskSandbox {
   private readonly softThreshold: number | undefined;
   private readonly profile: SearchProfile | undefined;
   private readonly qualityUpgrade: boolean;
+  private readonly resolutionFloor: QualityFloorBand | undefined;
   private readonly seenKeywords = new Set<string>();
   private readonly snapshotByKeyword = new Map<string, ResourceSnapshotV2>();
   /** 每个（规范化）关键词被搜索的次数——prime 记 1，agent fresh 记 1，dedup 命中递增。 */
@@ -214,6 +223,7 @@ export class TaskSandbox {
     this.stagingDirectoryId = options.stagingDirectoryId;
     this.profile = options.searchProfile;
     this.qualityUpgrade = options.qualityUpgrade === true;
+    this.resolutionFloor = options.qualityPolicy?.resolutionFloor;
     this.seasonDirs = new Map(
       Object.entries(options.targetSeasonDirectoryIds ?? {}).map(([season, id]) => [Number(season), id]),
     );
@@ -256,6 +266,31 @@ export class TaskSandbox {
   /** Still-missing coverage tokens (need minus markObtained). */
   remainingNeed(): string[] {
     return this.missingNeed();
+  }
+
+  private observedCandidateTitle(candidateId: string, snapshotId?: string): string | undefined {
+    if (snapshotId) {
+      return this.observedSnapshots
+        .get(snapshotId)
+        ?.candidates.find((candidate) => candidate.id === candidateId)?.title;
+    }
+    for (const snapshot of this.observedSnapshots.values()) {
+      const found = snapshot.candidates.find((candidate) => candidate.id === candidateId);
+      if (found) {
+        return found.title;
+      }
+    }
+    return undefined;
+  }
+
+  private assertQualityFloor(title: string | undefined): void {
+    const floor = this.resolutionFloor;
+    if (floor === undefined || title === undefined) {
+      return;
+    }
+    if (isBelowQualityFloor(title, floor)) {
+      throw new Error(sandboxBelowQualityFloorError(floor));
+    }
   }
 
   tvTransfersRemaining(): number {
@@ -501,6 +536,7 @@ export class TaskSandbox {
     if (!snapshot.candidates.some((candidate) => candidate.id === input.candidateId)) {
       throw new Error(`SANDBOX_CANDIDATE_NOT_IN_SNAPSHOT: ${input.candidateId} is not in ${input.snapshotId}`);
     }
+    this.assertQualityFloor(this.observedCandidateTitle(input.candidateId, input.snapshotId));
     if (this.seasonDirs.size > 0 && this.tvTransferAttempts >= MAX_TV_TRANSFERS_PER_RUN) {
       throw new Error(transferCapMessage());
     }
@@ -578,6 +614,15 @@ export class TaskSandbox {
     let transferredCandidateId: string | null = null;
     let systemicBlock: { reason: string } | undefined;
     for (const candidateId of input.candidateIds) {
+      const title = this.observedCandidateTitle(candidateId);
+      if (this.resolutionFloor !== undefined && title !== undefined && isBelowQualityFloor(title, this.resolutionFloor)) {
+        attempts.push({
+          candidateId,
+          status: "failed",
+          providerMessage: sandboxBelowQualityFloorError(this.resolutionFloor),
+        });
+        continue;
+      }
       const attempt = await this.storage.transferCandidate({
         candidateId,
         intoDirectoryId: this.stagingDirectoryId,

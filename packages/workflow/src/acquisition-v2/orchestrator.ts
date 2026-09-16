@@ -154,6 +154,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
     ...(request.searchProfile === undefined ? {} : { searchProfile: request.searchProfile }),
     ...(request.qualityUpgrade ? { qualityUpgrade: true } : {}),
+    ...(request.qualityPolicy === undefined ? {} : { qualityPolicy: request.qualityPolicy }),
     ...(request.qualityUpgrade && request.target.kind === "movie"
       ? { priorObtainedMarks: ["MOVIE"] }
       : request.priorObtainedMarks
