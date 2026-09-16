@@ -56,6 +56,7 @@ export * from "./acquisition-v2/interrogation.js";
 export * from "./acquisition-v2/dead-links.js";
 export * from "./acquisition-v2/search-profile.js";
 export * from "./acquisition-v2/quality-ladder.js";
+export * from "./acquisition-v2/release-meta.js";
 export * from "./acquisition-v2/activity.js";
 export * from "./acquisition-v2/repetition-stop.js";
 export * from "./acquisition-v2/agent-loop-guards.js";

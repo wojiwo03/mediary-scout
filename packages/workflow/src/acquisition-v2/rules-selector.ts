@@ -13,6 +13,13 @@ import {
   scoreReleaseTitle,
   type QualityLadderPolicy,
 } from "./quality-ladder.js";
+import {
+  parseEpisodeSpanFromTitle,
+  parseNamedSeasons,
+  parseReleaseMeta,
+  releaseMetaNoisePattern,
+  type ReleaseEpisodeSpan,
+} from "./release-meta.js";
 
 export interface RulesSelectorCandidate {
   snapshotId: string;
@@ -47,21 +54,6 @@ export interface RulesSelection {
   reason: string;
 }
 
-const CN_DIGIT: Record<string, number> = {
-  零: 0,
-  一: 1,
-  二: 2,
-  两: 2,
-  三: 3,
-  四: 4,
-  五: 5,
-  六: 6,
-  七: 7,
-  八: 8,
-  九: 9,
-  十: 10,
-};
-
 const SEQUEL_WORD =
   /崛起|归来|起源|前传|续集|重生|第二部|第三部|第四部/;
 const SEQUEL_TOKEN = /^(?:[2-9]|ii|iii|iv)$/i;
@@ -78,8 +70,7 @@ const CHINESE_SUB_MARKER =
 const ENGLISH_SCENE_RE =
   /^[\x20-\x7e]+$/; // no CJK — typical scene / English-only rip
 
-const QUALITY_NOISE_RE =
-  /hdr\s*10\s*\+|1080\s*[pi]|2160p|720\s*[pi]|4k|uhd|hdr10plus|hdr10|\bhdr\b|\bdv\b|dovi|dolby|remux|web-?dl|webrip|bluray|bdrip|hdtv|atmos|truehd|dts|中字|国语|双语|字幕|超高清|全高清|超清|无压|官源|蓝光|杜比视界|mkv|mp4|ts|complete|全集|完结|更新至|分享|磁力|\biso\b|bdmv|原盘/gi;
+const QUALITY_NOISE_RE = releaseMetaNoisePattern();
 
 export function titleTermsFor(target: Pick<RulesSelectorTarget, "title" | "aliases">): string[] {
   return [target.title, ...target.aliases].map((term) => term.trim()).filter((term) => term.length > 0);
@@ -96,118 +87,15 @@ export function candidateMatchesTitle(candidateTitle: string, terms: readonly st
   });
 }
 
-function parseChineseNumber(raw: string): number | null {
-  if (/^\d+$/.test(raw)) {
-    return Number(raw);
-  }
-  if (raw === "十") {
-    return 10;
-  }
-  if (raw.length === 2 && raw.startsWith("十")) {
-    const ones = CN_DIGIT[raw[1]!];
-    return ones === undefined ? null : 10 + ones;
-  }
-  if (raw.length === 2 && raw.endsWith("十")) {
-    const tens = CN_DIGIT[raw[0]!];
-    return tens === undefined ? null : tens * 10;
-  }
-  if (raw.length === 3 && raw[1] === "十") {
-    const tens = CN_DIGIT[raw[0]!];
-    const ones = CN_DIGIT[raw[2]!];
-    if (tens === undefined || ones === undefined) {
-      return null;
-    }
-    return tens * 10 + ones;
-  }
-  return CN_DIGIT[raw] ?? null;
-}
-
-function uniqueSorted(values: number[]): number[] {
-  return [...new Set(values)].sort((a, b) => a - b);
-}
-
 /** Seasons the title explicitly names. Empty = unspecified (season-1 default). */
 export function parseSeasonMarkers(title: string): number[] {
-  const seasons: number[] = [];
-  const seasonRe = /第\s*([一二三四五六七八九十两\d]{1,3})\s*季/g;
-  let match: RegExpExecArray | null;
-  while ((match = seasonRe.exec(title)) !== null) {
-    const n = parseChineseNumber(match[1]!);
-    if (n !== null && n >= 1) {
-      seasons.push(n);
-    }
-  }
-  const latin = /(?:\bseason\s*|\bs)(\d{1,2})\b/gi;
-  while ((match = latin.exec(title)) !== null) {
-    const n = Number(match[1]);
-    if (n >= 1) {
-      seasons.push(n);
-    }
-  }
-  const span = /S(\d{1,2})\s*[-~～到至]\s*S?(\d{1,2})/i.exec(title);
-  if (span) {
-    const from = Number(span[1]);
-    const to = Number(span[2]);
-    if (from >= 1 && to >= from && to <= 20) {
-      for (let season = from; season <= to; season += 1) {
-        seasons.push(season);
-      }
-    }
-  }
-  const allSeasons = /全\s*([一二三四五六七八九十两\d]{1,3})\s*季|complete\s*series/i.exec(title);
-  if (allSeasons) {
-    if (allSeasons[1]) {
-      const n = parseChineseNumber(allSeasons[1]);
-      if (n !== null && n >= 1 && n <= 20) {
-        for (let season = 1; season <= n; season += 1) {
-          seasons.push(season);
-        }
-      }
-    } else {
-      // "Complete Series" without a count — caller intersects with tracked seasons.
-      seasons.push(-1);
-    }
-  }
-  return uniqueSorted(seasons.filter((season) => season !== 0));
+  return parseNamedSeasons(title);
 }
 
-export interface EpisodeSpan {
-  from: number;
-  to: number;
-  complete: boolean;
-}
+export type EpisodeSpan = ReleaseEpisodeSpan;
 
 export function parseEpisodeSpan(title: string): EpisodeSpan | null {
-  const range =
-    /(?:E|EP|第)?\s*(\d{1,4})\s*[-~～至到]\s*(?:E|EP|第)?\s*(\d{1,4})\s*集?/i.exec(title) ??
-    /(\d{1,4})\s*[-~～]\s*(\d{1,4})\s*集/.exec(title);
-  if (range) {
-    const from = Number(range[1]);
-    const to = Number(range[2]);
-    if (from >= 1 && to >= from) {
-      return { from, to, complete: false };
-    }
-  }
-  const until = /更新至\s*(?:第)?\s*(\d{1,4})\s*集/.exec(title);
-  if (until) {
-    return { from: 1, to: Number(until[1]), complete: false };
-  }
-  const single =
-    /[Ss]\d{1,2}[Ee](\d{1,4})/.exec(title) ??
-    /第\s*(\d{1,4})\s*集/.exec(title) ??
-    /\bE(?:P)?(\d{1,4})\b/i.exec(title);
-  if (single) {
-    const n = Number(single[1]);
-    return { from: n, to: n, complete: false };
-  }
-  if (/全集|\bcomplete\b/i.test(title) && !/complete\s*series/i.test(title)) {
-    const count = /全\s*(\d{1,4})\s*集/.exec(title);
-    if (count) {
-      return { from: 1, to: Number(count[1]), complete: true };
-    }
-    return { from: 1, to: 9999, complete: true };
-  }
-  return null;
+  return parseEpisodeSpanFromTitle(title);
 }
 
 function codesForSeasons(seasons: number[], span: EpisodeSpan, missing: readonly string[]): string[] {
@@ -280,7 +168,7 @@ export function mapTvCoverage(input: {
 }
 
 const SEASON_EPISODE_NOISE =
-  /第\s*[一二三四五六七八九十两\d]+\s*[季集]|s\d{1,2}(?:[-~～]s?\d{1,2})?(?:e\d{1,4}(?:[-~～]e?\d{1,4})?)?|season\s*\d+|(?:e|ep)\d{1,4}|\d{1,4}\s*[-~～至到]\s*\d{1,4}\s*集|\d{1,4}集/gi;
+  /第\s*[一二三四五六七八九十两\d]+\s*[季集话話期幕]|s\d{1,2}(?:[-~～]s?\d{1,2})?(?:e\d{1,4}(?:[-~～]e?\d{1,4})?)?|season\s*\d+|(?:e|ep)\d{1,4}|\d{1,4}\s*[-~～至到]\s*\d{1,4}\s*[集话話]|\d{1,4}[集话話]/gi;
 
 function leftoverAfterTitle(candidateTitle: string, matchedTerm: string, year: number | undefined): string {
   const hay = normalizeForTitleMatch(candidateTitle);
@@ -288,6 +176,24 @@ function leftoverAfterTitle(candidateTitle: string, matchedTerm: string, year: n
   let rest = needle.length > 0 ? hay.replace(needle, "") : hay;
   if (year && year > 0) {
     rest = rest.replace(String(year), "");
+  }
+  const meta = parseReleaseMeta(candidateTitle);
+  for (const extra of [
+    meta.webSource,
+    meta.releaseGroup,
+    meta.part,
+    meta.audioCodec,
+    meta.resourceType,
+    meta.resourcePix,
+    ...meta.resourceEffect,
+  ]) {
+    if (!extra) {
+      continue;
+    }
+    const token = normalizeForTitleMatch(extra);
+    if (token.length > 0) {
+      rest = rest.replace(token, "");
+    }
   }
   QUALITY_NOISE_RE.lastIndex = 0;
   rest = rest.replace(QUALITY_NOISE_RE, "");
