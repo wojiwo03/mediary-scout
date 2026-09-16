@@ -46,7 +46,7 @@ BASE=$(jq -r .baseUrl ~/.mediary/agent.json)
 
 `acquire` body 字段：`query`(必填)、`type`(`"tv"`/`"movie"`/`null`)、`season`(数字/`null`)、`storageId`(`"cs_…"`/`null`，缺省用 primary drive)、`tmdbId`(数字/`null`，用于消歧重发)、`qualityUpgrade`(布尔，显式升级已入库画质)。
 
-画质/DV/HDR/片源/音轨只在召回后读候选标题，**不要**让用户把这些词写进搜索 query。定时巡检默认只补缺；要巡检也升级须 `patrolQualityUpgrade: true`。`GET /api/agent/config` 的 `qualityLadderSummary` 是当前阶梯的可读摘要。详见仓库 `docs/quality-upgrade-and-hdr.md`。
+画质/DV/HDR/片源/音轨只在召回后读候选标题，**不要**让用户把这些词写进搜索 query。定时追更补集与定时画质升级是两项独立任务、共用巡检时间；要巡检也升级须 `patrolQualityUpgrade: true`。`GET /api/agent/config` 的 `qualityLadderSummary` 是当前阶梯的可读摘要。详见仓库 `docs/quality-upgrade-and-hdr.md`。
 
 ## 3. 关键规则（必须遵守）
 

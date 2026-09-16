@@ -1,13 +1,18 @@
 import {
   createTmdbMetadataProvider,
+  describeUpgradeOpportunity,
   getTrackedSeasonStatusView,
   isMovieUnreleased,
   prepareSeriesTarget,
+  qualityLadderPolicyFromFlags,
   queueSeriesInitialization,
   queueTrackingInitialization,
+  summarizeLandedQuality,
   type EpisodeStatusCell,
   type MediaTitle,
   type PreparedSeriesTarget,
+  type QualityLadderPolicy,
+  type UpgradeOpportunityView,
 } from "@media-track/workflow";
 import { findDemoCandidateByTmdbId } from "./demo-candidates";
 import {
@@ -23,12 +28,16 @@ import {
   ensureDemoSeeded,
   getAccountScopedSettings,
   getActiveWorkspaceScope,
+  getConsiderSourceClass,
   getCurrentAccountId,
+  getPreferHdrOverResolution,
+  getQualityPreference,
   getTmdbAccesses,
   getWorkflowRepository,
   movieTargetFromTmdbId,
   postgresConnectionString,
   queueCandidateTracking,
+  tryListLandedVideoNames,
   type CandidateTrackingRequestResult,
 } from "./workflow-runtime";
 
@@ -43,6 +52,7 @@ export interface TitleHubSeason {
   missingAiredCount: number;
   trackedSeasonId: string | null;
   episodes: EpisodeStatusCell[];
+  upgrade: UpgradeOpportunityView | null;
 }
 
 export type { TitleAggregateState };
@@ -80,6 +90,7 @@ export interface MovieHubView {
   /** acquired=已入库, reserved=未上映已预定, acquiring=获取中, missing=已上映未获取, untracked=未追踪. */
   state: "acquired" | "reserved" | "acquiring" | "missing" | "untracked";
   acquiring: boolean;
+  upgrade: UpgradeOpportunityView | null;
 }
 
 export type DetailView = TitleHubView | MovieHubView;
@@ -166,6 +177,30 @@ async function seriesTargetFor(tmdbId: number): Promise<PreparedSeriesTarget | n
   };
 }
 
+async function loadQualityPolicy(): Promise<QualityLadderPolicy> {
+  const settings = getAccountScopedSettings(await getCurrentAccountId());
+  const [quality, preferHdr, considerSource] = await Promise.all([
+    getQualityPreference(settings),
+    getPreferHdrOverResolution(settings),
+    getConsiderSourceClass(settings),
+  ]);
+  return qualityLadderPolicyFromFlags({
+    ...(quality === undefined ? {} : { resolutionPreference: quality }),
+    ...(preferHdr ? { preferHdrOverResolution: true } : {}),
+    ...(considerSource ? {} : { considerSourceClass: false }),
+  });
+}
+
+async function upgradeViewForDirectory(
+  storageDirectoryId: string,
+  storageId: string | undefined,
+  policy: QualityLadderPolicy,
+): Promise<UpgradeOpportunityView> {
+  const names = await tryListLandedVideoNames(storageDirectoryId, storageId);
+  const summary = summarizeLandedQuality(names, policy);
+  return describeUpgradeOpportunity(summary.current, policy, summary.mixed);
+}
+
 export async function getTitleHubView(tmdbId: number, storageId?: string): Promise<TitleHubView | null> {
   const repository = getWorkflowRepository();
   const scope = await getActiveWorkspaceScope(storageId);
@@ -197,6 +232,7 @@ export async function getTitleHubView(tmdbId: number, storageId?: string): Promi
     ]),
   ].sort((a, b) => a - b);
 
+  const policy = await loadQualityPolicy();
   const seasons: TitleHubSeason[] = [];
   for (const seasonNumber of seasonNumbers) {
     const tracked = trackedBySeason.get(seasonNumber);
@@ -210,16 +246,21 @@ export async function getTitleHubView(tmdbId: number, storageId?: string): Promi
         trackedSeasonId: tracked.season.id,
         scope,
       });
+      const obtainedCount = view?.obtainedCount ?? 0;
       seasons.push({
         seasonNumber,
         totalEpisodes: tracked.season.totalEpisodes,
         latestAiredEpisode: tracked.season.latestAiredEpisode,
         tracked: true,
         status: tracked.season.status === "completed" ? "completed" : "active",
-        obtainedCount: view?.obtainedCount ?? 0,
+        obtainedCount,
         missingAiredCount: view?.missingAiredCount ?? 0,
         trackedSeasonId: tracked.season.id,
         episodes: view?.episodes ?? [],
+        upgrade:
+          obtainedCount > 0
+            ? await upgradeViewForDirectory(tracked.season.storageDirectoryId, storageId, policy)
+            : null,
       });
     } else if (targetSeason) {
       seasons.push({
@@ -232,6 +273,7 @@ export async function getTitleHubView(tmdbId: number, storageId?: string): Promi
         missingAiredCount: 0,
         trackedSeasonId: null,
         episodes: [],
+        upgrade: null,
       });
     }
   }
@@ -286,7 +328,12 @@ export async function getDetailView(
     const obtained = movieState.episodes.some((episode) => episode.obtained);
     const reserved = isMovieUnreleased(movieState.title.releaseDate, now);
     const state = acquiring ? "acquiring" : reserved ? "reserved" : obtained ? "acquired" : "missing";
-    return movieHubViewFromTitle(movieState.title, state, acquiring);
+    const policy = await loadQualityPolicy();
+    const upgrade =
+      obtained
+        ? await upgradeViewForDirectory(movieState.season.storageDirectoryId, storageId, policy)
+        : null;
+    return movieHubViewFromTitle(movieState.title, state, acquiring, upgrade);
   }
 
   // Untracked title: TMDB's movie/tv id namespaces collide (movie 278 ≠ tv 278).
@@ -299,7 +346,7 @@ export async function getDetailView(
       return null;
     }
     // Untracked stays untracked even if unreleased — `reserved` means tracked + waiting.
-    return movieHubViewFromTitle(movieTarget.title, "untracked", false);
+    return movieHubViewFromTitle(movieTarget.title, "untracked", false, null);
   };
 
   if (typeHint === "movie") {
@@ -323,6 +370,7 @@ function movieHubViewFromTitle(
   title: MediaTitle,
   state: MovieHubView["state"],
   acquiring: boolean,
+  upgrade: UpgradeOpportunityView | null,
 ): MovieHubView {
   return {
     kind: "movie",
@@ -336,6 +384,7 @@ function movieHubViewFromTitle(
     releaseDate: title.releaseDate ?? null,
     state,
     acquiring,
+    upgrade,
   };
 }
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { CheckCircle2, ChevronDown, ChevronRight, Clock3, Loader2, RotateCcw, TriangleAlert, X } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronRight, Clock3, Loader2, RotateCcw, Sparkles, TriangleAlert, X } from "lucide-react";
 import { showHref } from "@media-track/workflow/scope";
 import type {
   ActivityActiveRun,
@@ -128,6 +128,7 @@ function RunningRow({ run, storageId }: { run: ActivityActiveRun; storageId?: st
           <strong>{run.title}</strong>
           {seasonLabel(run) ? <span className="act-sub">{seasonLabel(run)}</span> : null}
           {headline ? <span className="act-frac">{headline}</span> : null}
+          {run.qualityUpgrade ? <span className="act-pill">升级画质</span> : null}
         </div>
         <div className="act-bar">
           <div className="act-bar-fill" style={{ width: `${percent}%` }} />
@@ -212,7 +213,8 @@ function QueuedRow({ run }: { run: ActivityActiveRun }) {
         <strong>{run.title}</strong>
         {seasonLabel(run) ? <span className="act-sub">{seasonLabel(run)}</span> : null}
         <span className="act-pill">
-          <Clock3 size={12} aria-hidden />第 {run.queuePosition} 位{run.missingCount > 0 ? ` · 缺 ${run.missingCount} 集` : ""}
+          <Clock3 size={12} aria-hidden />第 {run.queuePosition} 位
+          {run.qualityUpgrade ? " · 升级画质" : run.missingCount > 0 ? ` · 缺 ${run.missingCount} 集` : ""}
         </span>
         <CancelButton runId={run.runId} title={run.title} />
       </div>
@@ -248,6 +250,12 @@ function CompletedRow({ item }: { item: ActivityCompletedItem }) {
           {ok ? <CheckCircle2 size={12} aria-hidden /> : <TriangleAlert size={12} aria-hidden />}
           {completedPillLabel(item.status)}
         </span>
+        {item.qualityUpgrade ? (
+          <span className="act-pill">
+            <Sparkles size={12} aria-hidden />
+            画质已升级
+          </span>
+        ) : null}
         {item.sizeText ? <span className="act-sub">{item.sizeText}</span> : null}
         {failed ? <RetryButton runId={item.workflowRunId} title={item.title} /> : null}
       </div>

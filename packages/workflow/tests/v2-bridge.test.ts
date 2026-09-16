@@ -147,6 +147,41 @@ describe("bridgeV2WorkflowToResult — V2 facts → per-season WorkflowResult sh
     expect(result.notification.report?.newlyObtained).toEqual([]);
   });
 
+  it("type3 quality upgrade with a succeeded transfer → kind quality_upgrade, not already_current", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type3",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K", status: "completed" }],
+      v2: v2Result({
+        missingBefore: [],
+        obtained: ["S01E01", "S01E02", "S01E03"],
+        stillMissing: [],
+        outcome: {
+          resourceSnapshots: [],
+          decisions: [],
+          transferAttempts: [
+            {
+              id: "t1",
+              workflowRunId: "run-upgrade",
+              candidateId: "c1",
+              status: "succeeded",
+              providerMessage: "ok",
+              materializedFileIds: ["f1"],
+            },
+          ],
+        },
+      }),
+      workflowRunId: "run-upgrade",
+      now: () => "2026-09-16T00:00:00.000Z",
+      qualityUpgrade: true,
+    });
+
+    expect(result.notification.kind).toBe("quality_upgrade");
+    expect(result.notification.trigger).toBe("scheduled");
+    expect(result.notification.report?.lines[0]).toMatch(/严格更高画质/);
+    expect(result.auditEvents.some((event) => event.type === "quality_upgrade")).toBe(true);
+  });
+
   it("type3 patrol: airing 但本次真收到新集 → 仍是 episodes_restored（不许把有效更新降噪掉）", () => {
     const result = bridgeV2WorkflowToResult({
       title,

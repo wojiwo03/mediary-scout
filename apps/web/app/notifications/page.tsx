@@ -13,11 +13,13 @@ import {
   Layers,
   PartyPopper,
   RotateCcw,
+  Sparkles,
   TriangleAlert,
   XCircle,
 } from "lucide-react";
 import type { NotificationEvent, NotificationReportStatus } from "@media-track/workflow";
 import { landedSize } from "@media-track/workflow";
+import { notificationCardLines } from "../../lib/notification-feed";
 import { NotificationsSeenMarker } from "../../components/notifications-seen-marker";
 import { DemoSessionNotifications } from "../../components/demo-session-notifications";
 import { AppSidebar } from "../../components/app-sidebar";
@@ -43,6 +45,7 @@ const kindIcon: Record<string, { tone: string; icon: typeof Bell }> = {
   episodes_restored: { tone: "indigo", icon: DownloadCloud },
   tracking_completed: { tone: "green", icon: PartyPopper },
   already_current: { tone: "muted", icon: CheckCircle2 },
+  quality_upgrade: { tone: "teal", icon: Sparkles },
   no_coverage: { tone: "amber", icon: CircleSlash },
   transfer_failed: { tone: "amber", icon: XCircle },
   foreign_work_detected: { tone: "amber", icon: Film },
@@ -225,8 +228,9 @@ function NotificationCard({
       : report.titleName;
   // A movie's only line is "已获取入库", which the "已入库" pill already conveys —
   // drop it so the card carries no duplicated sentence. Seasons keep their
-  // informative progress line(s).
-  const lines = report.status === "acquired" ? [] : report.lines;
+  // informative progress line(s). Quality-upgrade movies keep the replacement
+  // line so scheduled upgrades don't look identical to first-time 已入库.
+  const lines = notificationCardLines(notification.kind, report.status, report.lines);
   const size = landedSize(report);
   const hasChips = report.newlyObtained.length > 0 || report.realMissing.length > 0 || Boolean(size);
   // The same TMDB poster the push uses — a small thumbnail turns the row into a
@@ -250,6 +254,12 @@ function NotificationCard({
           <StatusIcon size={11} aria-hidden />
           {status.label}
         </span>
+        {notification.kind === "quality_upgrade" ? (
+          <span className="feed-status-pill tone-teal">
+            <Sparkles size={11} aria-hidden />
+            升级画质
+          </span>
+        ) : null}
         <time className="feed-time" dateTime={notification.createdAt}>
           {timeLabel(notification.createdAt)}
         </time>

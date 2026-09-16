@@ -119,5 +119,6 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     v2,
     workflowRunId: request.workflowRunId,
     now: request.now ?? defaultNowIso,
+    ...(request.qualityUpgrade ? { qualityUpgrade: true } : {}),
   });
 }

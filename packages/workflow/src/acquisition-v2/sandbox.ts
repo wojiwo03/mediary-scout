@@ -19,7 +19,7 @@ import { isMergedSourceEvidenceUsable, type MergedSourceHealth } from "../resour
  *  "1080p" / "WEB-DL" / "BluRay" match as units. 中字/国语/双语/字幕 are CJK so they
  *  match anywhere. */
 const QUALITY_SUBTITLE_TOKEN =
-  /hdr\s*10\s*\+|\b(?:4k|2160p|1080p|720p|hdr10plus|hdr10|hdr|dovi|dv|dolby[\s.-]?vision|remux|web-?dl|web-?rip|webrip|bluray|bdrip|hdtv|atmos|truehd|dts-?hd)\b|蓝光|杜比视界|杜比全景声|中字|国语|双语|字幕/gi;
+  /hdr\s*10\s*\+|\b(?:4k|2160p|1080p|720p|hdr10plus|hdr10|hdr|dovi|dv|dolby[\s.-]?vision|remux|web-?dl|web-?rip|webrip|bluray|bdrip|hdtv|atmos|truehd|dts-?hd)\b|蓝光|杜比视界|杜比全景声|超高清|全高清|无压|官源|中字|国语|双语|字幕/gi;
 
 const SUBTITLE_NAME_PATTERN = /\.(srt|ass|ssa|sub|idx|vtt|sup|smi)$/i;
 

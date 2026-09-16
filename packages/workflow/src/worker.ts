@@ -17,7 +17,13 @@ import {
   failWorkflowRun,
   requeueWorkflowRunForRetry,
 } from "./repository.js";
-import { isQualityUpgradeAudit } from "./acquisition-v2/quality-ladder.js";
+import {
+  isQualityUpgradeAudit,
+  QUALITY_UPGRADE_AUDIT_TYPE,
+  qualityLadderPolicyFromFlags,
+  shouldScheduleQualityUpgrade,
+  summarizeLandedQuality,
+} from "./acquisition-v2/quality-ladder.js";
 import { isTransientAcquisitionError } from "./acquisition-v2/transient-error.js";
 import { describeAgentRunError, summarizeErrorForNotification } from "./agent-error.js";
 import { formatReportPushText } from "./notification-report.js";
@@ -410,6 +416,10 @@ export type ScheduledType3Outcome =
     }
   | {
       trackedSeasonId: string;
+      status: "skipped_at_quality_top";
+    }
+  | {
+      trackedSeasonId: string;
       status: "ran";
       workflowRunId: string;
       workflowStatus: WorkflowStatus;
@@ -509,6 +519,21 @@ export async function runScheduledType3Monitoring(input: {
       }
     }
 
+    if (
+      await skipUpgradeOnlyAtQualityTop({
+        storage: deps.storage,
+        directoryId: season.storageDirectoryId,
+        episodes,
+        patrolQualityUpgrade: deps.patrolQualityUpgrade,
+        qualityPreference: deps.qualityPreference,
+        preferHdrOverResolution: deps.preferHdrOverResolution,
+        considerSourceClass: deps.considerSourceClass,
+      })
+    ) {
+      outcomes.push({ trackedSeasonId: season.id, status: "skipped_at_quality_top" });
+      continue;
+    }
+
     const workflowRunId = input.createWorkflowRunId?.() ?? crypto.randomUUID();
     const startedAt = now();
     const staleActiveRunStartedBefore = staleStartedBefore(
@@ -531,8 +556,13 @@ export async function runScheduledType3Monitoring(input: {
         auditEvents: [
           {
             type: "type3_scheduled",
-            message: "Scheduled Type 3 monitoring reserved",
+            message: deps.patrolQualityUpgrade
+              ? "Scheduled gap-fill and quality-upgrade patrol reserved"
+              : "Scheduled Type 3 monitoring reserved",
           },
+          ...(deps.patrolQualityUpgrade
+            ? [{ type: QUALITY_UPGRADE_AUDIT_TYPE, message: "Scheduled quality upgrade" }]
+            : []),
         ],
       },
       episodes,
@@ -689,6 +719,21 @@ async function patrolMovie(args: {
     return null;
   }
 
+  if (
+    obtained &&
+    (await skipUpgradeOnlyAtQualityTop({
+      storage: deps.storage,
+      directoryId: state.season.storageDirectoryId,
+      episodes: state.episodes,
+      patrolQualityUpgrade: deps.patrolQualityUpgrade,
+      qualityPreference: deps.qualityPreference,
+      preferHdrOverResolution: deps.preferHdrOverResolution,
+      considerSourceClass: deps.considerSourceClass,
+    }))
+  ) {
+    return { trackedSeasonId: state.season.id, status: "skipped_at_quality_top" };
+  }
+
   const workflowRunId = input.createWorkflowRunId?.() ?? crypto.randomUUID();
   const startedAt = now();
   const staleActiveRunStartedBefore = staleStartedBefore(
@@ -707,12 +752,17 @@ async function patrolMovie(args: {
       trackedSeasonId: state.season.id,
       startedAt,
       finishedAt: null,
-      auditEvents: [
-        {
-          type: "movie_patrol_scheduled",
-          message: "Scheduled movie patrol reserved",
-        },
-      ],
+        auditEvents: [
+          {
+            type: "movie_patrol_scheduled",
+            message: obtained && deps.patrolQualityUpgrade
+              ? "Scheduled movie quality-upgrade patrol reserved"
+              : "Scheduled movie patrol reserved",
+          },
+          ...(obtained && deps.patrolQualityUpgrade
+            ? [{ type: QUALITY_UPGRADE_AUDIT_TYPE, message: "Scheduled quality upgrade" }]
+            : []),
+        ],
     },
     episodes: state.episodes,
     resourceSnapshots: [],
@@ -804,6 +854,63 @@ async function patrolMovie(args: {
       errorMessage,
     };
   }
+}
+
+async function listLandedQualityNames(
+  storage: StorageExecutor,
+  directoryId: string,
+): Promise<string[]> {
+  if (!directoryId) {
+    return [];
+  }
+  try {
+    const [videos, unparsed] = await Promise.all([
+      storage.listVideoFiles(directoryId),
+      storage.listUnparsedVideoFiles(directoryId),
+    ]);
+    return [...videos.map((file) => file.name), ...unparsed.map((file) => file.name)].filter(
+      (name) => name.trim().length > 0,
+    );
+  } catch {
+    return [];
+  }
+}
+
+function patrolQualityPolicy(deps: {
+  qualityPreference: "high" | "medium" | undefined;
+  preferHdrOverResolution: boolean;
+  considerSourceClass: boolean;
+}) {
+  return qualityLadderPolicyFromFlags({
+    ...(deps.qualityPreference === undefined ? {} : { resolutionPreference: deps.qualityPreference }),
+    ...(deps.preferHdrOverResolution ? { preferHdrOverResolution: true } : {}),
+    ...(deps.considerSourceClass === false ? { considerSourceClass: false } : {}),
+  });
+}
+
+/**
+ * Upgrade-only sweeps (no aired gap) skip when on-disk names already sit at the
+ * preference top. Unknown names still run — the agent can inspectTargetDir.
+ */
+async function skipUpgradeOnlyAtQualityTop(input: {
+  storage: StorageExecutor;
+  directoryId: string;
+  episodes: EpisodeState[];
+  patrolQualityUpgrade: boolean;
+  qualityPreference: "high" | "medium" | undefined;
+  preferHdrOverResolution: boolean;
+  considerSourceClass: boolean;
+}): Promise<boolean> {
+  const hasAiredGap = input.episodes.some(
+    (episode) => episode.airStatus === "aired" && !episode.obtained,
+  );
+  if (hasAiredGap || !input.patrolQualityUpgrade) {
+    return false;
+  }
+  const names = await listLandedQualityNames(input.storage, input.directoryId);
+  const policy = patrolQualityPolicy(input);
+  const summary = summarizeLandedQuality(names, policy);
+  return !shouldScheduleQualityUpgrade(summary.current, policy);
 }
 
 function staleStartedBefore(

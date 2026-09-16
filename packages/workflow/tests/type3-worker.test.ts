@@ -628,4 +628,94 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
     expect(on).toHaveLength(1);
     expect(on[0]?.status).toBe("failed");
   });
+
+  it("upgrade-on patrol skips a completed season already at the ladder top", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture("top");
+    season.status = "completed";
+    await seedTrackedSeason({
+      repository,
+      title,
+      season,
+      obtainedCodes: ["S01E01", "S01E02"],
+    });
+    const storage = new FakeStorageExecutor({
+      directories: {
+        [season.storageDirectoryId]: [
+          {
+            id: "f1",
+            storageDirectoryId: season.storageDirectoryId,
+            name: "Show.S01E01.2160p.DV.REMUX.mkv",
+            sizeBytes: 1,
+            episodeCode: "S01E01",
+            providerFileId: "p1",
+          },
+          {
+            id: "f2",
+            storageDirectoryId: season.storageDirectoryId,
+            name: "Show.S01E02.2160p.DV.REMUX.mkv",
+            sizeBytes: 1,
+            episodeCode: "S01E02",
+            providerFileId: "p2",
+          },
+        ],
+      },
+    });
+
+    const outcomes = await runScheduledType3Monitoring({
+      repository,
+      resourceProvider: emptyProvider(),
+      storage,
+      model: throwingModel(),
+      storageParentDirectoryId: "library_root",
+      now: fixedNow,
+      patrolQualityUpgrade: true,
+      qualityPreference: "high",
+    });
+    expect(outcomes).toEqual([{ trackedSeasonId: season.id, status: "skipped_at_quality_top" }]);
+  });
+
+  it("upgrade-on patrol still runs when landed files are strictly below preference", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture("low");
+    season.status = "completed";
+    await seedTrackedSeason({
+      repository,
+      title,
+      season,
+      obtainedCodes: ["S01E01", "S01E02"],
+    });
+    const storage = new FakeStorageExecutor({
+      directories: {
+        [season.storageDirectoryId]: [
+          {
+            id: "f1",
+            storageDirectoryId: season.storageDirectoryId,
+            name: "Show.S01E01.1080p.WEB-DL.mkv",
+            sizeBytes: 1,
+            episodeCode: "S01E01",
+            providerFileId: "p1",
+          },
+        ],
+      },
+    });
+
+    const outcomes = await runScheduledType3Monitoring({
+      repository,
+      resourceProvider: emptyProvider(),
+      storage,
+      model: throwingModel(),
+      storageParentDirectoryId: "library_root",
+      now: fixedNow,
+      patrolQualityUpgrade: true,
+      qualityPreference: "high",
+      createWorkflowRunId: () => "run_below_pref",
+    });
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]).toMatchObject({
+      trackedSeasonId: season.id,
+      status: "failed",
+      errorMessage: "agent model unavailable",
+    });
+  });
 });

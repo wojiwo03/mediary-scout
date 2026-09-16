@@ -16,6 +16,7 @@ import { isDemoModeClient } from "../lib/demo-mode";
 import { DemoAcquirePlayback } from "./demo-acquire-playback";
 import type { DemoAcquisitionEntry } from "../lib/demo-session";
 import { useDemoAcquiredTmdbIds } from "../lib/use-demo-session";
+import type { UpgradeOpportunityView } from "@media-track/workflow/quality-ladder";
 
 export function RequestSeasonButton({
   tmdbId,
@@ -194,10 +195,12 @@ export function QualityUpgradeButton({
   candidateId,
   storageId,
   titleAcquiring = false,
+  confirmLabel = "确认升级",
 }: {
   candidateId: string;
   storageId: string | undefined;
   titleAcquiring?: boolean;
+  confirmLabel?: string;
 }) {
   const router = useRouter();
   const lock = useAcquisitionLock();
@@ -244,7 +247,7 @@ export function QualityUpgradeButton({
         ) : (
           <Sparkles size={13} aria-hidden />
         )}
-        {inFlight ? "升级中" : isLocked ? "已请求" : "升级画质"}
+        {inFlight ? "升级中" : isLocked ? "已请求" : confirmLabel}
       </button>
       <AcquireResultNotice result={result} />
     </>
@@ -255,24 +258,67 @@ export function QualityUpgradePanel({
   candidateId,
   storageId,
   titleAcquiring = false,
-  targetLabel,
+  upgrade,
 }: {
   candidateId: string;
   storageId: string | undefined;
   titleAcquiring?: boolean;
-  targetLabel: string;
+  upgrade: UpgradeOpportunityView | null;
 }) {
+  const [confirming, setConfirming] = useState(false);
+  const demo = isDemoModeClient();
+  const headline = upgrade?.headline ?? "将按偏好寻找严格更高的版本";
+  const currentText = upgrade?.currentLabel ?? "未能从文件名读出";
+  const targetText = upgrade?.targetLabel ?? "偏好目标";
+
   return (
     <div className="quality-upgrade-panel">
       <p className="quality-upgrade-copy">
-        目标偏好：{targetLabel}
-        <small>按阶梯寻找严格更高的版本替换现有文件。找不到或转存失败都不会删除旧文件。</small>
+        {headline}
+        <small>仅当候选严格更高才替换。找不到或转存失败都不会删除旧文件。</small>
       </p>
-      <QualityUpgradeButton
-        candidateId={candidateId}
-        storageId={storageId}
-        titleAcquiring={titleAcquiring}
-      />
+      {demo ? null : confirming ? (
+        <div className="quality-upgrade-preview">
+          <div className="quality-upgrade-compare">
+            <div>
+              <span>现在</span>
+              <strong>{currentText}</strong>
+            </div>
+            <span className="quality-upgrade-arrow" aria-hidden>
+              →
+            </span>
+            <div>
+              <span>将寻找</span>
+              <strong>{targetText}</strong>
+            </div>
+          </div>
+          <p className="quality-upgrade-preview-note">
+            确认后才会排队。成功转存并回读验证后才删除被替换的低画质文件；失败保留现有文件。
+          </p>
+          <div className="quality-upgrade-preview-actions">
+            <QualityUpgradeButton
+              candidateId={candidateId}
+              storageId={storageId}
+              titleAcquiring={titleAcquiring}
+              confirmLabel="确认排队升级"
+            />
+            <button type="button" className="ghost-button" onClick={() => setConfirming(false)}>
+              再想想
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          className="season-request-button"
+          type="button"
+          onClick={() => setConfirming(true)}
+          disabled={titleAcquiring}
+          title="先预览现在与目标画质，确认后再排队"
+        >
+          <Sparkles size={13} aria-hidden />
+          升级画质
+        </button>
+      )}
     </div>
   );
 }
