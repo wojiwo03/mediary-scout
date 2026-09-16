@@ -7,6 +7,7 @@ import {
   parseSeasonMarkers,
   selectResourceCandidates,
 } from "../src/acquisition-v2/rules-selector.js";
+import { joinReleaseTitleParts } from "../src/acquisition-v2/release-meta.js";
 import { movieTargetToRules, tvTargetToRules } from "../src/acquisition-v2/rules-task.js";
 import { qualityLadderPolicyFromFlags } from "../src/acquisition-v2/quality-ladder.js";
 
@@ -309,5 +310,42 @@ describe("selectResourceCandidates — custom identifier words", () => {
         missingEpisodes: ["S01E10"],
       }),
     ).toEqual([]);
+  });
+});
+
+describe("selectResourceCandidates — folder + filename", () => {
+  it("covers SxxExx when the share title is folder/file", () => {
+    const selection = selectResourceCandidates({
+      candidates: [cand("ep", joinReleaseTitleParts(["庆余年 第二季", "E01.mkv"]))],
+      target: {
+        kind: "tv",
+        title: "庆余年",
+        aliases: [],
+        seasons: [2],
+        missingEpisodes: ["S02E01", "S02E02"],
+      },
+    });
+    expect(selection.selected.map((c) => c.candidateId)).toEqual(["ep"]);
+    expect(selection.selected[0]!.coveredEpisodes).toEqual(["S02E01"]);
+  });
+
+  it("ranks by leaf quality, not a higher parent pix token", () => {
+    const selection = selectResourceCandidates({
+      candidates: [
+        cand("parent4k", joinReleaseTitleParts(["庆余年 第二季 2160p 中字", "S02E01.1080p.mkv"])),
+        cand("leaf4k", joinReleaseTitleParts(["庆余年 第二季 1080p 中字", "S02E01.2160p.mkv"])),
+      ],
+      target: {
+        kind: "tv",
+        title: "庆余年",
+        aliases: [],
+        seasons: [2],
+        missingEpisodes: ["S02E01"],
+        preferredLanguage: "中文",
+        originCountries: ["CN"],
+      },
+      policy: high,
+    });
+    expect(selection.selected.map((c) => c.candidateId)).toEqual(["leaf4k"]);
   });
 });

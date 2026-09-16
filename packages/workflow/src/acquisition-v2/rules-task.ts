@@ -1,9 +1,14 @@
+import { episodeCode } from "../domain.js";
 import { episodeCodeFromFileName } from "../episode-code.js";
 import type { AcquisitionAgentResult } from "./agent-loop.js";
 import { interpretTool, type AgentToolEvent } from "./activity.js";
-import type { QualityLadderPolicy } from "./quality-ladder.js";
-import { shouldReplaceCoverage } from "./quality-ladder.js";
-import { customIdentifierWordsSpread, prepareTitle } from "./release-meta.js";
+import { scoreReleaseQuality, type QualityLadderPolicy } from "./quality-ladder.js";
+import {
+  customIdentifierWordsSpread,
+  parseReleaseMeta,
+  splitReleaseTitleParts,
+  type ParseReleaseMetaOptions,
+} from "./release-meta.js";
 import type { TaskSandbox } from "./sandbox.js";
 import {
   selectResourceCandidates,
@@ -29,11 +34,8 @@ export interface RunRulesAcquisitionRequest {
   onProgress?: (event: AgentToolEvent) => void;
 }
 
-function titledForLadder(title: string, words: readonly string[] | undefined): string {
-  if (!words || words.length === 0) {
-    return title;
-  }
-  return prepareTitle(title, words).title;
+function parseOptions(words: readonly string[] | undefined): ParseReleaseMetaOptions {
+  return !words || words.length === 0 ? {} : { customWords: words };
 }
 
 function shouldReplaceTitled(
@@ -42,7 +44,12 @@ function shouldReplaceTitled(
   policy: QualityLadderPolicy,
   words: readonly string[] | undefined,
 ): boolean {
-  return shouldReplaceCoverage(titledForLadder(existingTitle, words), titledForLadder(candidateTitle, words), policy);
+  const existing = parseReleaseMeta(existingTitle, parseOptions(words));
+  const candidate = parseReleaseMeta(candidateTitle, parseOptions(words));
+  if (candidate.discImage && !existing.discImage) {
+    return false;
+  }
+  return scoreReleaseQuality(candidate, policy) > scoreReleaseQuality(existing, policy);
 }
 
 function selectWithWords(
@@ -112,28 +119,59 @@ async function searchAliases(sandbox: TaskSandbox, target: RulesSelectorTarget, 
   }
 }
 
-function inferEpisodeCode(path: string, fallbackSeason: number | undefined, allowedSeasons: readonly number[]): string | null {
-  const name = path.split("/").at(-1) ?? path;
-  const parsed = episodeCodeFromFileName(name);
-  if (parsed) {
-    const season = Number(/^S(\d+)/.exec(parsed)?.[1] ?? 0);
-    if (allowedSeasons.length === 0 || allowedSeasons.includes(season)) {
-      return parsed;
+/**
+ * Map a sandbox listing path (`SimTreeFile.path`) onto SxxExx.
+ * Parent folders may supply the season when the leaf is only `05.mkv` / `E01`.
+ */
+export function inferEpisodeCodeFromListingPath(
+  path: string,
+  fallbackSeason: number | undefined,
+  allowedSeasons: readonly number[],
+  customWords?: readonly string[],
+): string | null {
+  const meta = parseReleaseMeta(path, { ...parseOptions(customWords), isFile: true });
+  const span = meta.episode;
+  const named = meta.seasons.filter((season) => season > 0);
+  let episode: number | undefined =
+    span && span.from === span.to && span.to < 9999 ? span.from : undefined;
+
+  const leaf = splitReleaseTitleParts(path).at(-1) ?? path;
+  if (episode === undefined) {
+    const parsed = episodeCodeFromFileName(leaf);
+    if (parsed) {
+      const season = Number(/^S(\d+)/.exec(parsed)?.[1] ?? 0);
+      if (allowedSeasons.length === 0 || allowedSeasons.includes(season)) {
+        return parsed;
+      }
+      return null;
     }
+    const bare = /(?:^|[^\d])(\d{2,3})(?:v\d+)?\.(mkv|mp4|ts|m2ts|avi)$/i.exec(leaf);
+    if (bare) {
+      const n = Number(bare[1]);
+      if (n >= 1 && n <= 2000) {
+        episode = n;
+      }
+    }
+  }
+  if (episode === undefined) {
     return null;
   }
-  if (fallbackSeason === undefined || allowedSeasons.length !== 1) {
+
+  let season: number | undefined;
+  if (named.length === 1) {
+    season = named[0];
+  } else if (named.length > 1) {
+    season = named.find((value) => allowedSeasons.includes(value)) ?? named[named.length - 1];
+  } else {
+    season = fallbackSeason;
+  }
+  if (season === undefined) {
     return null;
   }
-  const bare = /(?:^|[^\d])(\d{2,3})(?:v\d+)?\.(mkv|mp4|ts|m2ts|avi)$/i.exec(name);
-  if (!bare) {
+  if (allowedSeasons.length > 0 && !allowedSeasons.includes(season)) {
     return null;
   }
-  const episode = Number(bare[1]);
-  if (episode < 1 || episode > 2000) {
-    return null;
-  }
-  return `S${String(fallbackSeason).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
+  return episodeCode(season, episode);
 }
 
 async function transferRanked(
@@ -184,7 +222,12 @@ async function transferRanked(
   return { landed };
 }
 
-async function organizeTv(sandbox: TaskSandbox, seasons: readonly number[], onProgress?: (event: AgentToolEvent) => void): Promise<string[]> {
+async function organizeTv(
+  sandbox: TaskSandbox,
+  seasons: readonly number[],
+  onProgress?: (event: AgentToolEvent) => void,
+  words?: readonly string[],
+): Promise<string[]> {
   emit(onProgress, "inspectStaging", {});
   const staging = await sandbox.inspectStaging();
   const allowed = seasons.length > 0 ? seasons : [1];
@@ -196,7 +239,7 @@ async function organizeTv(sandbox: TaskSandbox, seasons: readonly number[], onPr
     if (!file.isVideo && !file.isSubtitle) {
       continue;
     }
-    const code = inferEpisodeCode(file.path, fallback, allowed);
+    const code = inferEpisodeCodeFromListingPath(file.path, fallback, allowed, words);
     if (!code) {
       continue;
     }
@@ -222,7 +265,13 @@ async function organizeTv(sandbox: TaskSandbox, seasons: readonly number[], onPr
   return [...new Set(marked)];
 }
 
-async function markExistingTv(sandbox: TaskSandbox, seasons: readonly number[], missing: readonly string[], onProgress?: (event: AgentToolEvent) => void): Promise<void> {
+async function markExistingTv(
+  sandbox: TaskSandbox,
+  seasons: readonly number[],
+  missing: readonly string[],
+  onProgress?: (event: AgentToolEvent) => void,
+  words?: readonly string[],
+): Promise<void> {
   const missingSet = new Set(missing);
   const found: string[] = [];
   for (const season of seasons) {
@@ -235,7 +284,7 @@ async function markExistingTv(sandbox: TaskSandbox, seasons: readonly number[], 
       if (!file.isVideo) {
         continue;
       }
-      const code = inferEpisodeCode(file.path, season, [season]);
+      const code = inferEpisodeCodeFromListingPath(file.path, season, [season], words);
       if (code && missingSet.has(code)) {
         found.push(code);
       }
@@ -276,7 +325,7 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
   emit(onProgress, "rulesSelectCandidates", { mode: "rules" });
 
   if (target.kind === "tv" && (target.seasons?.length ?? 0) > 0) {
-    await markExistingTv(sandbox, target.seasons ?? [], target.missingEpisodes ?? [], onProgress);
+    await markExistingTv(sandbox, target.seasons ?? [], target.missingEpisodes ?? [], onProgress, words);
     if (sandbox.isCoverageMet() && !request.qualityUpgrade) {
       emit(onProgress, "finish", {});
       const coverage = await sandbox.finish();
@@ -355,7 +404,7 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
     return { text: selection.reason, steps: 1, coverage };
   }
 
-  const marked = await organizeTv(sandbox, target.seasons ?? [1], onProgress);
+  const marked = await organizeTv(sandbox, target.seasons ?? [1], onProgress, words);
   if (marked.length > 0) {
     emit(onProgress, "markObtained", { codes: marked });
     await sandbox.markObtained({ codes: marked });

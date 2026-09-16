@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { parseReleaseQuality, shouldReplaceCoverage } from "../src/acquisition-v2/quality-ladder.js";
 import { mapTvCoverage } from "../src/acquisition-v2/rules-selector.js";
-import { isAnimeTitle, parseReleaseMeta, parseIdentifierWordLines, validateIdentifierWord, validateIdentifierWordText } from "../src/acquisition-v2/release-meta.js";
+import {
+  isAnimeTitle,
+  joinReleaseTitleParts,
+  parseReleaseMeta,
+  parseReleaseMetaParts,
+  splitReleaseTitleParts,
+  parseIdentifierWordLines,
+  validateIdentifierWord,
+  validateIdentifierWordText,
+} from "../src/acquisition-v2/release-meta.js";
+import { inferEpisodeCodeFromListingPath } from "../src/acquisition-v2/rules-task.js";
 
 /**
  * Golden titles shaped like MoviePilot MetaInfo inputs (PT / WEB / 网盘分享 /
@@ -231,6 +241,89 @@ describe("parseReleaseMeta — MoviePilot-style golden titles", () => {
     ).toEqual([]);
   });
 });
+
+describe("parseReleaseMeta — folder + filename Infopath merge", () => {
+  it("joins parts without ad-hoc concat and does not split URLs", () => {
+    expect(joinReleaseTitleParts([" 庆余年 第二季 ", "", "E01.mkv"])).toBe("庆余年 第二季/E01.mkv");
+    expect(splitReleaseTitleParts("https://115.com/s/abc/def")).toEqual(["https://115.com/s/abc/def"]);
+    expect(splitReleaseTitleParts("Show S02／05.mkv")).toEqual(["Show S02", "05.mkv"]);
+    expect(
+      splitReleaseTitleParts("[LoliHouse] 葬送的芙莉莲 / Sousou no Frieren - 28 [WebRip 1080p]"),
+    ).toHaveLength(1);
+  });
+
+  it("folder has show+season, file has episode only → SxxExx", () => {
+    const joined = joinReleaseTitleParts(["庆余年 第二季", "E01.mkv"]);
+    const meta = parseReleaseMeta(joined);
+    expect(meta.seasons).toEqual([2]);
+    expect(meta.episode).toEqual({ from: 1, to: 1, complete: false });
+    expect(
+      mapTvCoverage({
+        title: joined,
+        seasons: [2],
+        missingEpisodes: ["S02E01", "S02E02"],
+      }),
+    ).toEqual(["S02E01"]);
+    expect(inferEpisodeCodeFromListingPath("Show S02/05.mkv", undefined, [1, 2])).toBe("S02E05");
+    expect(
+      inferEpisodeCodeFromListingPath("[NC-Raws] Show S01/Show - 01.mkv", undefined, [1, 2]),
+    ).toBe("S01E01");
+  });
+
+  it("folder has quality/HDR, file has S01E02 → quality comes through", () => {
+    const meta = parseReleaseMetaParts(["Show S01 2160p 杜比视界 WEB-DL", "S01E02.mkv"]);
+    expect(meta.seasons).toEqual([1]);
+    expect(meta.episode).toEqual({ from: 2, to: 2, complete: false });
+    expect(meta.resolution).toBe("4k");
+    expect(meta.hdr).toBe("dv");
+    expect(meta.source).toBe("webdl");
+    expect(
+      parseReleaseMeta("Show S01 2160p 杜比视界", { subtitle: "S01E02.mkv" }).resolution,
+    ).toBe("4k");
+  });
+
+  it("conflicting episodes prefer the leaf/file token", () => {
+    const conflict = parseReleaseMeta("Show S01E01/E02.mkv");
+    expect(conflict.seasons).toEqual([1]);
+    expect(conflict.episode).toEqual({ from: 2, to: 2, complete: false });
+    expect(
+      mapTvCoverage({
+        title: "Show S01E01/E02.mkv",
+        seasons: [1],
+        missingEpisodes: ["S01E01", "S01E02"],
+      }),
+    ).toEqual(["S01E02"]);
+    const pack = parseReleaseMetaParts(["庆余年 第二季 全集", "05.mkv"]);
+    expect(pack.episode).toEqual({ from: 5, to: 5, complete: false });
+    expect(
+      mapTvCoverage({
+        title: joinReleaseTitleParts(["庆余年 第二季 全集", "05.mkv"]),
+        seasons: [2],
+        missingEpisodes: ["S02E01", "S02E05"],
+      }),
+    ).toEqual(["S02E05"]);
+  });
+
+  it("leaf quality wins over a higher parent pix token", () => {
+    const meta = parseReleaseMeta("Show S02 2160p/E01.1080p.mkv");
+    expect(meta.resolution).toBe("1080p");
+    expect(parseReleaseQuality("Show S02 2160p/E01.1080p.mkv").resolution).toBe("4k");
+  });
+
+  it("flat single-string titles still behave as before", () => {
+    const dune = parseReleaseMeta("沙丘2 2024 超高清 杜比视界 无压 中字");
+    expect(dune.year).toBe(2024);
+    expect(dune.resolution).toBe("4k");
+    expect(dune.hdr).toBe("dv");
+    expect(parseReleaseMeta("庆余年.S01E01.1080p.WEB-DL.mkv").episode).toEqual({
+      from: 1,
+      to: 1,
+      complete: false,
+    });
+    expect(parseReleaseMeta("狩猎 (2022) (tmdb-727340)/狩猎.mkv").year).toBe(2022);
+  });
+});
+
 
 describe("rules coverage uses the same meta parser", () => {
   it("maps 第N话 and anime dash episodes onto missing codes", () => {

@@ -47,10 +47,24 @@ export interface ReleaseEpisodeSpan {
 export interface ParseReleaseMetaOptions {
   /** MoviePilot-style identifier words (`from => to`, block, `front <> back >> EP±n`). */
   customWords?: readonly string[];
-  /** Optional subtitle / description; season-episode tokens here override a bare title. */
+  /**
+   * Extra listing segment (file name, share subtitle, …). With default `joinPath`,
+   * it is merged Infopath-style as the leaf — episode tokens here win; parent
+   * title fills season/year/quality gaps. Do not space-concatenate folder+file.
+   */
   subtitle?: string;
   /** Skip built-in cloud-share noise words (tests / debugging). */
   includeBuiltinWords?: boolean;
+  /**
+   * Treat this string as a filename (bare `05.mkv` → episode 5). Set internally
+   * for path leaves; callers rarely need it.
+   */
+  isFile?: boolean;
+  /**
+   * When false, do not split `/` `\\` path segments. Default true — Infopath-style
+   * parent folders fill gaps, the leaf episode wins.
+   */
+  joinPath?: boolean;
 }
 
 export interface ReleaseMeta extends ParsedReleaseQuality {
@@ -616,11 +630,125 @@ function omitUndefined<T extends Record<string, unknown>>(value: T): T {
   return out;
 }
 
+const PATH_SPLIT_RE = /[/\\／]+/;
+const LISTING_EXT_RE =
+  /\.(mkv|mp4|ts|m2ts|avi|mov|wmv|iso|rmvb|flv|srt|ass|ssa|sub|idx|vtt|sup|smi)$/i;
+/** `中文 / English` PT bilingual titles — not a folder/file path. */
+const UNSPACED_SLASH_RE = /[^/\s][/\\／][^/\s]/;
+
+/** Split a share title or listing path into folder + file segments. */
+export function splitReleaseTitleParts(title: string): string[] {
+  const trimmed = title.trim();
+  if (!trimmed) {
+    return [];
+  }
+  if (/^https?:\/\//i.test(trimmed)) {
+    return [trimmed];
+  }
+  const rawParts = trimmed
+    .split(PATH_SPLIT_RE)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0 && part !== "." && part !== "..");
+  if (rawParts.length <= 1) {
+    return rawParts;
+  }
+  const leaf = rawParts[rawParts.length - 1]!;
+  const looksLikeListing =
+    LISTING_EXT_RE.test(leaf) || UNSPACED_SLASH_RE.test(trimmed) || rawParts.length >= 3;
+  return looksLikeListing ? rawParts : [trimmed];
+}
+
 /**
- * Recognize a Chinese cloud-share title, PT torrent name, or on-disk filename
- * into MoviePilot-comparable structured meta + the local quality-ladder enums.
+ * Join folder/file names so `parseReleaseMeta` can apply Infopath merge.
+ * Callers with separate parent + leaf should use this instead of ad-hoc concat.
+ *
+ * Real shapes in this codebase:
+ * - search candidates (`ResourceCandidate.title`): share / PT listing name;
+ *   sometimes already path-like (`狩猎 (2022)/狩猎.mkv`)
+ * - sandbox interrogation (`SimTreeFile.path`): relative listing, e.g.
+ *   `[Group] Show S01/Show - 01.mkv`
+ * - verified library files (`VerifiedFile.name`): filename only
  */
-export function parseReleaseMeta(title: string, options: ParseReleaseMetaOptions = {}): ReleaseMeta {
+export function joinReleaseTitleParts(parts: readonly string[]): string {
+  return parts
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .join("/");
+}
+
+/** Parse already-split folder + file segments with Infopath merge. */
+export function parseReleaseMetaParts(
+  parts: readonly string[],
+  options: ParseReleaseMetaOptions = {},
+): ReleaseMeta {
+  const { subtitle: _subtitle, ...rest } = options;
+  return parseReleaseMeta(joinReleaseTitleParts(parts), rest);
+}
+
+function isTvLike(meta: ReleaseMeta): boolean {
+  return meta.seasons.length > 0 || meta.episode !== undefined || meta.special;
+}
+
+/**
+ * MoviePilot MetaInfoPath merge: leaf wins; parent fills empty fields.
+ * A TV parent is not merged onto a non-TV leaf (folder pack vs a movie file).
+ */
+function shouldMergeParent(leaf: ReleaseMeta, parent: ReleaseMeta): boolean {
+  return isTvLike(leaf) || !isTvLike(parent);
+}
+
+function mergeReleaseMeta(leaf: ReleaseMeta, parent: ReleaseMeta): ReleaseMeta {
+  const pick = <T>(leafVal: T, parentVal: T, empty: T): T =>
+    leafVal !== empty ? leafVal : parentVal;
+  let seasons = leaf.seasons.length > 0 ? leaf.seasons : parent.seasons;
+  if (leaf.episode && leaf.seasons.length === 0) {
+    // Keep named parent seasons; drop a generic 全集 / complete-series (-1)
+    // so a specific leaf episode is not treated as the whole pack.
+    seasons = parent.seasons.filter((season) => season > 0);
+  }
+  const effects = [...leaf.resourceEffect];
+  for (const effect of parent.resourceEffect) {
+    if (!effects.includes(effect)) {
+      effects.push(effect);
+    }
+  }
+  const applied = [...leaf.appliedWords];
+  for (const word of parent.appliedWords) {
+    if (!applied.includes(word)) {
+      applied.push(word);
+    }
+  }
+  const parsedTitle = leaf.parsedTitle || parent.parsedTitle;
+  return omitUndefined({
+    resolution: pick(leaf.resolution, parent.resolution, "unknown"),
+    hdr: pick(leaf.hdr, parent.hdr, "sdr"),
+    source: pick(leaf.source, parent.source, "unknown"),
+    audio: pick(leaf.audio, parent.audio, "unknown"),
+    discImage: leaf.discImage,
+    seasons,
+    resourceEffect: effects,
+    videoCodec: pick(leaf.videoCodec, parent.videoCodec, "unknown"),
+    appliedWords: applied,
+    special: leaf.special || (!leaf.episode && parent.special),
+    ...(parsedTitle ? { parsedTitle } : {}),
+    ...(leaf.episode ? { episode: leaf.episode } : parent.episode ? { episode: parent.episode } : {}),
+    ...(leaf.year !== undefined ? { year: leaf.year } : parent.year !== undefined ? { year: parent.year } : {}),
+    ...(leaf.part ? { part: leaf.part } : parent.part ? { part: parent.part } : {}),
+    ...(leaf.webSource ? { webSource: leaf.webSource } : parent.webSource ? { webSource: parent.webSource } : {}),
+    ...(leaf.releaseGroup ? { releaseGroup: leaf.releaseGroup } : parent.releaseGroup ? { releaseGroup: parent.releaseGroup } : {}),
+    ...(leaf.resourcePix ? { resourcePix: leaf.resourcePix } : parent.resourcePix ? { resourcePix: parent.resourcePix } : {}),
+    ...(leaf.resourceType ? { resourceType: leaf.resourceType } : parent.resourceType ? { resourceType: parent.resourceType } : {}),
+    ...(leaf.audioCodec ? { audioCodec: leaf.audioCodec } : parent.audioCodec ? { audioCodec: parent.audioCodec } : {}),
+    ...(leaf.videoBit ? { videoBit: leaf.videoBit } : parent.videoBit ? { videoBit: parent.videoBit } : {}),
+    ...(leaf.fps !== undefined ? { fps: leaf.fps } : parent.fps !== undefined ? { fps: parent.fps } : {}),
+    ...(leaf.videoEncode ? { videoEncode: leaf.videoEncode } : parent.videoEncode ? { videoEncode: parent.videoEncode } : {}),
+    ...(leaf.mediaBinding ? { mediaBinding: leaf.mediaBinding } : parent.mediaBinding ? { mediaBinding: parent.mediaBinding } : {}),
+    ...(leaf.cnName ? { cnName: leaf.cnName } : parent.cnName ? { cnName: parent.cnName } : {}),
+    ...(leaf.enName ? { enName: leaf.enName } : parent.enName ? { enName: parent.enName } : {}),
+  });
+}
+
+function parseReleaseMetaFlat(title: string, options: ParseReleaseMetaOptions = {}): ReleaseMeta {
   const prepared = prepareTitle(
     title,
     options.customWords ?? [],
@@ -631,7 +759,19 @@ export function parseReleaseMeta(title: string, options: ParseReleaseMetaOptions
   const stem = working.replace(MEDIA_EXT_RE, "");
   const quality = parseReleaseQuality(stem);
   const namedSeasons = parseNamedSeasons(stem);
-  const parsedEpisode = parseEpisodeSpanFromTitle(stem);
+  let parsedEpisode = parseEpisodeSpanFromTitle(stem);
+  if (!parsedEpisode && options.isFile) {
+    const trimmedStem = stem.trim();
+    const bare = /^(\d{1,4})(?:v\d+)?$/i.exec(trimmedStem);
+    const dash = /\s+-\s+(\d{1,4})(?:v\d+)?$/i.exec(trimmedStem);
+    const token = bare?.[1] ?? dash?.[1];
+    if (token) {
+      const n = Number(token);
+      if (isPlausibleEpisode(n)) {
+        parsedEpisode = { from: n, to: n, complete: false };
+      }
+    }
+  }
   const episode =
     tagged.beginEpisode !== undefined
       ? {
@@ -681,6 +821,52 @@ export function parseReleaseMeta(title: string, options: ParseReleaseMetaOptions
     ...(tagged.binding ? { mediaBinding: tagged.binding } : {}),
     ...names,
   });
+}
+
+function withoutSubtitle(options: ParseReleaseMetaOptions): ParseReleaseMetaOptions {
+  const { subtitle: _subtitle, ...rest } = options;
+  return rest;
+}
+
+/**
+ * Recognize a Chinese cloud-share title, PT torrent name, or on-disk filename
+ * into MoviePilot-comparable structured meta + the local quality-ladder enums.
+ *
+ * Path-like titles (`folder/file.mkv`) follow MoviePilot MetaInfoPath
+ * (`app/domain/meta/infopath.py` + `MetaInfoPath`): parse the leaf, then merge
+ * up to two parent folders so season/year/quality fill gaps while a leaf
+ * episode token always wins.
+ */
+export function parseReleaseMeta(title: string, options: ParseReleaseMetaOptions = {}): ReleaseMeta {
+  const joinPath = options.joinPath !== false;
+  const combined = joinPath ? joinReleaseTitleParts([title, options.subtitle ?? ""]) : title;
+  const parts = joinPath
+    ? splitReleaseTitleParts(combined)
+    : [title.trim()].filter((part) => part.length > 0);
+  const consumed = joinPath ? withoutSubtitle(options) : options;
+  if (parts.length <= 1) {
+    const only = parts[0] ?? title;
+    return parseReleaseMetaFlat(only, {
+      ...consumed,
+      ...(options.isFile || MEDIA_EXT_RE.test(only) ? { isFile: true } : {}),
+    });
+  }
+  const window = parts.slice(-3);
+  const leafName = window[window.length - 1]!;
+  let merged = parseReleaseMetaFlat(leafName, {
+    ...consumed,
+    isFile: true,
+  });
+  for (let index = window.length - 2; index >= 0; index -= 1) {
+    const parent = parseReleaseMetaFlat(window[index]!, {
+      ...consumed,
+      isFile: false,
+    });
+    if (shouldMergeParent(merged, parent)) {
+      merged = mergeReleaseMeta(merged, parent);
+    }
+  }
+  return merged;
 }
 
 /** Tokens the leftover/sequel heuristic should ignore (quality + meta tags). */

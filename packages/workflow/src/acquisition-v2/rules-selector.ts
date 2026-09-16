@@ -9,8 +9,7 @@
 import { episodeCode } from "../domain.js";
 import { normalizeForTitleMatch } from "../planning-search-gate.js";
 import {
-  parseReleaseQuality,
-  scoreReleaseTitle,
+  scoreReleaseQuality,
   type QualityLadderPolicy,
 } from "./quality-ladder.js";
 import {
@@ -326,7 +325,7 @@ function originIsCN(target: RulesSelectorTarget): boolean {
 
 function rejectMovieNoise(title: string, customWords?: readonly string[]): string | null {
   const titled = titledWithWords(title, customWords);
-  const quality = parseReleaseQuality(titled);
+  const quality = parseReleaseMeta(title, parseOptions(customWords));
   if (quality.discImage) {
     return "disc-image";
   }
@@ -347,7 +346,10 @@ function rankOne(
   customWords?: readonly string[],
 ): RankedRulesCandidate {
   const titled = titledWithWords(candidate.title, customWords);
-  const qualityScore = scoreReleaseTitle(titled, policy);
+  const qualityScore = scoreReleaseQuality(
+    parseReleaseMeta(candidate.title, parseOptions(customWords)),
+    policy,
+  );
   const chineseScore = chineseSubtitleScore(titled, preferChineseSubs(target), originIsCN(target));
   return {
     snapshotId: candidate.snapshotId,
@@ -462,7 +464,7 @@ export function selectResourceCandidates(input: {
 
   if (input.target.kind === "movie") {
     const playable = eligible.filter(
-      (candidate) => parseReleaseQuality(titledWithWords(candidate.title, words)).discImage === false,
+      (candidate) => parseReleaseMeta(candidate.title, parseOptions(words)).discImage === false,
     );
     const pool = playable.length > 0 ? playable : eligible;
     const withChinese = preferZh && !originCN ? pool.filter((candidate) => candidate.chineseScore >= 0) : pool;
