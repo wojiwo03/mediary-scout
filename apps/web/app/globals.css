@@ -3251,8 +3251,6 @@ select.setting-control {
   color: var(--text-muted);
   font-size: 11px;
 }
-  transform: rotate(180deg);
-}
 
 /* Push notification settings form */
 .push-form {
