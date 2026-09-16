@@ -9,6 +9,7 @@
 import { episodeCode } from "../domain.js";
 import { normalizeForTitleMatch } from "../planning-search-gate.js";
 import {
+  QUALITY_RESOLUTION_BAND,
   scoreReleaseQuality,
   type QualityLadderPolicy,
 } from "./quality-ladder.js";
@@ -474,42 +475,137 @@ function rankOne(
   };
 }
 
-function greedyCover(ranked: RankedRulesCandidate[], missing: readonly string[]): RankedRulesCandidate[] {
+function remainingGain(candidate: RankedRulesCandidate, remaining: ReadonlySet<string>): number {
+  return candidate.coveredEpisodes.reduce((count, code) => count + (remaining.has(code) ? 1 : 0), 0);
+}
+
+function isQualityAcceptable(candidate: RankedRulesCandidate, bestQuality: number): boolean {
+  return candidate.qualityScore + QUALITY_RESOLUTION_BAND >= bestQuality;
+}
+
+function compareCoverPicks(
+  a: RankedRulesCandidate,
+  b: RankedRulesCandidate,
+  remaining: ReadonlySet<string>,
+): number {
+  const aGain = remainingGain(a, remaining);
+  const bGain = remainingGain(b, remaining);
+  if (aGain !== bGain) {
+    return bGain - aGain;
+  }
+  const aOverlap = a.coveredEpisodes.length - aGain;
+  const bOverlap = b.coveredEpisodes.length - bGain;
+  if (aOverlap !== bOverlap) {
+    return aOverlap - bOverlap;
+  }
+  if (a.totalScore !== b.totalScore) {
+    return b.totalScore - a.totalScore;
+  }
+  return a.candidateId.localeCompare(b.candidateId);
+}
+
+function bestOf(pool: RankedRulesCandidate[], remaining: ReadonlySet<string>): RankedRulesCandidate {
+  return [...pool].sort((a, b) => compareCoverPicks(a, b, remaining))[0]!;
+}
+
+/**
+ * Minimal covering set for TV/anime: prefer a single pack that covers all
+ * remaining missing episodes; otherwise greedily compose complementary packs
+ * by remaining gain (denser first), then less overlap waste, then quality.
+ *
+ * Quality floor: when composing partials, prefer candidates within one
+ * resolution band of the best eligible score so a 1080p 9-ep pack beats ten
+ * 4K singles. A below-floor pack is still used when it is the only way to
+ * cover leftover episodes. Complete coverage of the current remainder always
+ * wins (整季包不可用 must not block acquisition).
+ */
+export function greedyCover(ranked: RankedRulesCandidate[], missing: readonly string[]): RankedRulesCandidate[] {
   const remaining = new Set(missing);
   const picked: RankedRulesCandidate[] = [];
-  const pool = [...ranked].sort((a, b) => {
-    const aAll = a.coveredEpisodes.length >= remaining.size && a.coveredEpisodes.every((code) => remaining.has(code) || !missing.includes(code));
-    const bAll = b.coveredEpisodes.length >= remaining.size;
-    if (aAll !== bAll) {
-      return aAll ? -1 : 1;
-    }
-    const aCover = a.coveredEpisodes.filter((code) => remaining.has(code)).length;
-    const bCover = b.coveredEpisodes.filter((code) => remaining.has(code)).length;
-    if (aCover !== bCover) {
-      return bCover - aCover;
-    }
-    return b.totalScore - a.totalScore;
-  });
+  const unused = [...ranked];
+  const bestQuality = ranked.reduce((max, candidate) => Math.max(max, candidate.qualityScore), 0);
 
-  const complete = pool.find((candidate) => candidate.coveredEpisodes.filter((code) => remaining.has(code)).length === remaining.size);
-  if (complete) {
-    return [complete];
-  }
-
-  for (const candidate of [...pool].sort((a, b) => b.totalScore - a.totalScore)) {
-    if (remaining.size === 0) {
+  while (remaining.size > 0 && unused.length > 0) {
+    const withGain = unused.filter((candidate) => remainingGain(candidate, remaining) > 0);
+    if (withGain.length === 0) {
       break;
     }
-    const gain = candidate.coveredEpisodes.filter((code) => remaining.has(code));
-    if (gain.length === 0) {
-      continue;
+
+    const complete = withGain.filter((candidate) => remainingGain(candidate, remaining) === remaining.size);
+    const acceptable = withGain.filter((candidate) => isQualityAcceptable(candidate, bestQuality));
+    let winner: RankedRulesCandidate;
+    if (complete.length > 0) {
+      const acceptableComplete = complete.filter((candidate) => isQualityAcceptable(candidate, bestQuality));
+      winner = bestOf(acceptableComplete.length > 0 ? acceptableComplete : complete, remaining);
+      picked.push(winner);
+      break;
     }
-    picked.push(candidate);
-    for (const code of gain) {
+
+    const pool = acceptable.length > 0 ? acceptable : withGain;
+    winner = bestOf(pool, remaining);
+    picked.push(winner);
+    unused.splice(unused.indexOf(winner), 1);
+    for (const code of winner.coveredEpisodes) {
       remaining.delete(code);
     }
   }
   return picked;
+}
+
+const SXE_CODE = /^S(\d+)E(\d+)$/i;
+
+/** Compress SxxExx lists for activity/reason text: S01E01,E02,E03 → S01E01–E03. */
+export function formatEpisodeCodes(codes: readonly string[]): string {
+  const unique = [...new Set(codes)];
+  if (unique.length === 0) {
+    return "";
+  }
+  const sxe: Array<{ season: number; episode: number }> = [];
+  const other: string[] = [];
+  for (const code of unique) {
+    const match = SXE_CODE.exec(code);
+    if (!match) {
+      other.push(code);
+      continue;
+    }
+    sxe.push({ season: Number(match[1]), episode: Number(match[2]) });
+  }
+  sxe.sort((a, b) => a.season - b.season || a.episode - b.episode);
+  const ranges: string[] = [];
+  let index = 0;
+  while (index < sxe.length) {
+    const start = sxe[index]!;
+    let endEpisode = start.episode;
+    while (
+      index + 1 < sxe.length &&
+      sxe[index + 1]!.season === start.season &&
+      sxe[index + 1]!.episode === endEpisode + 1
+    ) {
+      index += 1;
+      endEpisode = sxe[index]!.episode;
+    }
+    const season = `S${String(start.season).padStart(2, "0")}`;
+    const from = `E${String(start.episode).padStart(2, "0")}`;
+    ranges.push(
+      start.episode === endEpisode
+        ? `${season}${from}`
+        : `${season}${from}–E${String(endEpisode).padStart(2, "0")}`,
+    );
+    index += 1;
+  }
+  return [...ranges, ...other].join("、");
+}
+
+export function describeTvSelection(selected: readonly RankedRulesCandidate[], missing: readonly string[]): string {
+  const covered = [...new Set(selected.flatMap((candidate) => candidate.coveredEpisodes))];
+  const coveredSet = new Set(covered);
+  const uncovered = missing.filter((code) => !coveredSet.has(code));
+  const n = selected.length;
+  const coverText = formatEpisodeCodes(covered);
+  if (uncovered.length === 0) {
+    return `规则选片：用 ${n} 个分享补齐 ${coverText}`;
+  }
+  return `规则选片：用 ${n} 个分享补齐 ${coverText}（整季包不可用，仍缺 ${formatEpisodeCodes(uncovered)}）`;
 }
 
 export interface RulesConfidenceReport {
@@ -718,6 +814,6 @@ export function selectResourceCandidates(input: {
           reason: "redundant-coverage",
         })),
     ],
-    reason: `规则选片：${selected.length} 个候选覆盖 ${[...new Set(selected.flatMap((c) => c.coveredEpisodes))].join(",")}`,
+    reason: describeTvSelection(selected, missing),
   };
 }

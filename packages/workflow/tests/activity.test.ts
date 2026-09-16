@@ -74,6 +74,10 @@ describe("interpretTool — real agent tool names → cleaned 中文 + phase", (
       activity: "规则拿不准，改走智能选片…",
       phase: "pick",
     });
+    expect(interpretTool("rulesSelectCandidates", { shareCount: 3, reason: "规则选片：用 3 个分享补齐 S01E01–E06" })).toEqual({
+      activity: "用 3 个分享补齐缺集…",
+      phase: "pick",
+    });
   });
 
   it("viewResourceSnapshot is the pre-warmed 活期文档 review → mapped (not the generic 处理中 fallback)", () => {
