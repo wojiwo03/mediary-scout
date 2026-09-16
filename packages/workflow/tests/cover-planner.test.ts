@@ -7,6 +7,7 @@ import {
   groupEpisodeRanges,
   MAX_GAP_QUERIES_PER_ROUND,
   MAX_TV_TRANSFERS_PER_RUN,
+  MAX_BLACKBOX_PROBES,
   refillCover,
   remainingGain,
   uncoveredEpisodes,
@@ -118,11 +119,14 @@ describe("describeTvSelection extras", () => {
     expect(describeTvSelection(selected, eps(1, 8), { gapResearch: true })).toMatch(/补搜后用 2 个分享补齐/);
     expect(describeTvSelection(selected, eps(1, 8), { refill: true })).toMatch(/转失败换备选/);
     expect(describeTvSelection(selected, eps(1, 8), { transferCap: true })).toMatch(/留给巡检/);
+    expect(describeTvSelection(selected, eps(1, 6), { probe: true })).toMatch(/按文件名补齐集数/);
     expect(formatEpisodeCodes(uncoveredEpisodes(selected, eps(1, 8)))).toBe("S01E07–E08");
   });
 
   it("caps transfers well below a 50-ep single-file season", () => {
     expect(MAX_TV_TRANSFERS_PER_RUN).toBeLessThan(50);
     expect(MAX_TV_TRANSFERS_PER_RUN).toBeGreaterThanOrEqual(8);
+    expect(MAX_BLACKBOX_PROBES).toBeLessThanOrEqual(MAX_TV_TRANSFERS_PER_RUN);
+    expect(MAX_BLACKBOX_PROBES).toBeGreaterThan(0);
   });
 });

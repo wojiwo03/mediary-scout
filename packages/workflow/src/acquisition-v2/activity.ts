@@ -48,6 +48,10 @@ export function interpretTool(toolName: string, args: Record<string, unknown> = 
         }
       }
       return { activity: "正在按规则筛选候选…", phase: "pick" };
+    case "probeShareListing":
+      return { activity: "探查分享目录…", phase: "pick" };
+    case "probeShareFiles":
+      return { activity: "按文件名补齐集数…", phase: "pick" };
     case "planEpisodeCover":
       if (args.refill === true) {
         return { activity: "转失败换备选…", phase: "pick" };

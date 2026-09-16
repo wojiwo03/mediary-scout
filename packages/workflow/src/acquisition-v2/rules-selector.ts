@@ -128,6 +128,41 @@ export function candidateMatchesTitle(candidateTitle: string, terms: readonly st
   });
 }
 
+/**
+ * High-confidence "this share IS the target show" — required before any
+ * black-box directory probe. tmdb mediaBinding match is enough; otherwise the
+ * title must match AND the leftover after stripping the matched term / year /
+ * quality / season-episode noise must be empty (sequel/year leftover rejects).
+ */
+export function isHighConfidenceTvTitleMatch(
+  candidateTitle: string,
+  target: Pick<RulesSelectorTarget, "title" | "aliases" | "year" | "tmdbId">,
+  customWords?: readonly string[],
+): boolean {
+  const binding = mediaBindingDecision(candidateTitle, target, customWords);
+  if (binding === "mismatch") {
+    return false;
+  }
+  if (binding === "match") {
+    return true;
+  }
+  const titled = titledWithWords(candidateTitle, customWords);
+  const terms = titleTermsFor(target);
+  if (!candidateMatchesTitle(titled, terms)) {
+    return false;
+  }
+  if (looksLikeSequelOrRemake(candidateTitle, terms, target.year, customWords)) {
+    return false;
+  }
+  const matched = [...terms]
+    .sort((a, b) => b.length - a.length)
+    .find((term) => candidateMatchesTitle(titled, [term]));
+  if (!matched) {
+    return false;
+  }
+  return leftoverAfterTitle(candidateTitle, matched, target.year, customWords).length === 0;
+}
+
 /** Seasons the title explicitly names. Empty = unspecified (season-1 default). */
 export function parseSeasonMarkers(title: string): number[] {
   return parseNamedSeasons(title);
@@ -453,6 +488,7 @@ function rankOne(
   policy: QualityLadderPolicy,
   coveredEpisodes: string[],
   customWords?: readonly string[],
+  coverageSource?: "title" | "probe",
 ): RankedRulesCandidate {
   const titled = titledWithWords(candidate.title, customWords);
   const meta = parseReleaseMeta(candidate.title, parseOptions(customWords));
@@ -471,6 +507,7 @@ function rankOne(
     qualityScore,
     chineseScore,
     totalScore: qualityScore * 10 + chineseScore,
+    ...(coverageSource ? { coverageSource } : {}),
   };
 }
 
@@ -532,10 +569,13 @@ export function assessRulesConfidence(input: {
       reasons.push("season-conflict");
     }
     const pack = /全集|\bcomplete\b|季完整/i.test(picked.title) || meta.episode?.complete === true;
-    if (named.length > 0 && !meta.episode && !meta.airDate && !pack) {
+    if (picked.coverageSource !== "probe" && named.length > 0 && !meta.episode && !meta.airDate && !pack) {
       reasons.push("season-pack-without-span");
     }
     const missing = input.target.missingEpisodes ?? [];
+    if (missing.length > 0 && picked.coverageSource === "probe") {
+      continue;
+    }
     if (missing.length > 0 && !meta.episode && !meta.airDate && !pack && named.length === 0) {
       reasons.push("weak-episode-parse");
     }
@@ -550,6 +590,12 @@ export function selectResourceCandidates(input: {
   target: RulesSelectorTarget;
   policy?: QualityLadderPolicy;
   customIdentifierWords?: readonly string[];
+  /**
+   * Per-candidate episode codes from a bounded black-box probe (share listing
+   * or staging path parse). When present, replaces `mapTvCoverage` — including
+   * an empty list (probed, nothing usable: do not fall back to a season guess).
+   */
+  coverageOverrides?: ReadonlyMap<string, readonly string[]>;
 }): RulesSelection {
   const policy = input.policy ?? {};
   const terms = titleTermsFor(input.target);
@@ -590,12 +636,15 @@ export function selectResourceCandidates(input: {
       continue;
     }
 
-    const covered = mapTvCoverage({
-      title: candidate.title,
-      seasons,
-      missingEpisodes: missing,
-      ...(words && words.length > 0 ? { customWords: words } : {}),
-    });
+    const override = input.coverageOverrides?.get(candidate.candidateId);
+    const covered = override
+      ? [...override].filter((code) => missing.includes(code))
+      : mapTvCoverage({
+          title: candidate.title,
+          seasons,
+          missingEpisodes: missing,
+          ...(words && words.length > 0 ? { customWords: words } : {}),
+        });
     if (covered.length === 0) {
       rejected.push({ ...candidate, reason: "no-episode-coverage" });
       continue;
@@ -604,7 +653,11 @@ export function selectResourceCandidates(input: {
       rejected.push({ ...candidate, reason: "raw-foreign" });
       continue;
     }
-    eligible.push(rankOne(candidate, input.target, policy, covered, words));
+    eligible.push(
+      override
+        ? rankOne(candidate, input.target, policy, covered, words, "probe")
+        : rankOne(candidate, input.target, policy, covered, words),
+    );
   }
 
   if (input.target.kind === "movie") {
@@ -708,6 +761,7 @@ export function planTvCover(input: {
   excludeIds?: ReadonlySet<string>;
   remainingMissing?: readonly string[];
   gapRound?: number;
+  coverageOverrides?: ReadonlyMap<string, readonly string[]>;
 }): TvCoverPlan {
   const missing = input.remainingMissing ?? input.target.missingEpisodes ?? [];
   const excluded = input.excludeIds ?? new Set<string>();
@@ -719,6 +773,7 @@ export function planTvCover(input: {
     ...(input.customIdentifierWords && input.customIdentifierWords.length > 0
       ? { customIdentifierWords: input.customIdentifierWords }
       : {}),
+    ...(input.coverageOverrides ? { coverageOverrides: input.coverageOverrides } : {}),
   });
   const uncovered = uncoveredEpisodes(selection.selected, missing);
   return {
