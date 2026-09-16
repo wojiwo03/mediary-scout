@@ -551,11 +551,6 @@ async function DailySweepSection() {
         </div>
         <PatrolQualityUpgradeForm initial={patrolUpgrade} />
       </div>
-      <p className="panel-note" style={{ marginTop: 16 }}>
-        {patrolUpgrade
-          ? "两项都会在上述时间点运行。画质升级只替换严格更高的版本；失败不会删除旧文件。盘内文件已达偏好顶部时本轮会跳过，避免空跑。"
-          : "当前只跑追更补集，不会替换已入库画质。"}
-      </p>
       <div
         style={{
           display: "flex",

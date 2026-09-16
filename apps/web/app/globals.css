@@ -1499,6 +1499,7 @@ p {
 
 .feed-icon.tone-green { color: var(--accent); background: rgba(30, 215, 96, 0.12); }
 .feed-icon.tone-blue { color: var(--info); background: rgba(83, 157, 245, 0.12); }
+.feed-icon.tone-teal { color: #2dd4bf; background: rgba(45, 212, 191, 0.12); }
 .feed-icon.tone-amber { color: var(--warning); background: rgba(255, 164, 43, 0.12); }
 .feed-icon.tone-muted { color: var(--text-muted); }
 
@@ -1540,6 +1541,7 @@ p {
 
 .feed-status-pill.tone-green { color: var(--accent); background: rgba(30, 215, 96, 0.12); }
 .feed-status-pill.tone-indigo { color: var(--info); background: rgba(83, 157, 245, 0.12); }
+.feed-status-pill.tone-teal { color: #2dd4bf; background: rgba(45, 212, 191, 0.12); }
 .feed-status-pill.tone-amber { color: var(--warning); background: rgba(255, 164, 43, 0.12); }
 .feed-status-pill.tone-muted { color: var(--text-muted); background: var(--bg-raised); }
 
@@ -2782,6 +2784,12 @@ select.setting-control {
   grid-template-columns: 1fr 1fr;
   gap: 12px;
   margin-top: 16px;
+  align-items: stretch;
+}
+
+.patrol-upgrade-note {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 .patrol-task-card {

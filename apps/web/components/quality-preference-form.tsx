@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Check, ChevronDown, LoaderCircle } from "lucide-react";
 import {
   QUALITY_UPGRADE_MODE_COPY,
@@ -8,6 +9,10 @@ import {
   type ResolutionPreference,
 } from "@media-track/workflow/quality-ladder";
 import { saveQualityPreferenceAction } from "../app/actions";
+import {
+  emitPatrolQualityUpgradeChange,
+  PATROL_QUALITY_UPGRADE_EVENT,
+} from "../lib/patrol-quality-upgrade-sync";
 import { runAction } from "../lib/run-action";
 import { QualityLadderVisual } from "./quality-ladder-visual";
 
@@ -30,6 +35,7 @@ export function QualityPreferenceForm({
   upgradeOnReacquire: boolean;
   patrolQualityUpgrade: boolean;
 }) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [value, setValue] = useState(initial || "any");
   const [hdrFirst, setHdrFirst] = useState(preferHdrOverResolution);
@@ -38,6 +44,21 @@ export function QualityPreferenceForm({
   const [patrolUpgrade, setPatrolUpgrade] = useState(patrolQualityUpgrade);
   const [advancedOpen, setAdvancedOpen] = useState(preferHdrOverResolution || !considerSourceClass);
   const [result, setResult] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPatrolUpgrade(patrolQualityUpgrade);
+  }, [patrolQualityUpgrade]);
+
+  useEffect(() => {
+    const onChange = (event: Event) => {
+      const enabled = (event as CustomEvent<boolean>).detail;
+      if (typeof enabled === "boolean") {
+        setPatrolUpgrade(enabled);
+      }
+    };
+    window.addEventListener(PATROL_QUALITY_UPGRADE_EVENT, onChange);
+    return () => window.removeEventListener(PATROL_QUALITY_UPGRADE_EVENT, onChange);
+  }, []);
 
   const policy = useMemo(
     () =>
@@ -72,6 +93,10 @@ export function QualityPreferenceForm({
       );
       if (!r.ok) return;
       const res = r.value;
+      if (res.success) {
+        emitPatrolQualityUpgradeChange(patrolUpgrade);
+        router.refresh();
+      }
       setResult(res.success ? "✅ 保存成功" : `❌ ${res.message ?? "保存失败"}`);
       setTimeout(() => setResult(null), 3000);
     });
