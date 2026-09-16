@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   candidateMatchesTitle,
+  chineseSubtitleScore,
   mapTvCoverage,
   mediaBindingDecision,
   parseEpisodeSpan,
@@ -439,5 +440,70 @@ describe("selectResourceCandidates — folder + filename", () => {
       policy: high,
     });
     expect(selection.selected.map((c) => c.candidateId)).toEqual(["leaf4k"]);
+  });
+});
+
+describe("chineseSubtitleScore — finer language tiers", () => {
+  it("orders 简繁内封 > 简中 > 中字 > 繁中 > 国语 > CJK > 生肉 > English scene", () => {
+    const score = (title: string) => chineseSubtitleScore(title, true, false);
+    expect(score("Show 2024 1080p 简繁内封字幕")).toBe(160);
+    expect(score("Show 2024 1080p 简中")).toBe(140);
+    expect(score("Show 2024 1080p 中字")).toBe(120);
+    expect(score("Show 2024 1080p 中英双语")).toBe(120);
+    expect(score("Show 2024 1080p 中日双语")).toBe(120);
+    expect(score("Show 2024 1080p 繁中内封")).toBe(115);
+    expect(score("Show 2024 1080p 繁中")).toBe(100);
+    expect(score("Show 2024 1080p 国语")).toBe(70);
+    expect(score("Show 2024 1080p 粤语")).toBe(55);
+    expect(score("沙丘2 2024 1080p")).toBe(40);
+    expect(score("Show 2024 1080p 生肉")).toBe(-40);
+    expect(score("Show.2024.1080p.WEB-DL.x264")).toBe(-80);
+    expect(score("Show.2024.1080p.CHS-ENG.WEB-DL")).toBe(140);
+  });
+
+  it("short-circuits originCN and preferChinese false", () => {
+    expect(chineseSubtitleScore("Show 2024 1080p 简繁内封", true, true)).toBe(0);
+    expect(chineseSubtitleScore("Show.2024.1080p.WEB-DL.x264", true, true)).toBe(0);
+    expect(chineseSubtitleScore("庆余年 2024 生肉", true, true)).toBe(0);
+    expect(chineseSubtitleScore("Show 2024 1080p 中字", false, false)).toBe(0);
+    expect(chineseSubtitleScore("Show.2024.1080p.WEB-DL.x264", false, false)).toBe(0);
+  });
+
+  it("picks 简繁内封 over plain 中字 at the same quality", () => {
+    const selection = selectResourceCandidates({
+      candidates: [
+        cand("plain", "蝙蝠侠：黑暗骑士 2008 1080p WEB-DL 中字"),
+        cand("chs", "蝙蝠侠：黑暗骑士 2008 1080p WEB-DL 简繁内封字幕"),
+        cand("cht", "蝙蝠侠：黑暗骑士 2008 1080p WEB-DL 繁中"),
+      ],
+      target: {
+        kind: "movie" as const,
+        title: "蝙蝠侠：黑暗骑士",
+        aliases: ["The Dark Knight"],
+        year: 2008,
+        preferredLanguage: "中文",
+      },
+      policy: high,
+    });
+    expect(selection.selected.map((c) => c.candidateId)).toEqual(["chs"]);
+  });
+
+  it("does not let subtitle tiers overrule originCN quality ranking", () => {
+    const selection = selectResourceCandidates({
+      candidates: [
+        cand("sdr", "庆余年 2019 1080p WEB-DL 简繁内封"),
+        cand("dv", "庆余年 2019 2160p DV REMUX"),
+      ],
+      target: {
+        kind: "movie" as const,
+        title: "庆余年",
+        aliases: [],
+        year: 2019,
+        preferredLanguage: "中文",
+        originCountries: ["CN"],
+      },
+      policy: high,
+    });
+    expect(selection.selected.map((c) => c.candidateId)).toEqual(["dv"]);
   });
 });

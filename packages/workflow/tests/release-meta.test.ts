@@ -9,6 +9,7 @@ import {
   parseDiscPartTokens,
   parseReleaseMeta,
   parseReleaseMetaParts,
+  parseSubtitleTags,
   splitReleaseTitleParts,
   parseIdentifierWordLines,
   validateIdentifierWord,
@@ -587,6 +588,37 @@ describe("parseReleaseMeta — multi-disc CD/PART completeness", () => {
     const meta = parseReleaseMeta("Movie.2008.1080p.CD1-CD2/Movie.mkv");
     expect(meta.discParts).toEqual(expect.arrayContaining(["CD1", "CD2"]));
     expect(isIncompleteMovieDisc(meta)).toBe(false);
+  });
+});
+
+describe("parseReleaseMeta — subtitle / language tags", () => {
+  it("parses 简繁内封、简中/繁中、中英、国语、生肉", () => {
+    expect(parseSubtitleTags("[简繁内封字幕]")).toEqual(expect.arrayContaining(["简繁", "内封"]));
+    expect(parseReleaseMeta("沙丘2 2024 1080p 简中内封").subtitleTags).toEqual(
+      expect.arrayContaining(["简中", "内封"]),
+    );
+    expect(parseSubtitleTags("Show.2024.1080p.CHS-ENG")).toEqual(expect.arrayContaining(["简中", "中英"]));
+    expect(parseSubtitleTags("Movie 2024 繁中 外挂")).toEqual(expect.arrayContaining(["繁中", "外挂"]));
+    expect(parseSubtitleTags("Movie 2024 中日双语")).toEqual(expect.arrayContaining(["中日", "双语"]));
+    expect(parseSubtitleTags("Movie 2024 国语")).toEqual(["国语"]);
+    expect(parseSubtitleTags("Movie 2024 粤语")).toEqual(["粤语"]);
+    expect(parseSubtitleTags("Movie 2024 生肉")).toEqual(["生肉"]);
+    expect(parseSubtitleTags("Movie 2024 无字幕")).toEqual(["生肉"]);
+    expect(parseSubtitleTags("Show.2024.1080p.RAW.WEB-DL")).toEqual(["生肉"]);
+    expect(parseSubtitleTags("Movie 2024 无中字")).toEqual(["生肉"]);
+    expect(parseSubtitleTags("Movie 2024 无中字")).not.toContain("中字");
+    expect(parseReleaseMeta("沙丘2 2024 超高清 中字").subtitleTags).toEqual(["中字"]);
+  });
+
+  it("does not treat Raws groups or unmarked titles as 生肉", () => {
+    expect(parseSubtitleTags("[AI-Raws] Show - 13 (BD HEVC 1080p)")).not.toContain("生肉");
+    expect(parseSubtitleTags("沙丘2 2024 超高清")).toEqual([]);
+    expect(parseSubtitleTags("Show.2024.2160p.WEB-DL.mkv")).toEqual([]);
+  });
+
+  it("merges parent 简繁内封 onto a leaf file", () => {
+    const meta = parseReleaseMeta("葬送的芙莉莲 简繁内封/[LoliHouse] Show - 28.mkv");
+    expect(meta.subtitleTags).toEqual(expect.arrayContaining(["简繁", "内封"]));
   });
 });
 

@@ -101,6 +101,11 @@ export interface ReleaseMeta extends ParsedReleaseQuality {
   resourceType?: string;
   /** HDR / edition effects in appearance order (DoVi, HDR10, REPACK, IMAX, …). */
   resourceEffect: string[];
+  /**
+   * Pan/PT language tokens: `简中` `繁中` `简繁` `中字` `内封` `外挂`
+   * `中英` `中日` `双语` `国语` `粤语` `生肉`. Empty = unmarked.
+   */
+  subtitleTags: string[];
   /** Streaming platform (Netflix, Amazon, Disney+, 爱奇艺, …). */
   webSource?: string;
   videoCodec: VideoCodec;
@@ -683,6 +688,63 @@ export function isIncompleteMovieDisc(input: string | Pick<ReleaseMeta, "discPar
   return uniqueDiscKeys(tokens).length === 1;
 }
 
+function pushSubtitleTag(tags: string[], tag: string): void {
+  if (!tags.includes(tag)) {
+    tags.push(tag);
+  }
+}
+
+/**
+ * Chinese pan/PT subtitle and audio-language tokens. Canonical tags:
+ * `简中` `繁中` `简繁` `中字` `内封` `外挂` `中英` `中日` `双语` `国语` `粤语` `生肉`.
+ */
+export function parseSubtitleTags(title: string): string[] {
+  const text = normalizeQualityText(title);
+  const tags: string[] = [];
+  if (/简繁|简体\s*繁体|CHS[\s._+-]*CHT|GB[\s._+-]*BIG5/i.test(text)) {
+    pushSubtitleTag(tags, "简繁");
+  }
+  if (/简中|简体|简日|简英|\bCHS\b|\bGB\b/i.test(text)) {
+    pushSubtitleTag(tags, "简中");
+  }
+  if (/繁中|繁体|繁體|繁日|繁英|\bCHT\b|\bBIG5\b/i.test(text)) {
+    pushSubtitleTag(tags, "繁中");
+  }
+  if (/中英|英中|CHS[\s._+-]*ENG|ENG[\s._+-]*CHS|中英双字/i.test(text)) {
+    pushSubtitleTag(tags, "中英");
+  }
+  if (/中日|日中|简日|繁日/i.test(text)) {
+    pushSubtitleTag(tags, "中日");
+  }
+  if (/双语|双字/i.test(text)) {
+    pushSubtitleTag(tags, "双语");
+  }
+  if (/内封|内嵌|硬字幕/i.test(text)) {
+    pushSubtitleTag(tags, "内封");
+  }
+  if (/外挂|软字幕/i.test(text)) {
+    pushSubtitleTag(tags, "外挂");
+  }
+  if (/国粤/i.test(text)) {
+    pushSubtitleTag(tags, "国语");
+    pushSubtitleTag(tags, "粤语");
+    pushSubtitleTag(tags, "双语");
+  }
+  if (/国语|普通话|国配|\bmandarin\b/i.test(text)) {
+    pushSubtitleTag(tags, "国语");
+  }
+  if (/粤语|粤配|\bcantonese\b/i.test(text)) {
+    pushSubtitleTag(tags, "粤语");
+  }
+  if (/(?<!无)中字|中文字幕|官中/i.test(text)) {
+    pushSubtitleTag(tags, "中字");
+  }
+  if (/无字幕|生肉|无中字|(?<![A-Za-z])RAW(?![A-Za-z])/i.test(text)) {
+    pushSubtitleTag(tags, "生肉");
+  }
+  return tags;
+}
+
 function detectResourcePix(title: string, resolution: ResolutionBand): string | undefined {
   const text = normalizeQualityText(title);
   const pix = /(\d{3,4})[pi]|([248])k|\buhd\b|(\d{3,4})\s*[x×]\s*(\d{3,4})|[\[(](2160|1080|720|480|576|4k|uhd)[\])]/i.exec(
@@ -994,6 +1056,12 @@ function mergeReleaseMeta(leaf: ReleaseMeta, parent: ReleaseMeta): ReleaseMeta {
       discParts.push(token);
     }
   }
+  const subtitleTags = [...leaf.subtitleTags];
+  for (const tag of parent.subtitleTags) {
+    if (!subtitleTags.includes(tag)) {
+      subtitleTags.push(tag);
+    }
+  }
   const applied = [...leaf.appliedWords];
   for (const word of parent.appliedWords) {
     if (!applied.includes(word)) {
@@ -1010,6 +1078,7 @@ function mergeReleaseMeta(leaf: ReleaseMeta, parent: ReleaseMeta): ReleaseMeta {
     seasons,
     resourceEffect: effects,
     discParts,
+    subtitleTags,
     videoCodec: pick(leaf.videoCodec, parent.videoCodec, "unknown"),
     appliedWords: applied,
     special: leaf.special || (!leaf.episode && parent.special),
@@ -1102,6 +1171,7 @@ function parseReleaseMetaFlat(title: string, options: ParseReleaseMetaOptions = 
     seasons,
     resourceEffect: detectEffects(stem),
     discParts,
+    subtitleTags: parseSubtitleTags(stem),
     videoCodec: mapVideoCodec(stem),
     appliedWords: prepared.appliedWords,
     special: SPECIAL_RE.test(stem),

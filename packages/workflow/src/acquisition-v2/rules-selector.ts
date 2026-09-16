@@ -18,6 +18,7 @@ import {
   parseEpisodeSpanFromTitle,
   parseNamedSeasons,
   parseReleaseMeta,
+  parseSubtitleTags,
   prepareTitle,
   releaseMetaNoisePattern,
   type ParseReleaseMetaOptions,
@@ -72,9 +73,6 @@ const CODEC_NOISE =
 
 const MOVIE_PACK_RE =
   /第\s*[一二三四五六七八九十两\d]+\s*季|\bseason\s*\d|\bs0?\d{1,2}e\d|\bcomplete\s*series|全[集季]|1\s*[-~～]\s*\d{1,3}\s*集/i;
-
-const CHINESE_SUB_MARKER =
-  /中字|国语|中英|简繁|双语|chs[\s._-]*eng|\bchs\b|中英双字|国粤|内封/i;
 
 const ENGLISH_SCENE_RE =
   /^[\x20-\x7e]+$/; // no CJK — typical scene / English-only rip
@@ -278,6 +276,7 @@ function leftoverAfterTitle(
     meta.airDate,
     ...(meta.airDate ? airDateCodeForms(meta.airDate) : []),
     ...meta.resourceEffect,
+    ...meta.subtitleTags,
   ]) {
     if (!extra) {
       continue;
@@ -333,25 +332,94 @@ function looksLikeSequelOrRemake(
 
 function looksLikeEnglishScene(title: string): boolean {
   const text = title.normalize("NFKC");
-  return ENGLISH_SCENE_RE.test(text) && /\d{3,4}p|\bweb|\bblu/i.test(text) && !CHINESE_SUB_MARKER.test(text);
+  if (!ENGLISH_SCENE_RE.test(text) || !/\d{3,4}p|\bweb|\bblu/i.test(text)) {
+    return false;
+  }
+  return !hasChineseLanguageSignal(parseSubtitleTags(text));
 }
 
+function hasChineseLanguageSignal(tags: readonly string[]): boolean {
+  return tags.some((tag) => tag !== "生肉");
+}
+
+/**
+ * Chinese-subtitle preference when `preferredLanguage` wants 中文 and origin
+ * is not CN. Tiebreaker only (`totalScore = quality*10 + this`); one
+ * resolution/HDR step dwarfs these values.
+ *
+ * Tier (high → low):
+ *   1. 简中/简繁 + 内封          160
+ *   2. 简中/简繁                 140
+ *   3. 中字/中英/中日/双语 + 内封 125
+ *   4. 中字/中英/中日/双语       120
+ *   5. 繁中 + 内封               115
+ *   6. 繁中                      100
+ *   7. 国语 (audio, no sub tag)   70
+ *   8. 粤语 (audio, no sub tag)   55
+ *   9. CJK title, no markers      40
+ *  10. unmarked                    0
+ *  11. 生肉/无字幕               -40
+ *  12. English-only scene rip    -80
+ *
+ * originCN or !preferChinese → 0 (do not over-penalize 国产 / skip when
+ * the user did not ask for 中文).
+ */
 export function chineseSubtitleScore(
   title: string,
   preferChinese: boolean,
   originCN: boolean,
+  tags: readonly string[] = parseSubtitleTags(title),
 ): number {
   if (!preferChinese || originCN) {
     return 0;
   }
-  if (CHINESE_SUB_MARKER.test(title)) {
+  return scoreChineseLanguage(tags, title);
+}
+
+function scoreChineseLanguage(tags: readonly string[], title: string): number {
+  const raw = tags.includes("生肉");
+  const simplified = tags.includes("简中") || tags.includes("简繁");
+  const traditional = tags.includes("繁中");
+  const embedded = tags.includes("内封");
+  const genericSub =
+    tags.includes("中字") ||
+    tags.includes("中英") ||
+    tags.includes("中日") ||
+    tags.includes("双语") ||
+    (embedded && !simplified && !traditional);
+  const hasSub = simplified || traditional || genericSub;
+  if (simplified && embedded) {
+    return 160;
+  }
+  if (simplified) {
+    return 140;
+  }
+  if (genericSub && embedded) {
+    return 125;
+  }
+  if (genericSub) {
     return 120;
   }
-  if (/[\u4e00-\u9fff]/.test(title) && !looksLikeEnglishScene(title)) {
-    return 40;
+  if (traditional && embedded) {
+    return 115;
+  }
+  if (traditional) {
+    return 100;
+  }
+  if (tags.includes("国语")) {
+    return 70;
+  }
+  if (tags.includes("粤语")) {
+    return 55;
   }
   if (looksLikeEnglishScene(title)) {
     return -80;
+  }
+  if (raw && !hasSub) {
+    return -40;
+  }
+  if (/[\u4e00-\u9fff]/.test(title)) {
+    return 40;
   }
   return 0;
 }
@@ -387,11 +455,14 @@ function rankOne(
   customWords?: readonly string[],
 ): RankedRulesCandidate {
   const titled = titledWithWords(candidate.title, customWords);
-  const qualityScore = scoreReleaseQuality(
-    parseReleaseMeta(candidate.title, parseOptions(customWords)),
-    policy,
+  const meta = parseReleaseMeta(candidate.title, parseOptions(customWords));
+  const qualityScore = scoreReleaseQuality(meta, policy);
+  const chineseScore = chineseSubtitleScore(
+    titled,
+    preferChineseSubs(target),
+    originIsCN(target),
+    meta.subtitleTags,
   );
-  const chineseScore = chineseSubtitleScore(titled, preferChineseSubs(target), originIsCN(target));
   return {
     snapshotId: candidate.snapshotId,
     candidateId: candidate.candidateId,
