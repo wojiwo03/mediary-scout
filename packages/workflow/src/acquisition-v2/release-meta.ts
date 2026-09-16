@@ -80,6 +80,8 @@ export interface ReleaseMeta extends ParsedReleaseQuality {
    */
   seasons: number[];
   episode?: ReleaseEpisodeSpan;
+  /** Fansub re-encode marker (`28v2` / `[08v3]`) — same episode, later version. */
+  episodeVersion?: number;
   /** PART1 / CD1 / DISC1 when present. */
   part?: string;
   /** Raw pix token MoviePilot would put in resource_pix (e.g. 2160p, 4k). */
@@ -115,7 +117,7 @@ const MEDIA_EXT_RE = /\.(mkv|mp4|ts|m2ts|avi|mov|wmv|iso|rmvb|flv)$/i;
 /** MoviePilot `is_anime` heuristics (bracket + dash-episode, unless Sxx/EPxx). */
 const ANIME_BRACKET_RE = /【[+0-9XVPI-]+】\s*【/i;
 const ANIME_SQUARE_RE = /\[[+0-9XVPI-]+]\s*\[/i;
-const ANIME_DASH_EP_RE = /\s+-\s+[\dv]{1,4}\s+/i;
+const ANIME_DASH_EP_RE = /\s+-\s+\d{1,4}(?:v\d{1,2})?\s+/i;
 const VIDEO_SEASON_EP_RE =
   /S\d{2}\s*-\s*S\d{2}|S\d{2}|\s+S\d{1,2}|EP?\d{2,4}\s*-\s*EP?\d{2,4}|EP?\d{2,4}|\s+EP?\d{1,4}/i;
 
@@ -226,7 +228,31 @@ export function parseNamedSeasons(title: string): number[] {
   return uniqueSorted(seasons.filter((season) => season !== 0));
 }
 
-export function parseEpisodeSpanFromTitle(title: string): ReleaseEpisodeSpan | null {
+interface ParsedEpisodeToken {
+  span: ReleaseEpisodeSpan;
+  version?: number;
+}
+
+function parseEpisodeVersion(raw: string | undefined): number | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  const n = Number(raw);
+  return n >= 1 && n <= 99 ? n : undefined;
+}
+
+function singleEpisode(n: number, versionRaw?: string): ParsedEpisodeToken | null {
+  if (!isPlausibleEpisode(n)) {
+    return null;
+  }
+  const version = parseEpisodeVersion(versionRaw);
+  return {
+    span: { from: n, to: n, complete: false },
+    ...(version === undefined ? {} : { version }),
+  };
+}
+
+function parseEpisodeToken(title: string): ParsedEpisodeToken | null {
   const fin =
     /(?<!\d)\[?\s*(\d{1,4})\s*[-~～]\s*(\d{1,4})\s*(?:(?:Fin|End)(?![a-z0-9])|完结)(?:\s*\]|(?!\d))/i.exec(
       title,
@@ -235,7 +261,7 @@ export function parseEpisodeSpanFromTitle(title: string): ReleaseEpisodeSpan | n
     const from = Number(fin[1]);
     const to = Number(fin[2]);
     if (from >= 1 && to >= from && to < 10000 && !(from >= 1900 && to <= 2155)) {
-      return { from, to, complete: true };
+      return { span: { from, to, complete: true } };
     }
   }
 
@@ -246,13 +272,13 @@ export function parseEpisodeSpanFromTitle(title: string): ReleaseEpisodeSpan | n
     const from = Number(range[1]);
     const to = Number(range[2]);
     if (from >= 1 && to >= from && !(from >= 1900 && to <= 2155)) {
-      return { from, to, complete: false };
+      return { span: { from, to, complete: false } };
     }
   }
 
   const until = /更新至\s*(?:第)?\s*(\d{1,4})\s*[集话話]/.exec(title);
   if (until) {
-    return { from: 1, to: Number(until[1]), complete: false };
+    return { span: { from: 1, to: Number(until[1]), complete: false } };
   }
 
   const between =
@@ -263,56 +289,96 @@ export function parseEpisodeSpanFromTitle(title: string): ReleaseEpisodeSpan | n
     const from = parseChineseNumber(between[1]!);
     const to = parseChineseNumber(between[2]!);
     if (from !== null && to !== null && from >= 1 && to >= from) {
-      return { from, to, complete: false };
+      return { span: { from, to, complete: false } };
     }
   }
 
-  const single =
-    /[Ss]\d{1,2}[Ee](\d{1,4})/.exec(title) ??
-    /第\s*([0-9一二三四五六七八九十百零EP]+)\s*[集话話期幕]/.exec(title) ??
-    /\[TV\s+(\d{1,4})\]/i.exec(title) ??
-    /\bE(?:P)?(\d{1,4})\b/i.exec(title) ??
-    /\bEpisode\s+(\d{1,4})\b/i.exec(title);
-  if (single) {
-    const raw = single[1]!.replace(/[EP]/gi, "");
-    const n = parseChineseNumber(raw) ?? Number(raw);
-    if (isPlausibleEpisode(n)) {
-      return { from: n, to: n, complete: false };
+  const sxe = /[Ss]\d{1,2}[Ee](\d{1,4})(?:v(\d{1,2}))?/i.exec(title);
+  if (sxe) {
+    const hit = singleEpisode(Number(sxe[1]), sxe[2]);
+    if (hit) {
+      return hit;
     }
   }
 
-  const hash = /#(\d{1,4})\b/.exec(title);
+  const chinese = /第\s*([0-9一二三四五六七八九十百零EP]+)\s*[集话話期幕]/.exec(title);
+  if (chinese) {
+    const raw = chinese[1]!.replace(/[EP]/gi, "");
+    const hit = singleEpisode(parseChineseNumber(raw) ?? Number(raw));
+    if (hit) {
+      return hit;
+    }
+  }
+
+  const tv = /\[TV\s+(\d{1,4})(?:v(\d{1,2}))?\]/i.exec(title);
+  if (tv) {
+    const hit = singleEpisode(Number(tv[1]), tv[2]);
+    if (hit) {
+      return hit;
+    }
+  }
+
+  const latinEp = /\bE(?:P)?(\d{1,4})(?:v(\d{1,2}))?(?![A-Za-z0-9])/i.exec(title);
+  if (latinEp) {
+    const hit = singleEpisode(Number(latinEp[1]), latinEp[2]);
+    if (hit) {
+      return hit;
+    }
+  }
+
+  const episodeWord = /\bEpisode\s+(\d{1,4})(?:v(\d{1,2}))?\b/i.exec(title);
+  if (episodeWord) {
+    const hit = singleEpisode(Number(episodeWord[1]), episodeWord[2]);
+    if (hit) {
+      return hit;
+    }
+  }
+
+  const hash = /#(\d{1,4})(?:v(\d{1,2}))?\b/i.exec(title);
   if (hash) {
-    const n = Number(hash[1]);
-    if (isPlausibleEpisode(n)) {
-      return { from: n, to: n, complete: false };
+    const hit = singleEpisode(Number(hash[1]), hash[2]);
+    if (hit) {
+      return hit;
+    }
+  }
+
+  const dash = /\s+-\s+(\d{1,4})(?:v(\d{1,2}))?(?=$|[\s.\[\]【】])/i.exec(title);
+  if (dash && (isAnimeTitle(title) || dash[2] || /[【\[]\d{1,4}(?:v\d+)?[】\]]/.test(title))) {
+    const hit = singleEpisode(Number(dash[1]), dash[2]);
+    if (hit) {
+      return hit;
     }
   }
 
   if (isAnimeTitle(title) || /[【\[]\d{1,4}(?:v\d+)?[】\]]/.test(title)) {
-    const dash = /\s+-\s+(\d{1,4})(?:v\d+)?(?:\s+|$)/i.exec(title);
-    if (dash) {
-      const n = Number(dash[1]);
-      if (isPlausibleEpisode(n)) {
-        return { from: n, to: n, complete: false };
+    for (const bracket of title.matchAll(/[【\[](\d{1,4})(?:v(\d{1,2}))?[】\]]/g)) {
+      const hit = singleEpisode(Number(bracket[1]), bracket[2]);
+      if (hit) {
+        return hit;
       }
     }
-    for (const bracket of title.matchAll(/[【\[](\d{1,4})(?:v\d+)?[】\]]/g)) {
-      const n = Number(bracket[1]);
-      if (isPlausibleEpisode(n)) {
-        return { from: n, to: n, complete: false };
-      }
+  }
+
+  const versioned = /(?<![A-Za-z0-9])(\d{1,4})v(\d{1,2})(?![A-Za-z0-9])/i.exec(title);
+  if (versioned) {
+    const hit = singleEpisode(Number(versioned[1]), versioned[2]);
+    if (hit) {
+      return hit;
     }
   }
 
   if (/全集|\bcomplete\b/i.test(title) && !/complete\s*series/i.test(title)) {
     const count = /[全共]\s*(\d{1,4})\s*[集话話]/.exec(title);
     if (count) {
-      return { from: 1, to: Number(count[1]), complete: true };
+      return { span: { from: 1, to: Number(count[1]), complete: true } };
     }
-    return { from: 1, to: 9999, complete: true };
+    return { span: { from: 1, to: 9999, complete: true } };
   }
   return null;
+}
+
+export function parseEpisodeSpanFromTitle(title: string): ReleaseEpisodeSpan | null {
+  return parseEpisodeToken(title)?.span ?? null;
 }
 
 function mapVideoCodec(title: string): VideoCodec {
@@ -547,10 +613,11 @@ function stripForNames(title: string): string {
   rest = rest.replace(/\(\s*(?:19|20)\d{2}\s*\)/g, " ");
   rest = rest.replace(/\b(?:19|20)\d{2}\b/g, " ");
   rest = rest.replace(/第\s*[一二三四五六七八九十两\dIVXⅠ-Ⅻ]{1,4}\s*[季集话話期幕]/g, " ");
-  rest = rest.replace(/\bS\d{1,2}(?:E\d{1,4})?\b/gi, " ");
-  rest = rest.replace(/[【\[]\d{1,4}(?:v\d+)?[】\]]/g, " ");
-  rest = rest.replace(/\[TV\s+\d{1,4}\]/gi, " ");
-  rest = rest.replace(/#\d{1,4}\b/g, " ");
+  rest = rest.replace(/\bS\d{1,2}(?:E\d{1,4}(?:v\d{1,2})?)?\b/gi, " ");
+  rest = rest.replace(/[【\[]\d{1,4}(?:v\d{1,2})?[】\]]/g, " ");
+  rest = rest.replace(/\[TV\s+\d{1,4}(?:v\d{1,2})?\]/gi, " ");
+  rest = rest.replace(/#\d{1,4}(?:v\d{1,2})?\b/gi, " ");
+  rest = rest.replace(/(?<![A-Za-z0-9])\d{1,4}v\d{1,2}(?![A-Za-z0-9])/gi, " ");
   rest = rest.replace(NAME_NOISE_RE, " ");
   rest = rest.replace(releaseMetaNoisePattern(), " ");
   rest = rest.replace(/[-@][A-Za-z0-9]+$/g, " ");
@@ -717,7 +784,17 @@ function mergeReleaseMeta(leaf: ReleaseMeta, parent: ReleaseMeta): ReleaseMeta {
     appliedWords: applied,
     special: leaf.special || (!leaf.episode && parent.special),
     ...(parsedTitle ? { parsedTitle } : {}),
-    ...(leaf.episode ? { episode: leaf.episode } : parent.episode ? { episode: parent.episode } : {}),
+    ...(leaf.episode
+      ? {
+          episode: leaf.episode,
+          ...(leaf.episodeVersion !== undefined ? { episodeVersion: leaf.episodeVersion } : {}),
+        }
+      : parent.episode
+        ? {
+            episode: parent.episode,
+            ...(parent.episodeVersion !== undefined ? { episodeVersion: parent.episodeVersion } : {}),
+          }
+        : {}),
     ...(leaf.year !== undefined ? { year: leaf.year } : parent.year !== undefined ? { year: parent.year } : {}),
     ...(leaf.part ? { part: leaf.part } : parent.part ? { part: parent.part } : {}),
     ...(leaf.webSource ? { webSource: leaf.webSource } : parent.webSource ? { webSource: parent.webSource } : {}),
@@ -745,17 +822,14 @@ function parseReleaseMetaFlat(title: string, options: ParseReleaseMetaOptions = 
   const stem = working.replace(MEDIA_EXT_RE, "");
   const quality = parseReleaseQuality(stem);
   const namedSeasons = parseNamedSeasons(stem);
-  let parsedEpisode = parseEpisodeSpanFromTitle(stem);
-  if (!parsedEpisode && options.isFile) {
+  let parsed = parseEpisodeToken(stem);
+  if (!parsed && options.isFile) {
     const trimmedStem = stem.trim();
-    const bare = /^(\d{1,4})(?:v\d+)?$/i.exec(trimmedStem);
-    const dash = /\s+-\s+(\d{1,4})(?:v\d+)?$/i.exec(trimmedStem);
-    const token = bare?.[1] ?? dash?.[1];
+    const bare = /^(\d{1,4})(?:v(\d{1,2}))?$/i.exec(trimmedStem);
+    const fileDash = /\s+-\s+(\d{1,4})(?:v(\d{1,2}))?$/i.exec(trimmedStem);
+    const token = bare ?? fileDash;
     if (token) {
-      const n = Number(token);
-      if (isPlausibleEpisode(n)) {
-        parsedEpisode = { from: n, to: n, complete: false };
-      }
+      parsed = singleEpisode(Number(token[1]), token[2]);
     }
   }
   const episode =
@@ -765,7 +839,8 @@ function parseReleaseMetaFlat(title: string, options: ParseReleaseMetaOptions = 
           to: tagged.endEpisode ?? tagged.beginEpisode,
           complete: false,
         }
-      : parsedEpisode;
+      : parsed?.span;
+  const episodeVersion = tagged.beginEpisode !== undefined ? undefined : parsed?.version;
   const seasons =
     tagged.beginSeason !== undefined
       ? uniqueSorted(
@@ -794,6 +869,7 @@ function parseReleaseMetaFlat(title: string, options: ParseReleaseMetaOptions = 
     special: SPECIAL_RE.test(stem),
     parsedTitle: stem,
     ...(episode ? { episode } : {}),
+    ...(episodeVersion === undefined ? {} : { episodeVersion }),
     ...(year === undefined ? {} : { year }),
     ...(part === undefined ? {} : { part }),
     ...(webSource === undefined ? {} : { webSource }),

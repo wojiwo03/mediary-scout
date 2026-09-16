@@ -214,7 +214,7 @@ export function mapTvCoverage(input: {
 }
 
 const SEASON_EPISODE_NOISE =
-  /第\s*[一二三四五六七八九十两\d]+\s*[季集话話期幕]|s\d{1,2}(?:[-~～]s?\d{1,2})?(?:e\d{1,4}(?:[-~～]e?\d{1,4})?)?|season\s*\d+|(?:e|ep)\d{1,4}|\d{1,4}\s*[-~～至到]\s*\d{1,4}\s*[集话話]|\d{1,4}[集话話]/gi;
+  /第\s*[一二三四五六七八九十两\d]+\s*[季集话話期幕]|s\d{1,2}(?:[-~～]s?\d{1,2})?(?:e\d{1,4}(?:v\d{1,2})?(?:[-~～]e?\d{1,4})?)?|season\s*\d+|(?:e|ep)\d{1,4}(?:v\d{1,2})?|\d{1,4}v\d{1,2}|\d{1,4}\s*[-~～至到]\s*\d{1,4}\s*[集话話]|\d{1,4}[集话話]/gi;
 
 function leftoverAfterTitle(
   candidateTitle: string,

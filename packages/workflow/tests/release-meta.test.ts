@@ -242,6 +242,53 @@ describe("parseReleaseMeta — MoviePilot-style golden titles", () => {
       }),
     ).toEqual([]);
   });
+
+  it("anime re-encode tokens 28v2 / [08v3] / - 12v2 map to the same episode", () => {
+    const dashed = parseReleaseMeta(
+      "[LoliHouse] 葬送的芙莉莲 / Sousou no Frieren - 28v2 [WebRip 1080p HEVC-10bit AAC]",
+    );
+    expect(dashed.episode).toEqual({ from: 28, to: 28, complete: false });
+    expect(dashed.episodeVersion).toBe(2);
+
+    const bracket = parseReleaseMeta("【喵萌奶茶屋】[鬼灭之刃 柱训练篇][08v3][1080p][简日双语]");
+    expect(bracket.episode).toEqual({ from: 8, to: 8, complete: false });
+    expect(bracket.episodeVersion).toBe(3);
+
+    const dashOnly = parseReleaseMeta("[字幕组] Show - 12v2 [1080p].mkv");
+    expect(dashOnly.episode).toEqual({ from: 12, to: 12, complete: false });
+    expect(dashOnly.episodeVersion).toBe(2);
+
+    expect(parseReleaseMeta("葬送的芙莉莲 28v2 1080p").episode).toEqual({
+      from: 28,
+      to: 28,
+      complete: false,
+    });
+    expect(parseReleaseMeta("葬送的芙莉莲 28v2 1080p").episodeVersion).toBe(2);
+
+    expect(
+      mapTvCoverage({
+        title: "[LoliHouse] 葬送的芙莉莲 - 28v2 [WebRip 1080p]",
+        seasons: [1],
+        missingEpisodes: ["S01E28", "S01E29"],
+      }),
+    ).toEqual(["S01E28"]);
+
+    const plain = parseReleaseMeta("【喵萌奶茶屋】[鬼灭之刃][08][1080p]");
+    expect(plain.episode?.from).toBe(8);
+    expect(plain).not.toHaveProperty("episodeVersion");
+    expect(parseReleaseMeta("Show.S01E05.1080p.WEB-DL.mkv").episode).toEqual({
+      from: 5,
+      to: 5,
+      complete: false,
+    });
+    expect(parseReleaseMeta("Show.S01E05.1080p.WEB-DL.mkv")).not.toHaveProperty("episodeVersion");
+    expect(parseReleaseMeta("Show.S01E28v2.1080p.mkv").episode).toEqual({
+      from: 28,
+      to: 28,
+      complete: false,
+    });
+    expect(parseReleaseMeta("Show.S01E28v2.1080p.mkv").episodeVersion).toBe(2);
+  });
 });
 
 describe("parseReleaseMeta — folder + filename Infopath merge", () => {

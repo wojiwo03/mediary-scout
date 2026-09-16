@@ -177,6 +177,22 @@ describe("selectResourceCandidates — TV", () => {
     expect(selection.selected).toEqual([]);
     expect(selection.rejected.some((r) => r.reason === "raw-foreign")).toBe(true);
   });
+
+  it("covers a versioned anime episode as the same SxxEN", () => {
+    const selection = selectResourceCandidates({
+      candidates: [cand("v2", "[LoliHouse] 葬送的芙莉莲 - 28v2 [WebRip 1080p][简繁内封字幕]")],
+      target: {
+        kind: "tv",
+        title: "葬送的芙莉莲",
+        aliases: ["Sousou no Frieren"],
+        seasons: [1],
+        missingEpisodes: ["S01E28"],
+        preferredLanguage: "中文",
+      },
+    });
+    expect(selection.selected.map((c) => c.candidateId)).toEqual(["v2"]);
+    expect(selection.selected[0]!.coveredEpisodes).toEqual(["S01E28"]);
+  });
 });
 
 describe("selectResourceCandidates — mediaBinding", () => {
