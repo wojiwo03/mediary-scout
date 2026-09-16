@@ -143,7 +143,12 @@ describe("system prompt carries raw snapshot pointer", () => {
     const tvPrompt = buildTvAnimeSystemPrompt({});
     const moviePrompt = buildMovieSystemPrompt({});
 
-    expect(tvPrompt).not.toContain("viewResourceSnapshot");
+    // TV LOOP_GUIDANCE names viewResourceSnapshot (call planEpisodeCover after it)
+    // the same way the skill INDEX may name viewSubtitleSnapshot — what must NOT
+    // render is the RAW SNAPSHOT / 活期文档 pointer.
+    expect(tvPrompt).not.toContain("RAW SNAPSHOT");
+    expect(moviePrompt).not.toContain("RAW SNAPSHOT");
+    expect(tvPrompt).not.toMatch(/already pre-searched the raw keyword/i);
     expect(moviePrompt).not.toContain("viewResourceSnapshot");
   });
 });
