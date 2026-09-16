@@ -90,6 +90,14 @@ describe("interpretTool — real agent tool names → cleaned 中文 + phase", (
       activity: "正在规划最少分享补齐…",
       phase: "pick",
     });
+    expect(interpretTool("probeShareListing", {})).toEqual({
+      activity: "探查分享目录…",
+      phase: "pick",
+    });
+    expect(interpretTool("probeShareFiles", {})).toEqual({
+      activity: "按文件名补齐集数…",
+      phase: "pick",
+    });
   });
 
   it("viewResourceSnapshot is the pre-warmed 活期文档 review → mapped (not the generic 处理中 fallback)", () => {

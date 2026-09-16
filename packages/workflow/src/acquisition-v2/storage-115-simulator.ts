@@ -70,6 +70,21 @@ export interface StorageV2 {
    *  `transferUntilLanded` (which iterates on failure) accepts only "share"
    *  candidates and uses this to reject magnets/unknown links up front. */
   candidateLinkKind(candidateId: string): "share" | "magnet" | "unknown";
+  /**
+   * Optional read-only share listing (no materialize).
+   *
+   * Verified 2026-09 against live sandbox / executor surfaces:
+   * - `TaskSandbox` / `StorageExecutor` have NO list-share tool. The only
+   *   documented read of share contents is `inspectStaging` AFTER transfer.
+   * - Brand clients list internally during transfer (Quark `listShareDetail`,
+   *   Tianyi/123 `listShareDir`) but that is not on this interface.
+   * - 115 executor has no share-list; 光鸭 is magnet-only.
+   * Return `null` when the backend cannot list without transferring (real
+   * drives today). Return `[]` / paths when a listing WAS obtained.
+   * Hypothesis until a brand actually implements this method: do not assume
+   * list-without-transfer works in production.
+   */
+  listCandidateListing?(input: { candidateId: string }): Promise<Array<{ path: string }> | null>;
   listTree(input: { directoryId: string }): Promise<SimTreeFile[]>;
   /** Recursive list of subdirectories under a directory (path relative to it) —
    *  the source of the wrapper-dir handle flatten removes. */
@@ -100,6 +115,8 @@ export class Storage115Simulator implements StorageV2 {
   private readonly linkKinds: Map<string, "share" | "magnet">;
   private readonly failureMessages: Map<string, string>;
   private readonly apiBudget: number;
+  /** When false, `listCandidateListing` returns null (models RealStorageV2). */
+  private readonly shareListingEnabled: boolean;
   private sequence = 0;
   private callsSpent = 0;
 
@@ -116,6 +133,11 @@ export class Storage115Simulator implements StorageV2 {
       failureMessages?: Record<string, string>;
       rootId?: string;
       apiBudget?: number;
+      /**
+       * Opt out of read-only pack listing so tests exercise the staging-transfer
+       * probe fallback (the production StorageV2 path today).
+       */
+      disableShareListing?: boolean;
     } = {},
   ) {
     const rootId = options.rootId ?? "root";
@@ -124,6 +146,22 @@ export class Storage115Simulator implements StorageV2 {
     this.linkKinds = new Map(Object.entries(options.linkKinds ?? {}));
     this.failureMessages = new Map(Object.entries(options.failureMessages ?? {}));
     this.apiBudget = options.apiBudget ?? Number.POSITIVE_INFINITY;
+    this.shareListingEnabled = options.disableShareListing !== true;
+  }
+
+  /**
+   * Read-only: return the pack's relative paths without materializing files.
+   * `null` when listing is disabled (transfer-fallback tests / real drives).
+   */
+  async listCandidateListing(input: { candidateId: string }): Promise<Array<{ path: string }> | null> {
+    if (!this.shareListingEnabled) {
+      return null;
+    }
+    const pack = this.packs.get(input.candidateId);
+    if (!pack) {
+      return [];
+    }
+    return pack.files.map((file) => ({ path: file.path }));
   }
 
   candidateLinkKind(candidateId: string): "share" | "magnet" | "unknown" {

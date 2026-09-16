@@ -15,6 +15,12 @@ export const MAX_GAP_RESEARCH_ROUNDS = 2;
 export const MAX_GAP_QUERIES_PER_ROUND = 2;
 /** Hard ceiling on TV/anime share transfers per run (attempts, including failures). */
 export const MAX_TV_TRANSFERS_PER_RUN = 12;
+/**
+ * Hard ceiling on black-box / opaque share probes per run.
+ * Listing (when the storage surface exposes it) is cheap; staging-transfer
+ * fallback is not — never walk the whole low-score tail.
+ */
+export const MAX_BLACKBOX_PROBES = 3;
 
 export interface CoverCandidate {
   snapshotId: string;
@@ -24,12 +30,15 @@ export interface CoverCandidate {
   qualityScore: number;
   chineseScore: number;
   totalScore: number;
+  /** `probe` = share listing / staging path parse, not a title span. */
+  coverageSource?: "title" | "probe";
 }
 
 export interface CoverPlanExtras {
   gapResearch?: boolean;
   refill?: boolean;
   transferCap?: boolean;
+  probe?: boolean;
 }
 
 export interface EpisodeRange {
@@ -190,6 +199,9 @@ export function describeTvSelection(
   const notes: string[] = [];
   if (extras.refill) {
     notes.push("转失败换备选");
+  }
+  if (extras.probe) {
+    notes.push("按文件名补齐集数");
   }
   if (uncovered.length > 0) {
     const leftover = formatEpisodeCodes(uncovered);

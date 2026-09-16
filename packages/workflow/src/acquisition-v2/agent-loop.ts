@@ -16,6 +16,7 @@ import {
   MAX_TV_TRANSFERS_PER_RUN,
   transferAttemptSucceeded,
 } from "./cover-planner.js";
+import { mapTvCoverageFromListing, pickOpaqueProbeCandidates } from "./listing-coverage.js";
 import { mapTvCoverage, planTvCover, type RulesSelectorTarget } from "./rules-selector.js";
 import type { QualityLadderPolicy } from "./quality-ladder.js";
 
@@ -104,6 +105,8 @@ class AgentCoverSession {
   readonly used = new Set<string>();
   readonly covered = new Set<string>();
   lastPlan: LastCoverPlan | null = null;
+  private readonly probedCoverage = new Map<string, string[]>();
+  private probesStarted = false;
 
   constructor(
     private readonly sandbox: TaskSandbox,
@@ -115,7 +118,72 @@ class AgentCoverSession {
     return marked.filter((code) => !this.covered.has(code));
   }
 
-  plan(gapRound = 0) {
+  private coverageFor(title: string, candidateId: string, remaining: readonly string[]): string[] {
+    const probed = this.probedCoverage.get(candidateId);
+    if (probed) {
+      return probed.filter((code) => remaining.includes(code));
+    }
+    return mapTvCoverage({
+      title,
+      seasons: this.context.target.seasons ?? [1],
+      missingEpisodes: [...remaining],
+      ...(this.context.customIdentifierWords && this.context.customIdentifierWords.length > 0
+        ? { customWords: this.context.customIdentifierWords }
+        : {}),
+    });
+  }
+
+  /**
+   * Listing-only opaque probe (planEpisodeCover is documented read-only).
+   * Staging-transfer fallback stays on the rules worker, not the Agent tool.
+   */
+  private async ensureListingProbes(): Promise<void> {
+    if (this.probesStarted || this.context.target.kind !== "tv") {
+      return;
+    }
+    this.probesStarted = true;
+    const remaining = this.remainingMissing();
+    if (remaining.length === 0) {
+      return;
+    }
+    const candidates = candidatesFromSnapshots(this.sandbox.listObservedSnapshots());
+    const first = planTvCover({
+      candidates,
+      target: this.context.target,
+      ...(this.context.policy ? { policy: this.context.policy } : {}),
+      ...(this.context.customIdentifierWords && this.context.customIdentifierWords.length > 0
+        ? { customIdentifierWords: this.context.customIdentifierWords }
+        : {}),
+      remainingMissing: remaining,
+    });
+    const picks = pickOpaqueProbeCandidates({
+      candidates,
+      target: { ...this.context.target, missingEpisodes: remaining },
+      ...(this.context.policy ? { policy: this.context.policy } : {}),
+      ...(this.context.customIdentifierWords && this.context.customIdentifierWords.length > 0
+        ? { customWords: this.context.customIdentifierWords }
+        : {}),
+      titleMapped: first.selection.eligible ?? first.selection.selected,
+    });
+    const seasons = this.context.target.seasons ?? [1];
+    const words = this.context.customIdentifierWords;
+    for (const candidate of picks) {
+      const listing = await this.sandbox.listCandidateListing(candidate.candidateId);
+      if (!listing) {
+        continue;
+      }
+      const covered = mapTvCoverageFromListing({
+        paths: listing.map((row) => row.path),
+        seasons,
+        missingEpisodes: remaining,
+        ...(words && words.length > 0 ? { customWords: words } : {}),
+      });
+      this.probedCoverage.set(candidate.candidateId, covered);
+    }
+  }
+
+  async plan(gapRound = 0) {
+    await this.ensureListingProbes();
     const remaining = this.remainingMissing();
     const result = planTvCover({
       candidates: candidatesFromSnapshots(this.sandbox.listObservedSnapshots()),
@@ -127,6 +195,7 @@ class AgentCoverSession {
       excludeIds: new Set([...this.exclude, ...this.used]),
       remainingMissing: remaining,
       gapRound,
+      ...(this.probedCoverage.size > 0 ? { coverageOverrides: this.probedCoverage } : {}),
     });
     this.lastPlan = {
       selectedIds: result.selection.selected.map((candidate) => candidate.candidateId),
@@ -178,14 +247,7 @@ class AgentCoverSession {
     if (!found) {
       return null;
     }
-    const covered = mapTvCoverage({
-      title: found.title,
-      seasons: this.context.target.seasons ?? [1],
-      missingEpisodes: [...remaining],
-      ...(this.context.customIdentifierWords && this.context.customIdentifierWords.length > 0
-        ? { customWords: this.context.customIdentifierWords }
-        : {}),
-    });
+    const covered = this.coverageFor(found.title, candidateId, [...remaining]);
     if (covered.length === 0) {
       return "SANDBOX_REDUNDANT_COVERAGE: 该分享不覆盖仍缺集。请按 planEpisodeCover 的 selected 转存，或先补搜后再规划。";
     }
@@ -200,14 +262,8 @@ class AgentCoverSession {
         snapshot.candidates.filter((candidate) => candidate.id === candidateId).map((candidate) => candidate.title),
       )[0];
       if (found) {
-        for (const code of mapTvCoverage({
-          title: found,
-          seasons: this.context.target.seasons ?? [1],
-          missingEpisodes: this.context.target.missingEpisodes ?? this.sandbox.remainingNeed(),
-          ...(this.context.customIdentifierWords && this.context.customIdentifierWords.length > 0
-            ? { customWords: this.context.customIdentifierWords }
-            : {}),
-        })) {
+        const remaining = this.context.target.missingEpisodes ?? this.sandbox.remainingNeed();
+        for (const code of this.coverageFor(found, candidateId, remaining)) {
           this.covered.add(code);
         }
       }
@@ -344,9 +400,9 @@ export function buildSandboxToolSet(
   if (coverSession) {
     tools["planEpisodeCover"] = {
       description:
-        "TV/anime complementary-cover planner (same greedyCover the rules path uses). Free, read-only. Returns the fewest shares that cover remaining missing episodes, leftover holes, and bounded gapQueries for 补搜. Call AFTER viewResourceSnapshot (and after a failed transfer / 补搜) BEFORE transferring. Transfer ONLY the selected set — redundant overlaps are refused. If uncovered remains, search at most the returned gapQueries, then call again. If a transfer fails, call again to 转失败换备选. If transfersLeft is 0, leave leftovers for patrol.",
+        "TV/anime complementary-cover planner (same greedyCover the rules path uses). Free, read-only. May list share contents for a few high-confidence opaque titles (剧名 第一季 / no episode span) when the drive exposes listing without transfer — never a lucky-dip transfer. Returns the fewest shares that cover remaining missing episodes, leftover holes, and bounded gapQueries for 补搜. Call AFTER viewResourceSnapshot (and after a failed transfer / 补搜) BEFORE transferring. Transfer ONLY the selected set — redundant overlaps are refused. If uncovered remains, search at most the returned gapQueries, then call again. If a transfer fails, call again to 转失败换备选. If transfersLeft is 0, leave leftovers for patrol.",
       inputSchema: z.object({ gapRound: z.number().int().min(0).max(1).optional() }),
-      execute: (args: { gapRound?: number } = {}) => Promise.resolve(coverSession.plan(args?.gapRound ?? 0)),
+      execute: (args: { gapRound?: number } = {}) => coverSession.plan(args?.gapRound ?? 0),
     };
   }
   if (options.movie) {

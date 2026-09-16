@@ -1,12 +1,9 @@
-import { episodeCode } from "../domain.js";
-import { episodeCodeFromFileName } from "../episode-code.js";
 import type { AcquisitionAgentResult } from "./agent-loop.js";
 import { interpretTool, type AgentToolEvent } from "./activity.js";
 import { scoreReleaseQuality, type QualityLadderPolicy } from "./quality-ladder.js";
 import {
   customIdentifierWordsSpread,
   parseReleaseMeta,
-  splitReleaseTitleParts,
   type ParseReleaseMetaOptions,
 } from "./release-meta.js";
 import {
@@ -18,6 +15,11 @@ import {
   MAX_GAP_RESEARCH_ROUNDS,
   transferAttemptSucceeded,
 } from "./cover-planner.js";
+import {
+  inferEpisodeCodeFromListingPath,
+  mapTvCoverageFromListing,
+  pickOpaqueProbeCandidates,
+} from "./listing-coverage.js";
 import type { TaskSandbox } from "./sandbox.js";
 import {
   selectResourceCandidates,
@@ -28,6 +30,8 @@ import {
   type RulesSelectorTarget,
 } from "./rules-selector.js";
 import type { MovieTarget, TvAnimeTarget } from "./task-agents.js";
+
+export { inferEpisodeCodeFromListingPath } from "./listing-coverage.js";
 
 /**
  * Drive the existing sandbox tools with a deterministic selector: search
@@ -74,12 +78,14 @@ function selectWithWords(
   target: RulesSelectorTarget,
   policy: QualityLadderPolicy,
   words: readonly string[] | undefined,
+  coverageOverrides?: ReadonlyMap<string, readonly string[]>,
 ) {
   return selectResourceCandidates({
     candidates,
     target,
     policy,
     ...customIdentifierWordsSpread(words ? [...words] : undefined),
+    ...(coverageOverrides ? { coverageOverrides } : {}),
   });
 }
 
@@ -125,65 +131,6 @@ async function searchAliases(sandbox: TaskSandbox, target: RulesSelectorTarget, 
   }
 }
 
-/**
- * Map a sandbox listing path (`SimTreeFile.path`) onto SxxExx.
- * Parent folders may supply the season when the leaf is only `05.mkv` / `E01`.
- */
-export function inferEpisodeCodeFromListingPath(
-  path: string,
-  fallbackSeason: number | undefined,
-  allowedSeasons: readonly number[],
-  customWords?: readonly string[],
-): string | null {
-  const meta = parseReleaseMeta(path, { ...parseOptions(customWords), isFile: true });
-  const span = meta.episode;
-  const named = meta.seasons.filter((season) => season > 0);
-  let episode: number | undefined =
-    span && span.from === span.to && span.to < 9999 ? span.from : undefined;
-
-  const leaf = splitReleaseTitleParts(path).at(-1) ?? path;
-  if (episode === undefined) {
-    const parsed = episodeCodeFromFileName(leaf);
-    if (parsed) {
-      const season = Number(/^S(\d+)/.exec(parsed)?.[1] ?? 0);
-      if (allowedSeasons.length === 0 || allowedSeasons.includes(season)) {
-        return parsed;
-      }
-      return null;
-    }
-    // Date-named leaves (`2024.03.15.mkv`) must not become E15 via the trailing
-    // `\d{2,3}.ext` heuristic. Library identity stays SxxExx; we do not invent it.
-    if (!meta.airDate) {
-      const bare = /(?:^|[^\d])(\d{2,3})(?:v\d+)?\.(mkv|mp4|ts|m2ts|avi)$/i.exec(leaf);
-      if (bare) {
-        const n = Number(bare[1]);
-        if (n >= 1 && n <= 2000) {
-          episode = n;
-        }
-      }
-    }
-  }
-  if (episode === undefined) {
-    return null;
-  }
-
-  let season: number | undefined;
-  if (named.length === 1) {
-    season = named[0];
-  } else if (named.length > 1) {
-    season = named.find((value) => allowedSeasons.includes(value)) ?? named[named.length - 1];
-  } else {
-    season = fallbackSeason;
-  }
-  if (season === undefined) {
-    return null;
-  }
-  if (allowedSeasons.length > 0 && !allowedSeasons.includes(season)) {
-    return null;
-  }
-  return episodeCode(season, episode);
-}
-
 function transferSucceeded(result: unknown): boolean {
   return transferAttemptSucceeded(result);
 }
@@ -227,6 +174,113 @@ async function runGapResearch(
     }
   }
   return didSearch;
+}
+
+async function probeOpaqueTvShares(input: {
+  sandbox: TaskSandbox;
+  candidates: readonly RulesSelectorCandidate[];
+  target: RulesSelectorTarget;
+  policy: QualityLadderPolicy;
+  words: readonly string[] | undefined;
+  titleMapped: RankedRulesCandidate[];
+  onProgress?: (event: AgentToolEvent) => void;
+  listingOnly?: boolean;
+}): Promise<{
+  overrides: Map<string, string[]>;
+  transferredIds: Set<string>;
+  transferredFiles: Map<string, string[]>;
+}> {
+  const overrides = new Map<string, string[]>();
+  const transferredIds = new Set<string>();
+  const transferredFiles = new Map<string, string[]>();
+  const missing = input.target.missingEpisodes ?? [];
+  const seasons = input.target.seasons ?? [1];
+  if (input.target.kind !== "tv" || missing.length === 0) {
+    return { overrides, transferredIds, transferredFiles };
+  }
+  const picks = pickOpaqueProbeCandidates({
+    candidates: input.candidates,
+    target: input.target,
+    policy: input.policy,
+    titleMapped: input.titleMapped,
+    ...(input.words && input.words.length > 0 ? { customWords: input.words } : {}),
+  });
+  if (picks.length === 0) {
+    return { overrides, transferredIds, transferredFiles };
+  }
+
+  const listingWords = {
+    seasons,
+    missingEpisodes: missing,
+    ...(input.words && input.words.length > 0 ? { customWords: input.words } : {}),
+  };
+
+  for (const candidate of picks) {
+    emit(input.onProgress, "probeShareListing", { title: candidate.title });
+    const listing = await asEvidence(() => input.sandbox.listCandidateListing(candidate.candidateId));
+    if (Array.isArray(listing)) {
+      const covered = mapTvCoverageFromListing({
+        paths: listing.map((row) => row.path),
+        ...listingWords,
+      });
+      overrides.set(candidate.candidateId, covered);
+      if (covered.length > 0) {
+        emit(input.onProgress, "probeShareFiles", { episodeCount: covered.length });
+      }
+      continue;
+    }
+    if (input.listingOnly) {
+      continue;
+    }
+
+    let beforeIds = new Set<string>();
+    const before = await asEvidence(() => input.sandbox.inspectStaging());
+    if (Array.isArray(before)) {
+      beforeIds = new Set(before.map((file) => file.id));
+    }
+    emit(input.onProgress, "transferCandidate", {
+      snapshotId: candidate.snapshotId,
+      candidateId: candidate.candidateId,
+    });
+    const result = await asEvidence(() =>
+      input.sandbox.transferCandidate({
+        snapshotId: candidate.snapshotId,
+        candidateId: candidate.candidateId,
+      }),
+    );
+    if (result && typeof result === "object" && "error" in result) {
+      overrides.set(candidate.candidateId, []);
+      if (isTransferCapError(result.error)) {
+        break;
+      }
+      continue;
+    }
+    if (result && typeof result === "object" && "systemicBlock" in result && result.systemicBlock) {
+      break;
+    }
+    const staging = await asEvidence(() => input.sandbox.inspectStaging());
+    const newFiles = Array.isArray(staging) ? staging.filter((file) => !beforeIds.has(file.id)) : [];
+    const covered = mapTvCoverageFromListing({
+      paths: newFiles.filter((file) => file.isVideo).map((file) => file.path),
+      ...listingWords,
+    });
+    overrides.set(candidate.candidateId, covered);
+    if (covered.length === 0) {
+      if (newFiles.length > 0) {
+        await asEvidence(() =>
+          input.sandbox.deleteFiles({ directory: "staging", fileIds: newFiles.map((file) => file.id) }),
+        );
+      }
+      continue;
+    }
+    emit(input.onProgress, "probeShareFiles", { episodeCount: covered.length });
+    transferredIds.add(candidate.candidateId);
+    transferredFiles.set(
+      candidate.candidateId,
+      newFiles.map((file) => file.id),
+    );
+  }
+  return { overrides, transferredIds, transferredFiles };
 }
 
 async function lightGapSearch(
@@ -293,6 +347,7 @@ async function transferTvWithRefill(input: {
   eligible: RankedRulesCandidate[];
   missing: readonly string[];
   onProgress?: (event: AgentToolEvent) => void;
+  alreadyTransferred?: ReadonlySet<string>;
 }): Promise<{
   systemicBlock?: string;
   landed: boolean;
@@ -305,6 +360,7 @@ async function transferTvWithRefill(input: {
   const remaining = new Set(input.missing);
   let eligible = [...input.eligible];
   const exclude = new Set<string>();
+  const alreadyTransferred = input.alreadyTransferred ?? new Set<string>();
   const succeeded = new Set<string>();
   const transferred: RankedRulesCandidate[] = [];
   let refill = false;
@@ -312,7 +368,10 @@ async function transferTvWithRefill(input: {
   let didLightResearch = false;
 
   const unused = (): RankedRulesCandidate[] =>
-    eligible.filter((candidate) => !exclude.has(candidate.candidateId) && !succeeded.has(candidate.candidateId));
+    eligible.filter(
+      (candidate) =>
+        !exclude.has(candidate.candidateId) && !transferred.some((row) => row.candidateId === candidate.candidateId),
+    );
 
   while (remaining.size > 0) {
     const plan = greedyCover(unused(), [...remaining]);
@@ -333,6 +392,14 @@ async function transferTvWithRefill(input: {
     for (const candidate of plan) {
       const gain = candidate.coveredEpisodes.filter((code) => remaining.has(code));
       if (gain.length === 0) {
+        continue;
+      }
+      if (alreadyTransferred.has(candidate.candidateId) || succeeded.has(candidate.candidateId)) {
+        succeeded.add(candidate.candidateId);
+        transferred.push(candidate);
+        for (const code of gain) {
+          remaining.delete(code);
+        }
         continue;
       }
       emit(onProgress, "transferCandidate", {
@@ -531,8 +598,32 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
   candidates = snapshotsToCandidates(sandbox);
 
   emit(onProgress, "viewResourceSnapshot", {});
-  const selection = selectWithWords(candidates, target, policy, words);
-  const reasonExtras = { gapResearch: didGapResearch };
+  let selection = selectWithWords(candidates, target, policy, words);
+  const probe =
+    target.kind === "tv"
+      ? await probeOpaqueTvShares({
+          sandbox,
+          candidates,
+          target,
+          policy,
+          words,
+          titleMapped: selection.eligible ?? selection.selected,
+          ...(onProgress ? { onProgress } : {}),
+        })
+      : { overrides: new Map<string, string[]>(), transferredIds: new Set<string>(), transferredFiles: new Map<string, string[]>() };
+  if (probe.overrides.size > 0) {
+    selection = selectWithWords(candidates, target, policy, words, probe.overrides);
+    const selectedIds = new Set(selection.selected.map((candidate) => candidate.candidateId));
+    for (const [candidateId, fileIds] of probe.transferredFiles) {
+      if (selectedIds.has(candidateId) || fileIds.length === 0) {
+        continue;
+      }
+      await asEvidence(() => sandbox.deleteFiles({ directory: "staging", fileIds }));
+      probe.transferredIds.delete(candidateId);
+    }
+  }
+  const didProbe = selection.selected.some((candidate) => candidate.coverageSource === "probe");
+  const reasonExtras = { gapResearch: didGapResearch, ...(didProbe ? { probe: true as const } : {}) };
 
   if (request.escalateOnLowConfidence) {
     const report = assessRulesConfidence({
@@ -632,6 +723,7 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
     eligible: selection.eligible ?? selection.selected,
     missing,
     ...(onProgress ? { onProgress } : {}),
+    ...(probe.transferredIds.size > 0 ? { alreadyTransferred: probe.transferredIds } : {}),
   });
   if (transfer.systemicBlock) {
     emit(onProgress, "finish", {});

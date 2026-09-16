@@ -70,6 +70,7 @@ export {
   MAX_GAP_RESEARCH_ROUNDS,
   MAX_GAP_QUERIES_PER_ROUND,
   MAX_TV_TRANSFERS_PER_RUN,
+  MAX_BLACKBOX_PROBES,
   gapSearchQueries,
   groupEpisodeRanges,
   refillCover,
@@ -78,6 +79,12 @@ export {
   candidatesFromSnapshots,
   transferAttemptSucceeded,
 } from "./acquisition-v2/cover-planner.js";
+export {
+  inferEpisodeCodeFromListingPath,
+  mapTvCoverageFromListing,
+  pickOpaqueProbeCandidates,
+  isOpaqueTvProbeEligible,
+} from "./acquisition-v2/listing-coverage.js";
 export * from "./acquisition-v2/directory-lifecycle.js";
 export * from "./acquisition-v2/sync-need.js";
 export * from "./acquisition-v2/workflow-v2.js";

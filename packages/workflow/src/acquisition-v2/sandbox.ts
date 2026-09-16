@@ -438,6 +438,18 @@ export class TaskSandbox {
     return this.storage.listTree({ directoryId: this.stagingDirectoryId });
   }
 
+  /**
+   * Read-only share listing when the storage backend exposes it (no transfer).
+   * Returns `null` when listing-without-transfer is unavailable — callers must
+   * fall back to a capped staging transfer, not assume they can peek.
+   */
+  async listCandidateListing(candidateId: string): Promise<Array<{ path: string }> | null> {
+    if (!this.storage?.listCandidateListing) {
+      return null;
+    }
+    return this.storage.listCandidateListing({ candidateId });
+  }
+
   /** Read-only list of the wrapper subdirectories currently in staging.
    *  Not on the agent toolset (the agent works from inspectStaging's flat tree
    *  and wipes leftovers with discardStaging); kept for tests / hands-on debug. */
