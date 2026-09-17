@@ -130,6 +130,8 @@ describe("makeProgressSink", () => {
     expect(last.noCoverage).toBe(true);
     expect(last.skippedTransfer).toBe(true);
     expect(last.searchCount).toBe(1);
+    expect(last.currentKeyword).toBe("a");
+    expect(last.pickReason).toBe("below-quality-floor");
     expect(last.percent).toBeGreaterThanOrEqual(95);
   });
 
@@ -147,7 +149,46 @@ describe("makeProgressSink", () => {
     const last = repo.writes.at(-1)!.progress;
     expect(last.searchCount).toBe(2);
     expect(last.shareCount).toBe(3);
+    expect(last.currentKeyword).toBe("b");
     expect(last).not.toHaveProperty("noCoverage");
     expect(last).not.toHaveProperty("skippedTransfer");
+    expect(last).not.toHaveProperty("pickReason");
+  });
+
+  it("stickies currentKeyword, searchTotal, candidateCount, pickReason through finish", () => {
+    const repo = fakeRepo();
+    const sink = makeProgressSink({ repository: repo, workflowRunId: "r", now: () => "t" });
+    sink({
+      toolName: "searchResources",
+      args: { keyword: "兰香如敌", searchIndex: 1, searchTotal: 4 },
+      activity: "正在搜索资源:兰香如敌",
+      phase: "search",
+    });
+    sink({
+      toolName: "searchResources",
+      args: { keyword: "第二季", searchIndex: 2, searchTotal: 4 },
+      activity: "正在搜索资源:第二季",
+      phase: "search",
+    });
+    sink({
+      toolName: "viewResourceSnapshot",
+      args: { candidateCount: 6 },
+      activity: "正在浏览候选资源…",
+      phase: "search",
+    });
+    sink({
+      toolName: "rulesSelectCandidates",
+      args: { shareCount: 0, candidateCount: 6, pickReason: "no-episode-coverage" },
+      activity: "正在按规则筛选候选…",
+      phase: "pick",
+    });
+    sink({ toolName: "finish", args: {}, activity: "正在收尾…", phase: "finalize" });
+    const last = repo.writes.at(-1)!.progress;
+    expect(last.activity).toBe("正在收尾…");
+    expect(last.currentKeyword).toBe("第二季");
+    expect(last.searchTotal).toBe(4);
+    expect(last.searchCount).toBe(2);
+    expect(last.candidateCount).toBe(6);
+    expect(last.pickReason).toBe("no-episode-coverage");
   });
 });

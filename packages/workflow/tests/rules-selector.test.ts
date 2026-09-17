@@ -10,6 +10,7 @@ import {
   parseSeasonMarkers,
   selectResourceCandidates,
   assessRulesConfidence,
+  classifyEmptyPickReason,
 } from "../src/acquisition-v2/rules-selector.js";
 import { joinReleaseTitleParts } from "../src/acquisition-v2/release-meta.js";
 import { movieTargetToRules, tvTargetToRules } from "../src/acquisition-v2/rules-task.js";
@@ -918,5 +919,27 @@ describe("selectResourceCandidates — quality floor hard reject", () => {
     expect(selection.rejected.some((row) => row.candidateId === "filler" && row.reason === BELOW_QUALITY_FLOOR_REASON)).toBe(
       true,
     );
+  });
+});
+
+describe("classifyEmptyPickReason", () => {
+  it("empty recall → no-candidates", () => {
+    expect(classifyEmptyPickReason([], 0)).toBe("no-candidates");
+  });
+  it("floor hits beat other rejects", () => {
+    expect(
+      classifyEmptyPickReason(
+        [{ reason: BELOW_QUALITY_FLOOR_REASON }, { reason: "no-episode-coverage" }],
+        4,
+      ),
+    ).toBe("below-quality-floor");
+  });
+  it("title matched but no episode span → no-episode-coverage", () => {
+    expect(classifyEmptyPickReason([{ reason: "no-episode-coverage" }, { reason: "no-episode-coverage" }], 2)).toBe(
+      "no-episode-coverage",
+    );
+  });
+  it("tmdb mediaBinding mismatch", () => {
+    expect(classifyEmptyPickReason([{ reason: "media-id-mismatch" }], 1)).toBe("media-id-mismatch");
   });
 });

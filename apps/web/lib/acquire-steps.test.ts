@@ -31,13 +31,18 @@ describe("acquireStepsFromProgress", () => {
     expect(byId(steps, "search").detail).toBe("开始搜片和匹配候选");
   });
 
-  it("search with keyword → 正在搜：关键词", () => {
+  it("search with keyword → 正在搜：关键词, optional running count", () => {
     const steps = acquireStepsFromProgress({
-      activity: "正在搜索资源:庆余年 4K",
+      activity: "正在搜索资源:兰香如敌 2024",
       phase: "search",
       searchCount: 2,
+      searchTotal: 5,
+      currentKeyword: "兰香如敌 2024",
     });
-    expect(byId(steps, "search")).toMatchObject({ state: "current", detail: "正在搜：庆余年 4K" });
+    expect(byId(steps, "search")).toMatchObject({
+      state: "current",
+      detail: "正在搜：兰香如敌 2024 · 已搜 2/5",
+    });
     expect(byId(steps, "pick").state).toBe("pending");
   });
 
@@ -60,7 +65,7 @@ describe("acquireStepsFromProgress", () => {
       shareCount: 2,
       selectionPath: "rules",
     });
-    expect(byId(transfer, "pick")).toMatchObject({ state: "done", detail: "候选 2 个" });
+    expect(byId(transfer, "pick")).toMatchObject({ state: "done", detail: "选中 2 个分享" });
     expect(byId(transfer, "transfer")).toMatchObject({ state: "current", detail: "正在转存第 2/12 集" });
 
     const organize = acquireStepsFromProgress({
@@ -87,6 +92,29 @@ describe("acquireStepsFromProgress", () => {
       detail: "核对结果，清理暂存",
     });
     expect(acquireStepsHeadline(steps).label).toBe("收尾 · 核对结果，清理暂存");
+  });
+
+  it("search done keeps last keyword and recall size, not selected-share count", () => {
+    const steps = acquireStepsFromProgress({
+      activity: "正在按规则筛选候选…",
+      phase: "pick",
+      searchCount: 4,
+      currentKeyword: "第二季",
+      candidateCount: 12,
+    });
+    expect(byId(steps, "search")).toMatchObject({
+      state: "done",
+      detail: "已搜 4 个关键词 · 第二季 · 候选 12 个",
+    });
+  });
+
+  it("in-progress search shows the current keyword even without k/n", () => {
+    const steps = acquireStepsFromProgress({
+      activity: "正在搜索资源:兰香如敌",
+      phase: "search",
+      currentKeyword: "兰香如敌",
+    });
+    expect(byId(steps, "search").detail).toBe("正在搜：兰香如敌");
   });
 
   it("no_coverage wrap-up: 未找到资源 is the 选片 outcome, 收尾 still current", () => {
@@ -117,19 +145,82 @@ describe("acquireStepsFromProgress", () => {
     expect(byId(steps, "pick").detail).toBe("未找到资源");
   });
 
-  it("quality-floor empty set: 选片 failed + 转存 skipped with 下限空集", () => {
+  it("quality-floor empty set: 选片 failed with floor reason, 转存 skipped", () => {
     const steps = acquireStepsFromProgress({
       activity: "正在收尾…",
       phase: "finalize",
       noCoverage: true,
       skippedTransfer: true,
+      pickReason: "below-quality-floor",
+      candidateCount: 8,
       searchCount: 5,
+      currentKeyword: "兰香如敌",
     });
-    expect(byId(steps, "pick")).toMatchObject({ state: "failed", detail: "未找到资源" });
+    expect(byId(steps, "search").detail).toBe("已搜 5 个关键词 · 兰香如敌 · 候选 8 个");
+    expect(byId(steps, "pick")).toMatchObject({
+      state: "failed",
+      detail: "候选 8 个，均低于画质下限",
+    });
     expect(byId(steps, "transfer")).toMatchObject({
       state: "skipped",
       detail: "下限空集跳过转存",
     });
+    expect(acquireStepsHeadline(steps).label).toBe("选片 · 候选 8 个，均低于画质下限");
+  });
+
+  it("no-episode-coverage: 选片 says 对不上缺集, not a generic 未找到资源", () => {
+    const steps = acquireStepsFromProgress({
+      activity: "正在收尾…",
+      phase: "finalize",
+      noCoverage: true,
+      pickReason: "no-episode-coverage",
+      candidateCount: 6,
+      searchCount: 3,
+    });
+    expect(byId(steps, "pick")).toMatchObject({
+      state: "failed",
+      detail: "候选 6 个，对不上缺集",
+    });
+  });
+
+  it("empty search: 选片 says 搜索没有返回候选", () => {
+    const steps = acquireStepsFromProgress({
+      activity: "正在收尾…",
+      phase: "finalize",
+      noCoverage: true,
+      pickReason: "no-candidates",
+      candidateCount: 0,
+      searchCount: 4,
+      currentKeyword: "兰香如敌",
+    });
+    expect(byId(steps, "search").detail).toBe("已搜 4 个关键词 · 兰香如敌 · 没有候选");
+    expect(byId(steps, "pick")).toMatchObject({
+      state: "failed",
+      detail: "搜索没有返回候选",
+    });
+  });
+
+  it("candidates exist but none chosen → 均未达标", () => {
+    const steps = acquireStepsFromProgress({
+      activity: "正在收尾…",
+      phase: "finalize",
+      noCoverage: true,
+      pickReason: "empty-selection",
+      candidateCount: 9,
+    });
+    expect(byId(steps, "pick").detail).toBe("候选 9 个，均未达标");
+  });
+
+  it("mediaBinding mismatch is plain Chinese, not the enum", () => {
+    const steps = acquireStepsFromProgress({
+      activity: "正在收尾…",
+      phase: "finalize",
+      noCoverage: true,
+      pickReason: "media-id-mismatch",
+      candidateCount: 3,
+    });
+    expect(byId(steps, "pick").detail).toBe("候选 3 个，对不上这部片子");
+    expect(byId(steps, "pick").detail).not.toMatch(/media-id|mismatch/);
   });
 
   it("live 画质下限 pick line stays on 选片, does not jump to 收尾", () => {
@@ -140,7 +231,7 @@ describe("acquireStepsFromProgress", () => {
     });
     expect(byId(steps, "pick")).toMatchObject({
       state: "current",
-      detail: "候选低于画质下限，不下载",
+      detail: "候选低于画质下限",
     });
     expect(byId(steps, "finalize").state).toBe("pending");
   });

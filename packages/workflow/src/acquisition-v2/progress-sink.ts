@@ -1,6 +1,45 @@
 import type { WorkflowRepository } from "../repository.js";
 import { phaseProgress, type AgentToolEvent } from "./activity.js";
 
+const PICK_REASON_CODES = new Set([
+  "below-quality-floor",
+  "no-episode-coverage",
+  "redundant-coverage",
+  "no-candidates",
+  "media-id-mismatch",
+  "empty-selection",
+  "sequel-or-year",
+]);
+
+function pickReasonFromEvent(event: AgentToolEvent): string | null {
+  const coded = event.args.pickReason;
+  if (typeof coded === "string" && PICK_REASON_CODES.has(coded)) {
+    return coded;
+  }
+  const listed = Array.isArray(event.args.reasons)
+    ? event.args.reasons.map((value) => String(value))
+    : [];
+  for (const reason of listed) {
+    if (PICK_REASON_CODES.has(reason)) {
+      return reason;
+    }
+  }
+  const blob = `${String(event.args.reason ?? "")} ${event.activity}`;
+  if (blob.includes("画质下限") || blob.includes("BELOW_QUALITY_FLOOR") || blob.includes("below-quality-floor")) {
+    return "below-quality-floor";
+  }
+  if (blob.includes("no-episode-coverage")) {
+    return "no-episode-coverage";
+  }
+  if (blob.includes("media-id-mismatch") || blob.includes("对不上这部")) {
+    return "media-id-mismatch";
+  }
+  if (blob.includes("没有返回候选") || blob.includes("no-candidates")) {
+    return "no-candidates";
+  }
+  return null;
+}
+
 /**
  * Build the per-tool-call progress sink the runner wires into the agent loop. It
  * turns each real tool event into a monotonic, phase-weighted progress write on
@@ -35,6 +74,10 @@ export function makeProgressSink(input: {
   let skippedTransfer = false;
   let searchCount = 0;
   let shareCount = 0;
+  let currentKeyword = "";
+  let searchTotal = 0;
+  let candidateCount: number | null = null;
+  let pickReason = "";
 
   return (event: AgentToolEvent) => {
     if (event.toolName === "markObtained") {
@@ -43,6 +86,13 @@ export function makeProgressSink(input: {
     }
     if (event.toolName === "searchResources") {
       searchCount += 1;
+      const keyword = String(event.args.keyword ?? "").trim();
+      if (keyword) {
+        currentKeyword = keyword;
+      }
+      if (typeof event.args.searchTotal === "number" && event.args.searchTotal > 0) {
+        searchTotal = event.args.searchTotal;
+      }
     }
     if (event.toolName === "reportNoCoverage" || event.activity.includes("未找到可用资源")) {
       noCoverage = true;
@@ -57,6 +107,13 @@ export function makeProgressSink(input: {
     const argShare = event.args.shareCount;
     if (typeof argShare === "number" && argShare > 0) {
       shareCount = argShare;
+    }
+    if (typeof event.args.candidateCount === "number" && event.args.candidateCount >= 0) {
+      candidateCount = event.args.candidateCount;
+    }
+    const nextPick = pickReasonFromEvent(event);
+    if (nextPick) {
+      pickReason = nextPick;
     }
     if (event.phase !== currentPhase) {
       currentPhase = event.phase;
@@ -80,6 +137,10 @@ export function makeProgressSink(input: {
         ...(skippedTransfer ? { skippedTransfer: true } : {}),
         ...(searchCount > 0 ? { searchCount } : {}),
         ...(shareCount > 0 ? { shareCount } : {}),
+        ...(currentKeyword ? { currentKeyword } : {}),
+        ...(searchTotal > 0 ? { searchTotal } : {}),
+        ...(candidateCount !== null ? { candidateCount } : {}),
+        ...(pickReason ? { pickReason } : {}),
       }),
     ).catch(() => {
       // Progress is a display nicety; never let its write failure surface.

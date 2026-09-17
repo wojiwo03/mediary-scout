@@ -26,6 +26,10 @@ export interface AcquireStepsInput {
   skippedTransfer?: boolean;
   searchCount?: number;
   shareCount?: number;
+  currentKeyword?: string | null;
+  searchTotal?: number;
+  candidateCount?: number;
+  pickReason?: string | null;
   selectionPath?: "agent" | "rules" | null;
   /** Run already finished (demo playback 入库完成). All remaining steps become done. */
   completed?: boolean;
@@ -85,6 +89,14 @@ function searchKeyword(activity: string): string | null {
   return keyword ? keyword : null;
 }
 
+function resolvedKeyword(input: AcquireStepsInput, activity: string): string | null {
+  const sticky = input.currentKeyword?.trim();
+  if (sticky) {
+    return sticky;
+  }
+  return searchKeyword(activity);
+}
+
 function pickPathDetail(selectionPath: AcquireStepsInput["selectionPath"]): string | undefined {
   if (selectionPath === "rules") {
     return "按规则匹配资源";
@@ -102,21 +114,94 @@ function obtainedLine(obtained: number | undefined, needed: number | undefined, 
   return undefined;
 }
 
+const PICK_REASON_COPY: Record<string, string> = {
+  "below-quality-floor": "候选低于画质下限",
+  "no-episode-coverage": "有候选但对不上缺集",
+  "redundant-coverage": "候选与已有覆盖重复",
+  "no-candidates": "搜索没有返回候选",
+  "media-id-mismatch": "候选对不上这部片子",
+  "empty-selection": "候选均未达标",
+  "sequel-or-year": "候选年份或续作对不上",
+};
+
+function resolvedPickReason(
+  input: AcquireStepsInput,
+  activity: string,
+  skippedTransfer: boolean,
+): string | undefined {
+  const coded = input.pickReason?.trim();
+  if (coded && PICK_REASON_COPY[coded]) {
+    return coded;
+  }
+  if (skippedTransfer || isQualityFloorActivity(activity) || coded === "below-quality-floor") {
+    return "below-quality-floor";
+  }
+  if (activity.includes("no-episode-coverage")) {
+    return "no-episode-coverage";
+  }
+  return coded || undefined;
+}
+
+function pickFailedDetail(input: AcquireStepsInput, activity: string, skippedTransfer: boolean): string {
+  const reason = resolvedPickReason(input, activity, skippedTransfer);
+  const n = input.candidateCount;
+  if (reason === "no-candidates" || (n === 0 && reason !== "below-quality-floor")) {
+    return PICK_REASON_COPY["no-candidates"]!;
+  }
+  if (n != null && n > 0) {
+    if (reason === "below-quality-floor") {
+      return `候选 ${n} 个，均低于画质下限`;
+    }
+    if (reason === "no-episode-coverage") {
+      return `候选 ${n} 个，对不上缺集`;
+    }
+    if (reason === "media-id-mismatch") {
+      return `候选 ${n} 个，对不上这部片子`;
+    }
+    if (reason === "redundant-coverage") {
+      return `候选 ${n} 个，与已有覆盖重复`;
+    }
+    return `候选 ${n} 个，均未达标`;
+  }
+  if (reason && PICK_REASON_COPY[reason]) {
+    return PICK_REASON_COPY[reason]!;
+  }
+  return "未找到资源";
+}
+
 function searchDetail(input: AcquireStepsInput, activity: string, state: AcquireStepState): string | undefined {
+  const keyword = resolvedKeyword(input, activity);
+  const searched = input.searchCount;
+  const total = input.searchTotal;
   if (state === "current") {
-    const keyword = searchKeyword(activity);
     if (keyword) {
-      return activity.includes("补搜") ? `正在补搜：${keyword}` : `正在搜：${keyword}`;
+      const gap = activity.includes("补搜");
+      const lead = gap ? `正在补搜：${keyword}` : `正在搜：${keyword}`;
+      if (searched != null && total != null && total > 0 && searched <= total && !gap) {
+        return `${lead} · 已搜 ${searched}/${total}`;
+      }
+      if (searched != null && searched > 0) {
+        return `${lead} · 已搜 ${searched} 个`;
+      }
+      return lead;
     }
     if (activity && activity !== "正在准备…") {
       return activity;
     }
     return "开始搜片和匹配候选";
   }
-  if (state === "done" && input.searchCount != null && input.searchCount > 0) {
-    const extra =
-      input.shareCount != null && input.shareCount > 0 ? `，候选 ${input.shareCount} 个` : "";
-    return `已搜 ${input.searchCount} 个关键词${extra}`;
+  if (state === "done") {
+    const parts: string[] = [];
+    if (searched != null && searched > 0) {
+      parts.push(`已搜 ${searched} 个关键词`);
+    }
+    if (keyword) {
+      parts.push(keyword);
+    }
+    if (input.candidateCount != null) {
+      parts.push(input.candidateCount > 0 ? `候选 ${input.candidateCount} 个` : "没有候选");
+    }
+    return parts.length > 0 ? parts.join(" · ") : undefined;
   }
   return undefined;
 }
@@ -128,13 +213,12 @@ function pickDetail(
   skippedTransfer: boolean,
 ): string | undefined {
   if (state === "failed") {
-    return skippedTransfer && isQualityFloorActivity(activity)
-      ? "候选低于画质下限"
-      : "未找到资源";
+    return pickFailedDetail(input, activity, skippedTransfer);
   }
   if (state === "current") {
-    if (isQualityFloorActivity(activity)) {
-      return "候选低于画质下限，不下载";
+    const reason = resolvedPickReason(input, activity, skippedTransfer);
+    if (reason === "below-quality-floor" || isQualityFloorActivity(activity)) {
+      return pickFailedDetail(input, activity, true);
     }
     if (activity && !activity.startsWith("正在收尾") && !isNoCoverageActivity(activity)) {
       return activity;
@@ -143,7 +227,7 @@ function pickDetail(
   }
   if (state === "done") {
     if (input.shareCount != null && input.shareCount > 0) {
-      return `候选 ${input.shareCount} 个`;
+      return `选中 ${input.shareCount} 个分享`;
     }
     return pickPathDetail(input.selectionPath);
   }

@@ -112,6 +112,27 @@ describe("inlineProgressView", () => {
     expect(v.steps.find((s) => s.id === "pick")?.state).toBe("failed");
     expect(v.steps.find((s) => s.id === "transfer")?.state).toBe("skipped");
   });
+  it("floor-empty wrap-up uses the pick reason, not generic 未找到资源", () => {
+    const v = inlineProgressView(
+      run({
+        status: "running",
+        progress: {
+          percent: 97,
+          activity: "正在收尾…",
+          phase: "finalize",
+          updatedAt: "2026-06-23T00:00:00.000Z",
+          noCoverage: true,
+          skippedTransfer: true,
+          pickReason: "below-quality-floor",
+          candidateCount: 8,
+          searchCount: 3,
+          currentKeyword: "兰香如敌",
+        },
+      }),
+    );
+    expect(v.step).toBe("选片 · 候选 8 个，均低于画质下限");
+    expect(v.steps.find((s) => s.id === "search")?.detail).toContain("兰香如敌");
+  });
 });
 
 // 2026-06-24 bug: a single `searchResources` tool call ran 94s (half the run); the

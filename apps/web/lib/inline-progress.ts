@@ -107,6 +107,10 @@ export function inlineProgressView(run: ActivityActiveRun | null): InlineProgres
     ...(progress?.skippedTransfer === true ? { skippedTransfer: true } : {}),
     ...(progress?.searchCount != null ? { searchCount: progress.searchCount } : {}),
     ...(progress?.shareCount != null ? { shareCount: progress.shareCount } : {}),
+    ...(progress?.currentKeyword ? { currentKeyword: progress.currentKeyword } : {}),
+    ...(progress?.searchTotal != null ? { searchTotal: progress.searchTotal } : {}),
+    ...(progress?.candidateCount != null ? { candidateCount: progress.candidateCount } : {}),
+    ...(progress?.pickReason ? { pickReason: progress.pickReason } : {}),
     ...(run?.selectionPath ? { selectionPath: run.selectionPath } : {}),
   });
   const headline = acquireStepsHeadline(steps);

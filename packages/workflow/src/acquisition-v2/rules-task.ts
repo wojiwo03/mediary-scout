@@ -38,6 +38,7 @@ import {
   selectResourceCandidates,
   assessRulesConfidence,
   planTvCover,
+  classifyEmptyPickReason,
   type RankedRulesCandidate,
   type RulesSelectorCandidate,
   type RulesSelectorTarget,
@@ -169,8 +170,11 @@ async function searchFirstWave(
     ...target,
     ...(words && words.length > 0 ? { customIdentifierWords: words } : {}),
   }).filter((keyword) => normalizeSearchKeyword(keyword) !== primed);
+  const searchTotal = extras.length;
+  let searchIndex = 0;
   for (const keyword of extras) {
-    emit(onProgress, "searchResources", { keyword });
+    searchIndex += 1;
+    emit(onProgress, "searchResources", { keyword, searchIndex, searchTotal });
     const result = await asEvidence(() => sandbox.searchResources(keyword));
     if (result && typeof result === "object" && "refused" in result && result.refused) {
       return;
@@ -701,7 +705,7 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
   const didGapResearch = await runGapResearch(sandbox, target, policy, words, onProgress);
   const candidates = snapshotsToCandidates(sandbox);
 
-  emit(onProgress, "viewResourceSnapshot", {});
+  emit(onProgress, "viewResourceSnapshot", { candidateCount: candidates.length });
   let selection = selectWithWords(candidates, target, policy, words);
   const confidenceInput = {
     target,
@@ -759,6 +763,8 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
         fallback: "agent",
         reasons: report.reasons,
         reason: `规则选片置信度低（${report.reasons.join("、")}），改走 agent`,
+        candidateCount: candidates.length,
+        ...(report.reasons[0] ? { pickReason: report.reasons[0] } : {}),
       });
       return {
         text: `规则选片置信度低，改走 agent：${report.reasons.join("、")}`,
@@ -775,6 +781,10 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
       ? describeTvSelection(selection.selected, target.missingEpisodes ?? [], reasonExtras)
       : selection.reason,
     shareCount: selection.selected.length,
+    candidateCount: candidates.length,
+    ...(selection.selected.length === 0
+      ? { pickReason: classifyEmptyPickReason(selection.rejected, candidates.length) }
+      : {}),
     ...(didGapResearch ? { gapResearch: true } : {}),
   });
 

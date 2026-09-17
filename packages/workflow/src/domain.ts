@@ -100,6 +100,17 @@ export interface WorkflowRunProgress {
   searchCount?: number;
   /** Last known selected-share count from the pick step (`shareCount` arg). */
   shareCount?: number;
+  /** Last `searchResources` keyword (sticky through 「正在收尾」). */
+  currentKeyword?: string;
+  /** Planned first-wave keyword count when known (`searchTotal` arg). */
+  searchTotal?: number;
+  /** Raw recall size at pick time (snapshot candidates, not selected shares). */
+  candidateCount?: number;
+  /**
+   * Why pick selected nothing. Codes: below-quality-floor / no-episode-coverage /
+   * redundant-coverage / no-candidates / media-id-mismatch / empty-selection.
+   */
+  pickReason?: string;
 }
 
 export interface WorkflowRun {
