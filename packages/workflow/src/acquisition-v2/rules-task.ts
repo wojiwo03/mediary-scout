@@ -639,6 +639,8 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
   // High-confidence empty (hard quality floor) must NOT probe opaque shares —
   // 115 has no listing-without-transfer, so probe would 转存偷看, then finish
   // with leftover staging and the wrap-up delete hung the UI on 「正在收尾」.
+  // Independent of auto: Settings「规则模式」is forced `rules` and never
+  // sets escalateOnLowConfidence, so this skip is the rules-only hang fix.
   const preProbeConfidence = assessRulesConfidence(confidenceInput);
   const skipOpaqueProbe =
     target.kind === "tv" && selection.selected.length === 0 && preProbeConfidence.confidence === "high";
