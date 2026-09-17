@@ -1,4 +1,5 @@
 import {
+  ACTIVE_WORKFLOW_STATUSES,
   DEFAULT_ACCOUNT_ID,
   type AgentDecision,
   type AgentStep,
@@ -160,7 +161,15 @@ export interface WorkflowRepository extends DeadLinkStore {
   listActiveWorkflowRuns(scope?: ScopeArg): Promise<PersistedWorkflowRunSnapshot[]>;
   /** Lightweight mid-run update of the live agent progress shown on the activity
    *  page; `percent` is clamped monotonic so retries never rewind the bar. No-op
-   *  for an unknown run. */
+   *  for an unknown run.
+   *
+   *  Writes ONLY `progress`, and ONLY while the run is still active
+   *  (isActiveWorkflowStatus) — a no-op once it reached a terminal status. Progress
+   *  writes are fire-and-forget, so the last one is still in flight when the
+   *  terminal saveWorkflowRunSnapshot lands; a backend that read-modify-writes the
+   *  whole run payload here reverts `status`/`finishedAt` to the values it read and
+   *  strands the run in 获取中 forever. Implementations must make the write atomic
+   *  and re-check the guard against the row they actually update. */
   updateWorkflowRunProgress(workflowRunId: string, progress: WorkflowRunProgress): Promise<void>;
   /** Append one live agent tool-call step to the run's durable trace. Best-effort,
    *  fire-and-forget at the call site (a trace write must never fail an acquisition). */
@@ -769,7 +778,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
 
   async updateWorkflowRunProgress(workflowRunId: string, progress: WorkflowRunProgress): Promise<void> {
     const stored = this.workflowRuns.get(workflowRunId);
-    if (!stored) {
+    if (!stored || !isActiveWorkflowStatus(stored.workflowRun.status)) {
       return;
     }
     const previousPercent = stored.workflowRun.progress?.percent ?? 0;
@@ -1182,7 +1191,7 @@ export function cloneWorkflowValue<T>(value: T): T {
 }
 
 export function isActiveWorkflowStatus(status: WorkflowStatus): boolean {
-  return status === "queued" || status === "running";
+  return ACTIVE_WORKFLOW_STATUSES.includes(status);
 }
 
 export function workflowSnapshotFromReservation(input: ReserveWorkflowRunInput): PersistWorkflowRunSnapshotInput {

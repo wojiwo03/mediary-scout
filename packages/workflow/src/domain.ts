@@ -25,6 +25,9 @@ export type WorkflowStatus =
    *  releases, but NOT queued/running — the worker never claims it and it is not an
    *  "active" run (see isActiveWorkflowStatus). The air-time gate runs the agent. */
   | "reserved";
+/** The statuses a run is still IN FLIGHT under — see isActiveWorkflowStatus. Kept
+ *  as data so a SQL predicate can bind the same list the TS guard uses. */
+export const ACTIVE_WORKFLOW_STATUSES: readonly WorkflowStatus[] = ["queued", "running"];
 export type ResourceType = "115" | "magnet" | "manual" | "quark" | "tianyi" | "123";
 export type TransferStatus = "succeeded" | "failed" | "no_target_change";
 export type Confidence = "low" | "medium" | "high";

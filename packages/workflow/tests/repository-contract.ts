@@ -10,6 +10,16 @@ export interface RepoHarness {
   teardown?: (repo: WorkflowRepository) => Promise<void> | void;
 }
 
+/** The shared fixture with its run still IN FLIGHT — what a live progress write
+ *  targets (the base fixture's run is already `succeeded`). */
+function runningFixture(): ReturnType<typeof workflowPersistenceFixture> {
+  const base = workflowPersistenceFixture();
+  return {
+    ...base,
+    workflowRun: { ...base.workflowRun, status: "running", finishedAt: null },
+  };
+}
+
 export function runRepositoryContract(name: string, harness: RepoHarness): void {
   describe(`WorkflowRepository contract: ${name}`, () => {
     // Track every repository a test opened and tear it down afterwards, so SQLite
@@ -774,7 +784,9 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
 
       it("updateWorkflowRunProgress clamps percent monotonically; unknown run is a no-op", async () => {
         const repo = await fresh();
-        const snapshot = workflowPersistenceFixture();
+        // Progress only applies to an IN-FLIGHT run (the fixture's default run is
+        // already `succeeded`, which the terminal guard below refuses).
+        const snapshot = runningFixture();
         await repo.saveWorkflowRunSnapshot(snapshot);
         const runId = snapshot.workflowRun.id;
 
@@ -815,6 +827,58 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
             updatedAt: "t",
           }),
         ).resolves.toBeUndefined();
+      });
+
+      it("updateWorkflowRunProgress cannot revive a run that already finished", async () => {
+        // The live 97% hang: progress writes are fire-and-forget, so the LAST one
+        // (finish → 「正在收尾…」) is still in flight when the terminal
+        // saveWorkflowRunSnapshot commits. A backend that read-modify-writes the
+        // whole run payload here put `status: running` / `finishedAt: null` back on
+        // top of `no_coverage` — the run sat in 获取中 at 97%「未找到资源」forever
+        // while its no_coverage notification already showed in 已完成. Whatever a
+        // backend does internally, a progress write must touch ONLY `progress` and
+        // must be a no-op once the run is terminal.
+        const repo = await fresh();
+        const running = runningFixture();
+        await repo.saveWorkflowRunSnapshot(running);
+        const runId = running.workflowRun.id;
+        await repo.updateWorkflowRunProgress(runId, {
+          activity: "正在按规则筛选候选…",
+          phase: "pick",
+          percent: 20,
+          updatedAt: "2026-06-22T00:00:10.000Z",
+        });
+
+        await repo.saveWorkflowRunSnapshot({
+          ...running,
+          workflowRun: {
+            ...running.workflowRun,
+            status: "no_coverage",
+            finishedAt: "2026-06-22T00:01:00.000Z",
+          },
+        });
+
+        // The straggler write lands after the terminal persist.
+        await repo.updateWorkflowRunProgress(runId, {
+          activity: "正在收尾…",
+          phase: "finalize",
+          percent: 97,
+          updatedAt: "2026-06-22T00:01:01.000Z",
+          noCoverage: true,
+        });
+
+        const after = await repo.getWorkflowRunSnapshot(runId);
+        expect(after?.workflowRun.status).toBe("no_coverage");
+        expect(after?.workflowRun.finishedAt).toBe("2026-06-22T00:01:00.000Z");
+        // Nothing at all was written: the straggler's 97%/「正在收尾…」 never
+        // reaches a finished run — the terminal snapshot cleared `progress` (the
+        // worker's run object carries none) and it stays cleared. On an engine
+        // whose read-modify-write is atomic the status survives regardless, so THIS
+        // is the assertion that pins the guard everywhere; the true lost-update is
+        // proven against real Postgres in progress-terminal-race.pg.test.ts.
+        expect(after?.workflowRun.progress).toBeUndefined();
+        // …and the finished run is gone from 获取中.
+        expect((await repo.listActiveWorkflowRuns()).map((row) => row.workflowRun.id)).toEqual([]);
       });
     });
 
