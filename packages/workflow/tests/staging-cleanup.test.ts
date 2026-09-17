@@ -45,4 +45,15 @@ describe("withStagingCleanup", () => {
     const result = await withStagingCleanup({ executor, stagingDirectoryId: "stg" }, async () => "ok");
     expect(result).toBe("ok"); // cleanup error must not mask the real result
   });
+
+  it("does not wait forever if removeDirectory hangs — finish must still return", async () => {
+    const { executor } = recordingExecutor(() => new Promise(() => undefined));
+    const result = await Promise.race([
+      withStagingCleanup({ executor, stagingDirectoryId: "stg", timeoutMs: 40 }, async () => "coverage"),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("cleanup hang leaked into the result")), 500),
+      ),
+    ]);
+    expect(result).toBe("coverage");
+  });
 });

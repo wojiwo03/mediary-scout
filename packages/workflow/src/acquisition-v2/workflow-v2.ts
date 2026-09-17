@@ -184,14 +184,15 @@ export async function runAcquisitionV2Workflow(
     obtained: [...priorObtained, ...v2.coverage.obtained],
   });
 
-  // Best-effort real landed size for the notification (true per-episode bytes,
-  // not a claimed quality). Reads AFTER the acquisition succeeded; on the heavy
-  // run where the 115 call budget is spent this returns undefined rather than
-  // throwing, so the size is simply omitted — never failing a good run.
-  const landed = await readLandedSize(
-    request.executor,
-    Object.values(directories.seasonDirectoryIds),
-  );
+  // Best-effort real landed size for the notification. Skip when this run
+  // confirmed nothing — listing season dirs after an unmet finish used to hang
+  // the worker with the UI stuck on 「正在收尾」 (0/N 已确认). Movie already
+  // skipped the read on !coverageMet; TV must too. On a heavy run where the
+  // 115 call budget is spent this returns undefined rather than throwing.
+  const landed =
+    v2.coverage.obtained.length === 0
+      ? undefined
+      : await readLandedSize(request.executor, Object.values(directories.seasonDirectoryIds));
 
   return {
     directories,

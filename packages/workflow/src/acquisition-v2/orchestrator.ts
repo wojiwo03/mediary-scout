@@ -296,7 +296,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     }
   }
 
-  if (usedPath === "agent" && request.target.kind === "tv") {
+  if (usedPath === "agent" && request.target.kind === "tv" && result.coverage.obtained.length > 0) {
     await foldLandedDuplicates(sandbox, {
       seasons: request.target.seasons,
       qualityUpgrade: request.qualityUpgrade === true,

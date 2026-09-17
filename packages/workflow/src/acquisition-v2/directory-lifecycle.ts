@@ -1,5 +1,6 @@
 import { ensureMediaLibraryDirectory } from "../media-library-folder.js";
 import type { StorageExecutor } from "../ports.js";
+import { bestEffort, POST_FINISH_IO_TIMEOUT_MS } from "./best-effort.js";
 
 /**
  * Phase 7a — directory lifecycle. Before the agent runs, the system ensures the
@@ -70,19 +71,24 @@ export async function ensureSeasonAcquisitionDirectories(
  * removeDirectory is idempotent: if the agent already discarded, the "already gone"
  * error is swallowed so cleanup never masks the real result. It only ever touches
  * THIS run's ephemeral staging dir — never a Season/library dir.
+ *
+ * Bounded: a hung delete must not leave the run `running` after finish already
+ * wrote 「正在收尾」. Timeout still lets the delete continue in the background.
  */
 export async function withStagingCleanup<T>(
-  args: { executor: Pick<StorageExecutor, "removeDirectory">; stagingDirectoryId: string },
+  args: {
+    executor: Pick<StorageExecutor, "removeDirectory">;
+    stagingDirectoryId: string;
+    timeoutMs?: number;
+  },
   run: () => Promise<T>,
 ): Promise<T> {
   try {
     return await run();
   } finally {
-    try {
-      await args.executor.removeDirectory(args.stagingDirectoryId);
-    } catch {
-      // Idempotent: staging may already be gone (agent discarded it). Never let
-      // a cleanup failure throw over the real outcome.
-    }
+    await bestEffort(
+      () => args.executor.removeDirectory(args.stagingDirectoryId),
+      args.timeoutMs ?? POST_FINISH_IO_TIMEOUT_MS,
+    );
   }
 }

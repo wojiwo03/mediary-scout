@@ -18,6 +18,7 @@ import {
   shouldReplaceLanded,
   anyLandedUpgrade,
 } from "./landed-dedup.js";
+import { POST_FINISH_IO_TIMEOUT_MS, withTimeout } from "./best-effort.js";
 import {
   inferEpisodeCodeFromListingPath,
   mapTvCoverageFromListing,
@@ -468,15 +469,28 @@ async function organizeTv(input: {
   words?: readonly string[];
 }): Promise<string[]> {
   emit(input.onProgress, "inspectStaging", {});
-  const staging = await input.sandbox.inspectStaging();
+  const stagingResult = await asEvidence(() =>
+    withTimeout(input.sandbox.inspectStaging(), POST_FINISH_IO_TIMEOUT_MS),
+  );
+  const staging = Array.isArray(stagingResult) ? stagingResult : [];
+  // Nothing to place: skip season-dir listing. inspectTargetDir after an unmet
+  // transfer used to hang the worker before finish could persist.
+  if (!staging.some((file) => file.isVideo || file.isSubtitle)) {
+    return [];
+  }
   const allowed = input.seasons.length > 0 ? input.seasons : [1];
   const existingFiles = [];
   for (const season of allowed) {
     emit(input.onProgress, "inspectTargetDir", { season });
-    const files = await asEvidence(() => input.sandbox.inspectTargetDir({ season }));
-    if (Array.isArray(files)) {
-      existingFiles.push(...files);
+    const files = await asEvidence(() =>
+      withTimeout(input.sandbox.inspectTargetDir({ season }), POST_FINISH_IO_TIMEOUT_MS),
+    );
+    if (!Array.isArray(files)) {
+      // Listing failed/hung: do not move blindly (would re-copy already-landed
+      // episodes). Leave staging for discard; honest gap for patrol.
+      return [];
     }
+    existingFiles.push(...files);
   }
   const existingByCode = indexExistingVideos(
     existingFiles,
@@ -520,7 +534,9 @@ async function markExistingTv(
   const found: string[] = [];
   for (const season of seasons) {
     emit(onProgress, "inspectTargetDir", { season });
-    const files = await asEvidence(() => sandbox.inspectTargetDir({ season }));
+    const files = await asEvidence(() =>
+      withTimeout(sandbox.inspectTargetDir({ season }), POST_FINISH_IO_TIMEOUT_MS),
+    );
     if (!Array.isArray(files)) {
       continue;
     }
@@ -545,7 +561,7 @@ async function markExistingMovie(
   onProgress?: (event: AgentToolEvent) => void,
 ): Promise<void> {
   emit(onProgress, "inspectTargetDir", {});
-  const files = await asEvidence(() => sandbox.inspectTargetDir());
+  const files = await asEvidence(() => withTimeout(sandbox.inspectTargetDir(), POST_FINISH_IO_TIMEOUT_MS));
   if (!Array.isArray(files) || !files.some((file) => file.isVideo)) {
     return;
   }
@@ -771,24 +787,26 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
     refill: transfer.refill,
     transferCap: transfer.transferCap,
   });
-  const marked = await organizeTv({
-    sandbox,
-    seasons: target.seasons ?? [1],
-    remainingNeed: sandbox.remainingNeed(),
-    qualityUpgrade: request.qualityUpgrade === true,
-    policy,
-    ...(onProgress ? { onProgress } : {}),
-    ...(words && words.length > 0 ? { words } : {}),
-  });
+  const marked = transfer.landed
+    ? await organizeTv({
+        sandbox,
+        seasons: target.seasons ?? [1],
+        remainingNeed: sandbox.remainingNeed(),
+        qualityUpgrade: request.qualityUpgrade === true,
+        policy,
+        ...(onProgress ? { onProgress } : {}),
+        ...(words && words.length > 0 ? { words } : {}),
+      })
+    : [];
   if (marked.length > 0) {
     emit(onProgress, "markObtained", { codes: marked });
     await sandbox.markObtained({ codes: marked });
-  } else if (!transfer.landed) {
+  } else {
     await asEvidence(() => sandbox.reportNoCoverage(tvReason));
     emit(onProgress, "reportNoCoverage", { reason: tvReason });
   }
   emit(onProgress, "discardStaging", {});
-  await asEvidence(() => sandbox.discardStaging());
+  await asEvidence(() => withTimeout(sandbox.discardStaging(), POST_FINISH_IO_TIMEOUT_MS));
   emit(onProgress, "finish", {});
   const coverage = await sandbox.finish();
   return { text: tvReason, steps: 1, coverage };

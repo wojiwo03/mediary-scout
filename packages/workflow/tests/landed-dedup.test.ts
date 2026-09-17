@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   anyLandedUpgrade,
+  foldLandedDuplicates,
   selectStillMissingMoves,
   shouldReplaceLanded,
   worseDuplicateIds,
@@ -97,5 +98,23 @@ describe("worseDuplicateIds", () => {
       file({ id: "dv", path: "Show.S01E01.2160p.DV.mkv", sizeBytes: 1_000_000_000 }),
     ];
     expect(worseDuplicateIds(files, { seasons: [1], qualityUpgrade: true })).toEqual(["sdr"]);
+  });
+});
+
+describe("foldLandedDuplicates", () => {
+  it("returns quickly when inspectTargetDir never settles", async () => {
+    const sandbox = {
+      inspectTargetDir: () => new Promise<DedupListingFile[]>(() => undefined),
+      deleteFiles: async () => {
+        throw new Error("must not delete while listing is hung");
+      },
+    };
+    const deleted = await Promise.race([
+      foldLandedDuplicates(sandbox, { seasons: [1], qualityUpgrade: false, timeoutMs: 40 }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("foldLandedDuplicates hung")), 500),
+      ),
+    ]);
+    expect(deleted).toEqual([]);
   });
 });

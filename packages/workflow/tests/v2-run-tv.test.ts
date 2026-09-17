@@ -3,7 +3,7 @@ import { MockLanguageModelV3 } from "ai/test";
 import { runTvAcquisitionV2 } from "../src/acquisition-v2/run-tv-v2.js";
 import { FakeStorageExecutor } from "../src/fakes.js";
 import type { ResourceProvider } from "../src/ports.js";
-import type { MediaTitle, ResourceSnapshot } from "../src/domain.js";
+import type { MediaTitle, ResourceSnapshot, VerifiedFile } from "../src/domain.js";
 
 const USAGE = {
   inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
@@ -39,6 +39,21 @@ function searchThenReportModel() {
       return { content: [{ type: "text" as const, text: "done" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: USAGE, warnings: [] };
     },
   });
+}
+
+function throwingModel() {
+  return new MockLanguageModelV3({
+    doGenerate: async () => {
+      throw new Error("LLM must not be called on the rules path");
+    },
+  });
+}
+
+class HangListVideoExecutor extends FakeStorageExecutor {
+  override async listVideoFiles(): Promise<VerifiedFile[]> {
+    await new Promise(() => undefined);
+    return [];
+  }
 }
 
 const title = {
@@ -94,6 +109,31 @@ describe("runTvAcquisitionV2 — single TV entry over the V2 engine", () => {
     // search_dedup event. Both together prove multi-event flow
     // sandbox → orchestrator → workflow → bridge → runner.
     expect(result.auditEvents.some((e) => e.type === "search_dedup")).toBe(true);
+  });
+
+  it("rules 0-coverage finish still becomes no_coverage when listVideoFiles hangs after wrap-up", async () => {
+    // Live hang: finish already wrote 「正在收尾」 / 已确认 0/12, then the TV
+    // workflow listed season dirs for landed-size and never persisted.
+    const result = await Promise.race([
+      runTvAcquisitionV2({
+        title,
+        mode: "type2",
+        seasons: [{ seasonNumber: 1, totalEpisodes: 12, latestAiredEpisode: 12, qualityPreference: "4K" }],
+        categoryParentId: "tv_root",
+        resourceProvider: emptyProvider(),
+        storage: new HangListVideoExecutor(),
+        model: throwingModel(),
+        workflowRunId: "run-rules-0cov-hang-size",
+        acquisitionSelectionPath: "rules",
+        now: () => "2026-06-15T00:00:00.000Z",
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("run stayed running after rules finish")), 2000),
+      ),
+    ]);
+    expect(result.status).toBe("no_coverage");
+    expect(result.notification.kind).toBe("no_coverage");
+    expect(result.seasons[0]!.episodes.filter((episode) => episode.obtained)).toHaveLength(0);
   });
 
   it("no-op type3 patrol (nothing missing) → succeeded, the model is never invoked", async () => {

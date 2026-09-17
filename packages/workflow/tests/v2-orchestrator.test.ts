@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
 import { runAcquisitionV2 } from "../src/acquisition-v2/orchestrator.js";
 import type { ResourceProvider } from "../src/ports.js";
-import type { ResourceSnapshot } from "../src/domain.js";
+import type { ResourceSnapshot, PackageTreeFile } from "../src/domain.js";
 import { FakeStorageExecutor } from "../src/fakes.js";
 
 const USAGE = {
@@ -260,5 +260,37 @@ describe("runAcquisitionV2 — raw snapshot pre-warming integration", () => {
     // This proves audit events flow from sandbox → orchestrator → workflow → bridge.
     expect(result.auditEvents.some((e) => e.type === "search_dedup")).toBe(true);
     expect(result.auditEvents[0]?.message).toContain("重复搜索");
+  });
+
+  it("0-coverage agent finish does not hang on post-run season listing", async () => {
+    class HangListTreeExecutor extends FakeStorageExecutor {
+      override async listTree(): Promise<PackageTreeFile[]> {
+        return new Promise(() => undefined);
+      }
+    }
+    const provider: ResourceProvider = { search: async ({ keyword }) => emptySnapshot(keyword) };
+    const result = await Promise.race([
+      runAcquisitionV2({
+        provider,
+        executor: new HangListTreeExecutor({ directories: { staging: [], season: [] } }),
+        model: searchThenReportModel(),
+        workflowRunId: "run-agent-0cov-hang-fold",
+        target: {
+          kind: "tv",
+          title: "Show",
+          aliases: [],
+          seasons: [1],
+          missingEpisodes: ["S01E01"],
+          qualityPreference: "high",
+        },
+        stagingDirectoryId: "staging",
+        targetSeasonDirectoryIds: { 1: "season" },
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("agent 0-coverage hung on landed-dedup listing")), 2000),
+      ),
+    ]);
+    expect(result.coverage.coverageMet).toBe(false);
+    expect(result.coverage.obtained).toEqual([]);
   });
 });

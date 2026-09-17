@@ -651,6 +651,42 @@ describe("runAcquisitionV2 — auto path confidence fallback", () => {
     ).toBe(true);
   });
 
+  it("forced rules TV 0-coverage finish is terminal — last progress is 正在收尾, obtained stays empty", async () => {
+    const snapId = "snap_rules_0cov";
+    const provider: ResourceProvider = {
+      search: async ({ keyword }) =>
+        snapshot(snapId, keyword, [
+          candidate({ id: "date", snapshotId: snapId, index: 0, title: "快乐大本营 2024.03.15 1080p" }),
+        ]),
+    };
+    const executor = new FakeStorageExecutor({ directories: { staging: [], season: [] } });
+    const activities: string[] = [];
+
+    const result = await runAcquisitionV2({
+      provider,
+      executor,
+      model: throwingModel(),
+      workflowRunId: "run-rules-0cov-finish",
+      target: {
+        kind: "tv",
+        title: "快乐大本营",
+        aliases: [],
+        seasons: [1],
+        missingEpisodes: Array.from({ length: 12 }, (_, i) => `S01E${String(i + 1).padStart(2, "0")}`),
+        qualityPreference: "1080p",
+      },
+      stagingDirectoryId: "staging",
+      targetSeasonDirectoryIds: { 1: "season" },
+      acquisitionSelectionPath: "rules",
+      onProgress: (event) => activities.push(event.activity),
+    });
+
+    expect(result.coverage.coverageMet).toBe(false);
+    expect(result.coverage.obtained).toEqual([]);
+    expect(result.coverage.missing).toHaveLength(12);
+    expect(activities.at(-1)).toBe("正在收尾…");
+  });
+
   it("movie: quality floor refuses a 720p-only set instead of transferring the only option", async () => {
     const snapId = "snap_floor";
     const provider: ResourceProvider = {
