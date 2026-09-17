@@ -184,6 +184,59 @@ export function customIdentifierWordsSpread(
   return { customIdentifierWords: [...words] };
 }
 
+/**
+ * Literal title aliases implied by MoviePilot `from => to` identifier rules.
+ * Used as extra *search name slots* when one side is this title. Regex / block /
+ * offset rules and quality tokens are skipped — those stay parse-only.
+ */
+export function literalSearchAliasesFromIdentifierWords(
+  words: readonly string[] | undefined,
+  targetTitle: string,
+): string[] {
+  const target = targetTitle.trim();
+  if (!words || words.length === 0 || !target) {
+    return [];
+  }
+  const targetKey = target.toLowerCase();
+  const out: string[] = [];
+  const seen = new Set([targetKey]);
+  for (const raw of words) {
+    if (!raw.includes(" => ") || raw.includes(" && ")) {
+      continue;
+    }
+    const [fromRaw, toRaw = ""] = raw.split(" => ");
+    const from = (fromRaw ?? "").trim();
+    const to = extractExplicitMediaTags(toRaw).title.trim();
+    if (!from || !to || REGEXISH.test(from) || REGEXISH.test(to)) {
+      continue;
+    }
+    if (QUALITYISH.test(from) || QUALITYISH.test(to)) {
+      continue;
+    }
+    const fromKey = from.toLowerCase();
+    const toKey = to.toLowerCase();
+    let extra: string | undefined;
+    if (fromKey === targetKey && toKey !== targetKey) {
+      extra = to;
+    } else if (toKey === targetKey && fromKey !== targetKey) {
+      extra = from;
+    }
+    if (!extra) {
+      continue;
+    }
+    const extraKey = extra.toLowerCase();
+    if (seen.has(extraKey)) {
+      continue;
+    }
+    seen.add(extraKey);
+    out.push(extra);
+  }
+  return out;
+}
+
+const REGEXISH = /[.*+?^${}()|[\]\\]/;
+const QUALITYISH = /1080|2160|4k|hdr|中字|字幕|国语|双语|蓝光|remux|web-?dl|atmos|dovi/i;
+
 export function applyEpisodeOffsetExpr(offset: string, episode: number): number {
   const match = OFFSET_SIMPLE_RE.exec(offset.trim());
   if (!match) {

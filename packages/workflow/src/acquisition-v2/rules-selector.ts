@@ -8,6 +8,7 @@
  */
 import { episodeCode } from "../domain.js";
 import { normalizeForTitleMatch } from "../planning-search-gate.js";
+import type { SearchProfile } from "./search-profile.js";
 import {
   greedyCover,
   describeTvSelection,
@@ -15,6 +16,7 @@ import {
   uncoveredEpisodes,
   type CoverCandidate,
 } from "./cover-planner.js";
+import { rulesSearchNameValues } from "./rules-search-recipe.js";
 import {
   BELOW_QUALITY_FLOOR_REASON,
   formatQualityFloorLabel,
@@ -56,6 +58,8 @@ export interface RulesSelectorTarget {
    * or hard-reject against the target.
    */
   tmdbId?: number;
+  /** Fine-grained PanSou profile (anime vs live-action). Year is skipped on anime. */
+  searchProfile?: SearchProfile;
 }
 
 export type RankedRulesCandidate = CoverCandidate;
@@ -822,7 +826,12 @@ export function planTvCover(input: {
         ? []
         : gapSearchQueries({
             title: input.target.title,
-            aliases: input.target.aliases,
+            aliases: rulesSearchNameValues({
+              ...input.target,
+              ...(input.customIdentifierWords && input.customIdentifierWords.length > 0
+                ? { customIdentifierWords: input.customIdentifierWords }
+                : {}),
+            }).slice(1),
             missing: uncovered,
             round: input.gapRound ?? 0,
           }),

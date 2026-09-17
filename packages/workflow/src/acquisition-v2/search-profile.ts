@@ -211,6 +211,12 @@ const ANIME_PROFILES: ReadonlySet<SearchProfile> = new Set([
   "generic-anime",
 ]);
 
+/** True when the profile is any anime bucket — year is a live-action disambiguator
+ *  and a known recall killer on anime (脆/偏, or 拉同名真人版). */
+export function isAnimeSearchProfile(profile: SearchProfile | undefined): boolean {
+  return profile !== undefined && ANIME_PROFILES.has(profile);
+}
+
 /**
  * 病2b（2026-07-06 攻壳事故）：动漫搜索纪律从「提示词里的禁忌」升级为校验器
  * ——但只 WARN 不阻断（个别老番年份真有用、罗马音兜底是配方明令的合法手段;

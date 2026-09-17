@@ -387,7 +387,8 @@ describe("runAcquisitionV2 — rules selector (no LLM)", () => {
     });
 
     expect(searches.some((keyword) => /4-10集/.test(keyword))).toBe(true);
-    expect(searches.length).toBeLessThanOrEqual(4);
+    expect(searches).toContain("庆余年 全集");
+    expect(searches.length).toBeLessThanOrEqual(8);
     expect(result.coverage.coverageMet).toBe(true);
     expect(result.coverage.obtained.sort()).toEqual(missing);
     expect(result.outcome.transferAttempts.map((attempt) => attempt.candidateId).sort()).toEqual(["early", "late"]);
@@ -820,7 +821,6 @@ describe("runAcquisitionV2 — auto path confidence fallback", () => {
           seasons: [1],
           missingEpisodes: missing,
           qualityPreference: "1080p",
-          originCountries: ["CN"],
         },
         stagingDirectoryId: "staging",
         targetSeasonDirectoryIds: { 1: "season" },

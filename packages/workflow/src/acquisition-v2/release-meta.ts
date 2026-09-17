@@ -38,6 +38,7 @@ export {
   validateIdentifierWord,
   validateIdentifierWordText,
   customIdentifierWordsSpread,
+  literalSearchAliasesFromIdentifierWords,
 } from "./words-matcher.js";
 
 export type VideoCodec = "h264" | "h265" | "av1" | "avc" | "hevc" | "xvid" | "unknown";

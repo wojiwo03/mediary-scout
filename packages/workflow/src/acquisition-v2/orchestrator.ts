@@ -246,10 +246,12 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
         ? tvTargetToRules(stripKind(request.target), {
             ...(request.originCountries === undefined ? {} : { originCountries: request.originCountries }),
             ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
+            ...(request.searchProfile === undefined ? {} : { searchProfile: request.searchProfile }),
           })
         : movieTargetToRules(stripKind(request.target), {
             ...(request.originCountries === undefined ? {} : { originCountries: request.originCountries }),
             ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
+            ...(request.searchProfile === undefined ? {} : { searchProfile: request.searchProfile }),
           }),
     ...(request.qualityPolicy === undefined ? {} : { policy: request.qualityPolicy }),
     ...(request.qualityUpgrade ? { qualityUpgrade: true } : {}),

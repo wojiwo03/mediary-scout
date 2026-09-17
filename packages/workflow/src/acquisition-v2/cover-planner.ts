@@ -12,7 +12,8 @@
 import { QUALITY_RESOLUTION_BAND } from "./quality-ladder.js";
 
 export const MAX_GAP_RESEARCH_ROUNDS = 2;
-export const MAX_GAP_QUERIES_PER_ROUND = 2;
+/** +1 vs the original 2 so S01 can keep the no-季 first query *and* add 第一季. */
+export const MAX_GAP_QUERIES_PER_ROUND = 3;
 /** Hard ceiling on TV/anime share transfers per run (attempts, including failures). */
 export const MAX_TV_TRANSFERS_PER_RUN = 12;
 /**
@@ -252,15 +253,21 @@ export function groupEpisodeRanges(codes: readonly string[]): EpisodeRange[] {
   return ranges;
 }
 
-function seasonQueryToken(season: number): string {
-  // S1: never add 第一季 — PanSou AND-match collapses recall (庆余年 第二季 实测).
-  if (season <= 1) {
-    return "";
-  }
-  if (season <= 10) {
+/** Always emits `第N季`, including S01 (`第一季`). First-wave / S01 gap second query. */
+export function chineseSeasonToken(season: number): string {
+  if (season >= 0 && season <= 10) {
     return `第${CN_SEASON[season]}季`;
   }
   return `第${season}季`;
+}
+
+function seasonQueryToken(season: number): string {
+  // S1 first query: omit 第一季 — PanSou AND-match collapses recall
+  // (庆余年 第二季 实测). S01 第一季 is appended as a *second* query below.
+  if (season <= 1) {
+    return "";
+  }
+  return chineseSeasonToken(season);
 }
 
 function rangeQueryToken(range: EpisodeRange): string {
@@ -325,6 +332,16 @@ export function gapSearchQueries(input: {
       break;
     }
     push([lead, seasonQueryToken(range.season), rangeQueryToken(range)]);
+  }
+  // S01 second query: keep the no-季 first hit, then retry with 第一季.
+  for (const range of ranges) {
+    if (range.season > 1) {
+      continue;
+    }
+    if (queries.length >= MAX_GAP_QUERIES_PER_ROUND) {
+      break;
+    }
+    push([lead, chineseSeasonToken(range.season), rangeQueryToken(range)]);
   }
   return queries.slice(0, MAX_GAP_QUERIES_PER_ROUND);
 }
