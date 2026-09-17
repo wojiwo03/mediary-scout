@@ -1,6 +1,6 @@
 import { ensureMediaLibraryDirectory } from "../media-library-folder.js";
 import type { StorageExecutor } from "../ports.js";
-import { bestEffort, POST_FINISH_IO_TIMEOUT_MS } from "./best-effort.js";
+import { kickoffBestEffort, POST_FINISH_IO_TIMEOUT_MS } from "./best-effort.js";
 
 /**
  * Phase 7a — directory lifecycle. Before the agent runs, the system ensures the
@@ -73,7 +73,9 @@ export async function ensureSeasonAcquisitionDirectories(
  * THIS run's ephemeral staging dir — never a Season/library dir.
  *
  * Bounded: a hung delete must not leave the run `running` after finish already
- * wrote 「正在收尾」. Timeout still lets the delete continue in the background.
+ * wrote 「正在收尾」/「未找到可用资源」. The wipe is kicked off in the
+ * background — awaiting it (even with a 20s cap) kept the worker on `running`
+ * at 97% until the timer fired.
  */
 export async function withStagingCleanup<T>(
   args: {
@@ -86,7 +88,7 @@ export async function withStagingCleanup<T>(
   try {
     return await run();
   } finally {
-    await bestEffort(
+    kickoffBestEffort(
       () => args.executor.removeDirectory(args.stagingDirectoryId),
       args.timeoutMs ?? POST_FINISH_IO_TIMEOUT_MS,
     );

@@ -118,6 +118,101 @@ describe("runQueuedType2Workflow (V2 engine)", () => {
     expect(snapshot!.workflowRun.status).toBe("no_coverage");
   });
 
+  it("forced rules + quality floor + hung list/discard persists no_coverage (does not stay running)", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const title: MediaTitle = {
+      id: "title_lanxiang",
+      tmdbId: 999001,
+      type: "tv",
+      title: "兰香如敌",
+      originalTitle: "兰香如敌",
+      year: 2024,
+      aliases: [],
+      originCountries: ["CN"],
+    };
+    const season: TrackedSeason = {
+      id: "season_lanxiang_1",
+      mediaTitleId: title.id,
+      seasonNumber: 1,
+      status: "active",
+      qualityPreference: "1080p",
+      storageDirectoryId: "dir_lanxiang_s1",
+      totalEpisodes: 12,
+      latestAiredEpisode: 12,
+      latestAiredSource: "metadata",
+    };
+    await queueTrackingInitialization({
+      title,
+      season,
+      keyword: "兰香如敌",
+      repository,
+      createWorkflowRunId: () => "run_rules_floor_persist",
+      now: fixedNow,
+    });
+
+    class HangWrapUpExecutor extends FakeStorageExecutor {
+      override async listVideoFiles() {
+        await new Promise(() => undefined);
+        return [];
+      }
+      override async removeDirectory() {
+        await new Promise(() => undefined);
+        return { removed: false };
+      }
+      override async listTree() {
+        await new Promise(() => undefined);
+        return [];
+      }
+    }
+
+    const snapId = "snap_floor_persist";
+    const provider = {
+      search: async ({ keyword }: { keyword: string }) => ({
+        id: snapId,
+        provider: "pansou" as const,
+        keyword,
+        candidates: [
+          {
+            id: "low-pack",
+            snapshotId: snapId,
+            index: 0,
+            title: "兰香如敌 第一季 720p WEB-DL",
+            type: "115" as const,
+            source: "pansou",
+            providerPayload: { url: "https://115.com/s/low-pack" },
+          },
+        ],
+        createdAt: "2026-06-15T00:00:00.000Z",
+      }),
+    };
+
+    const result = await Promise.race([
+      runQueuedType2Workflow({
+        repository,
+        resourceProvider: provider,
+        storage: new HangWrapUpExecutor(),
+        model: throwingModel(),
+        storageParentDirectoryId: "library_root",
+        acquisitionSelectionPath: "rules",
+        qualityFloor: "1080p",
+        now: fixedNow,
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("worker stayed running after floor-empty finish")), 2000),
+      ),
+    ]);
+
+    expect(result).toMatchObject({
+      status: "ran",
+      workflowRunId: "run_rules_floor_persist",
+      workflowStatus: "no_coverage",
+    });
+    const snapshot = await repository.getWorkflowRunSnapshot("run_rules_floor_persist");
+    expect(snapshot!.workflowRun.status).toBe("no_coverage");
+    expect(snapshot!.workflowRun.finishedAt).not.toBeNull();
+    expect(snapshot!.workflowRun.status).not.toBe("running");
+  });
+
   it("stamps finishedAt at completion (after the run), so it is never before the notification createdAt", async () => {
     const repository = new InMemoryWorkflowRepository();
     const { title, season } = trackedFixture();

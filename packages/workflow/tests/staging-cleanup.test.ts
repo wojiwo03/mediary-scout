@@ -15,6 +15,11 @@ function recordingExecutor(behavior?: () => Promise<void>) {
   };
 }
 
+async function flushCleanup(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
 describe("withStagingCleanup", () => {
   it("removes the run's staging dir after the body succeeds", async () => {
     const { executor, removed } = recordingExecutor();
@@ -23,6 +28,7 @@ describe("withStagingCleanup", () => {
       async () => "coverage-result",
     );
     expect(result).toBe("coverage-result");
+    await flushCleanup();
     expect(removed).toEqual(["stg"]);
   });
 
@@ -35,6 +41,7 @@ describe("withStagingCleanup", () => {
         throw new Error("boom");
       }),
     ).rejects.toThrow("boom");
+    await flushCleanup();
     expect(removed).toEqual(["stg"]);
   });
 
@@ -55,5 +62,18 @@ describe("withStagingCleanup", () => {
       ),
     ]);
     expect(result).toBe("coverage");
+  });
+
+  it("does not await a hung default-timeout delete before returning the result", async () => {
+    // Production wrap-up used POST_FINISH_IO_TIMEOUT (20s). Awaiting that left
+    // the worker `running` at 97% 「未找到资源」/「正在收尾」 after finish().
+    const { executor } = recordingExecutor(() => new Promise(() => undefined));
+    const result = await Promise.race([
+      withStagingCleanup({ executor, stagingDirectoryId: "stg" }, async () => "no_coverage"),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("default cleanup timeout still blocked persist")), 500),
+      ),
+    ]);
+    expect(result).toBe("no_coverage");
   });
 });

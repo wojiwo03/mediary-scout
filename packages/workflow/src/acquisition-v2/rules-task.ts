@@ -22,7 +22,12 @@ import {
   shouldReplaceLanded,
   anyLandedUpgrade,
 } from "./landed-dedup.js";
-import { POST_FINISH_IO_TIMEOUT_MS, withTimeout } from "./best-effort.js";
+import {
+  kickoffBestEffort,
+  ORIENTATION_IO_TIMEOUT_MS,
+  POST_FINISH_IO_TIMEOUT_MS,
+  withTimeout,
+} from "./best-effort.js";
 import {
   inferEpisodeCodeFromListingPath,
   mapTvCoverageFromListing,
@@ -94,6 +99,38 @@ function asEvidence<T>(run: () => Promise<T>): Promise<T | { error: string }> {
   return run().catch((error: unknown) => ({
     error: error instanceof Error ? error.message : String(error),
   }));
+}
+
+/**
+ * Persist-blocking terminal: emit finish (and optional no-coverage) FIRST, then
+ * kick off staging wipe in the background. Awaiting discard/list after
+ * reportNoCoverage left the UI at 97% 「未找到资源」 with status still `running`.
+ */
+async function completeRulesRun(
+  sandbox: TaskSandbox,
+  onProgress: ((event: AgentToolEvent) => void) | undefined,
+  text: string,
+  options: { reportNoCoverage?: string; discardStaging?: boolean } = {},
+): Promise<AcquisitionAgentResult> {
+  if (options.reportNoCoverage !== undefined) {
+    const reason = options.reportNoCoverage;
+    const reported = await asEvidence(() => sandbox.reportNoCoverage(reason));
+    if (reported && typeof reported === "object" && "error" in reported) {
+      emit(onProgress, "finish", {});
+      const coverage = await sandbox.finish();
+      if (options.discardStaging) {
+        kickoffBestEffort(() => sandbox.discardStaging());
+      }
+      return { text: reported.error, steps: 1, coverage };
+    }
+    emit(onProgress, "reportNoCoverage", { reason });
+  }
+  emit(onProgress, "finish", {});
+  const coverage = await sandbox.finish();
+  if (options.discardStaging) {
+    kickoffBestEffort(() => sandbox.discardStaging());
+  }
+  return { text, steps: 1, coverage };
 }
 
 function snapshotsToCandidates(sandbox: TaskSandbox): RulesSelectorCandidate[] {
@@ -230,7 +267,9 @@ async function probeOpaqueTvShares(input: {
 
   for (const candidate of picks) {
     emit(input.onProgress, "probeShareListing", { title: candidate.title });
-    const listing = await asEvidence(() => input.sandbox.listCandidateListing(candidate.candidateId));
+    const listing = await asEvidence(() =>
+      withTimeout(input.sandbox.listCandidateListing(candidate.candidateId), POST_FINISH_IO_TIMEOUT_MS),
+    );
     if (Array.isArray(listing)) {
       const covered = mapTvCoverageFromListing({
         paths: listing.map((row) => row.path),
@@ -247,7 +286,9 @@ async function probeOpaqueTvShares(input: {
     }
 
     let beforeIds = new Set<string>();
-    const before = await asEvidence(() => input.sandbox.inspectStaging());
+    const before = await asEvidence(() =>
+      withTimeout(input.sandbox.inspectStaging(), POST_FINISH_IO_TIMEOUT_MS),
+    );
     if (Array.isArray(before)) {
       beforeIds = new Set(before.map((file) => file.id));
     }
@@ -271,7 +312,9 @@ async function probeOpaqueTvShares(input: {
     if (result && typeof result === "object" && "systemicBlock" in result && result.systemicBlock) {
       break;
     }
-    const staging = await asEvidence(() => input.sandbox.inspectStaging());
+    const staging = await asEvidence(() =>
+      withTimeout(input.sandbox.inspectStaging(), POST_FINISH_IO_TIMEOUT_MS),
+    );
     const newFiles = Array.isArray(staging) ? staging.filter((file) => !beforeIds.has(file.id)) : [];
     const covered = mapTvCoverageFromListing({
       paths: newFiles.filter((file) => file.isVideo).map((file) => file.path),
@@ -429,7 +472,9 @@ async function transferTvWithRefill(input: {
       if (result && typeof result === "object" && "error" in result) {
         if (isTransferCapError(result.error)) {
           transferCap = true;
-          const staging = await asEvidence(() => sandbox.inspectStaging());
+          const staging = await asEvidence(() =>
+            withTimeout(sandbox.inspectStaging(), POST_FINISH_IO_TIMEOUT_MS),
+          );
           return {
             landed: Array.isArray(staging) && staging.some((file) => file.isVideo),
             transferred,
@@ -480,7 +525,9 @@ async function transferTvWithRefill(input: {
     }
   }
 
-  const staging = await asEvidence(() => sandbox.inspectStaging());
+  const staging = await asEvidence(() =>
+    withTimeout(sandbox.inspectStaging(), POST_FINISH_IO_TIMEOUT_MS),
+  );
   return {
     landed: Array.isArray(staging) && staging.some((file) => file.isVideo),
     transferred,
@@ -566,7 +613,7 @@ async function markExistingTv(
   for (const season of seasons) {
     emit(onProgress, "inspectTargetDir", { season });
     const files = await asEvidence(() =>
-      withTimeout(sandbox.inspectTargetDir({ season }), POST_FINISH_IO_TIMEOUT_MS),
+      withTimeout(sandbox.inspectTargetDir({ season }), ORIENTATION_IO_TIMEOUT_MS),
     );
     if (!Array.isArray(files)) {
       continue;
@@ -592,7 +639,7 @@ async function markExistingMovie(
   onProgress?: (event: AgentToolEvent) => void,
 ): Promise<void> {
   emit(onProgress, "inspectTargetDir", {});
-  const files = await asEvidence(() => withTimeout(sandbox.inspectTargetDir(), POST_FINISH_IO_TIMEOUT_MS));
+  const files = await asEvidence(() => withTimeout(sandbox.inspectTargetDir(), ORIENTATION_IO_TIMEOUT_MS));
   if (!Array.isArray(files) || !files.some((file) => file.isVideo)) {
     return;
   }
@@ -662,16 +709,21 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
     candidateCount: candidates.length,
     ...(words && words.length > 0 ? { customWords: words } : {}),
   };
-  // High-confidence empty (hard quality floor) must NOT probe opaque shares —
-  // 115 has no listing-without-transfer, so probe would 转存偷看, then finish
-  // with leftover staging and the wrap-up delete hung the UI on 「正在收尾」.
-  // Independent of auto: Settings「规则模式」is forced `rules` and never
-  // sets escalateOnLowConfidence, so this skip is the rules-only hang fix.
+  // High-confidence empty (hard quality floor) must NOT probe-transfer opaque
+  // shares — 115 has no listing-without-transfer, so peek would 转存, then the
+  // wrap-up delete hung the UI on 「正在收尾」/「未找到资源」 at 97%.
+  // PR #16 extra recipe queries often add unmarked titles (no-episode-coverage)
+  // which used to drop confidence to low and re-enable transfer-peek even when
+  // the floor had already emptied the transparent set. Forced `rules` never
+  // sets escalateOnLowConfidence; skip ALL probe when the floor is set and
+  // nothing was selected (leave the gap for patrol).
   const preProbeConfidence = assessRulesConfidence(confidenceInput);
-  const skipOpaqueProbe =
-    target.kind === "tv" && selection.selected.length === 0 && preProbeConfidence.confidence === "high";
+  const skipTransferPeek =
+    target.kind === "tv" &&
+    selection.selected.length === 0 &&
+    (preProbeConfidence.confidence === "high" || policy.resolutionFloor !== undefined);
   const probe =
-    target.kind === "tv" && !skipOpaqueProbe
+    target.kind === "tv" && !skipTransferPeek
       ? await probeOpaqueTvShares({
           sandbox,
           candidates,
@@ -727,23 +779,12 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
   });
 
   if (selection.selected.length === 0) {
-    const reported = await asEvidence(() => sandbox.reportNoCoverage(selection.reason));
-    // Probe (115 staging-peek) may have left files; wipe them before finish so
-    // wrap-up delete cannot pin the UI on 「正在收尾」. Floor-empty skips probe,
-    // so skip this extra 115 call — the harness still discards empty staging.
-    if (target.kind === "tv" && !skipOpaqueProbe) {
-      emit(onProgress, "discardStaging", {});
-      await asEvidence(() => withTimeout(sandbox.discardStaging(), POST_FINISH_IO_TIMEOUT_MS));
-    }
-    if (reported && typeof reported === "object" && "error" in reported) {
-      emit(onProgress, "finish", {});
-      const coverage = await sandbox.finish();
-      return { text: reported.error, steps: 1, coverage };
-    }
-    emit(onProgress, "reportNoCoverage", { reason: selection.reason });
-    emit(onProgress, "finish", {});
-    const coverage = await sandbox.finish();
-    return { text: selection.reason, steps: 1, coverage };
+    // Finish BEFORE any staging wipe so the worker can persist no_coverage.
+    // Transfer-peek leftovers (if any) are discarded in the background.
+    return completeRulesRun(sandbox, onProgress, selection.reason, {
+      reportNoCoverage: selection.reason,
+      discardStaging: target.kind === "tv" && !skipTransferPeek,
+    });
   }
 
   if (request.qualityUpgrade && target.kind === "movie") {
@@ -772,11 +813,9 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
     if (existingTitles.length > 0) {
       const candidateTitles = selection.selected.map((candidate) => candidate.title);
       if (!anyLandedUpgrade(existingTitles, candidateTitles, policy, words)) {
-        emit(onProgress, "discardStaging", {});
-        await asEvidence(() => sandbox.discardStaging());
-        emit(onProgress, "finish", {});
-        const coverage = await sandbox.finish();
-        return { text: "规则选片：已入库画质不低于候选，跳过升级", steps: 1, coverage };
+        return completeRulesRun(sandbox, onProgress, "规则选片：已入库画质不低于候选，跳过升级", {
+          discardStaging: true,
+        });
       }
     }
   }
@@ -801,9 +840,9 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
       emit(onProgress, "markObtained", { codes: ["MOVIE"] });
       await sandbox.markObtained({ codes: ["MOVIE"], ...(rawFallback ? { subtitleFallback: true } : {}) });
     } else {
-      const reason = "规则选片：转存后未见可播放视频";
-      await asEvidence(() => sandbox.reportNoCoverage(reason));
-      emit(onProgress, "reportNoCoverage", { reason });
+      return completeRulesRun(sandbox, onProgress, "规则选片：转存后未见可播放视频", {
+        reportNoCoverage: "规则选片：转存后未见可播放视频",
+      });
     }
     emit(onProgress, "finish", {});
     const coverage = await sandbox.finish();
@@ -846,15 +885,12 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
   if (marked.length > 0) {
     emit(onProgress, "markObtained", { codes: marked });
     await sandbox.markObtained({ codes: marked });
-  } else {
-    await asEvidence(() => sandbox.reportNoCoverage(tvReason));
-    emit(onProgress, "reportNoCoverage", { reason: tvReason });
+    return completeRulesRun(sandbox, onProgress, tvReason, { discardStaging: true });
   }
-  emit(onProgress, "discardStaging", {});
-  await asEvidence(() => withTimeout(sandbox.discardStaging(), POST_FINISH_IO_TIMEOUT_MS));
-  emit(onProgress, "finish", {});
-  const coverage = await sandbox.finish();
-  return { text: tvReason, steps: 1, coverage };
+  return completeRulesRun(sandbox, onProgress, tvReason, {
+    reportNoCoverage: tvReason,
+    discardStaging: true,
+  });
 }
 
 export interface RulesTargetExtras {
