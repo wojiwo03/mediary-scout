@@ -556,11 +556,14 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     // and the status guard is re-checked against the row this statement actually
     // locks — so a write that waited behind the terminal transaction is dropped
     // instead of resurrecting the run.
+    // `numeric`, not `int`: this write is fire-and-forget with a swallowed catch, so
+    // a cast that throws on a fractional percent would silently freeze the bar for
+    // the rest of the run instead of failing loudly.
     await this.ensureSchema();
     await this.pool.query(
       "UPDATE workflow_runs SET payload = jsonb_set(payload, '{progress}', " +
         "$2::jsonb || jsonb_build_object('percent', GREATEST(" +
-        "COALESCE((payload #>> '{progress,percent}')::int, 0), $3::int)), true) " +
+        "COALESCE((payload #>> '{progress,percent}')::numeric, 0), $3::numeric)), true) " +
         "WHERE id = $1 AND payload ->> 'status' = ANY($4::text[])",
       [workflowRunId, json(progress), progress.percent, [...ACTIVE_WORKFLOW_STATUSES]],
     );
