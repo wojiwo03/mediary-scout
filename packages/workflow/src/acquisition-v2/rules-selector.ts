@@ -503,6 +503,35 @@ export type EmptyPickReasonCode =
   | "redundant-coverage"
   | "empty-selection";
 
+export interface PickRejectGroup {
+  reason: string;
+  count: number;
+}
+
+/** Count rejects by reason and keep 1–3 share titles as card examples. */
+export function summarizePickRejects(
+  rejected: ReadonlyArray<{ reason: string; title: string }>,
+): { groups: PickRejectGroup[]; examples: string[] } {
+  const counts = new Map<string, number>();
+  const examples: string[] = [];
+  const seen = new Set<string>();
+  for (const row of rejected) {
+    const reason = row.reason.trim();
+    if (reason) {
+      counts.set(reason, (counts.get(reason) ?? 0) + 1);
+    }
+    const title = row.title.replace(/\s+/g, " ").trim();
+    if (title && !seen.has(title) && examples.length < 3) {
+      seen.add(title);
+      examples.push(title);
+    }
+  }
+  const groups = [...counts.entries()]
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+  return { groups, examples };
+}
+
 export function classifyEmptyPickReason(
   rejected: ReadonlyArray<{ reason: string }>,
   candidateCount: number,

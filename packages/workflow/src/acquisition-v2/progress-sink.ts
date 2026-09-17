@@ -11,6 +11,54 @@ const PICK_REASON_CODES = new Set([
   "sequel-or-year",
 ]);
 
+const SEARCH_KEYWORDS_CAP = 12;
+
+type PickRejectGroup = { reason: string; count: number };
+
+function stringList(value: unknown, cap: number): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const out: string[] = [];
+  for (const item of value) {
+    const text = String(item ?? "").replace(/\s+/g, " ").trim();
+    if (text) {
+      out.push(text);
+    }
+    if (out.length >= cap) {
+      break;
+    }
+  }
+  return out;
+}
+
+function parseRejectGroups(value: unknown): PickRejectGroup[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const out: PickRejectGroup[] = [];
+  for (const row of value) {
+    if (!row || typeof row !== "object") {
+      continue;
+    }
+    const rec = row as Record<string, unknown>;
+    const reason = typeof rec.reason === "string" ? rec.reason.trim() : "";
+    const count = typeof rec.count === "number" ? rec.count : 0;
+    if (reason && count > 0) {
+      out.push({ reason, count });
+    }
+    if (out.length >= 4) {
+      break;
+    }
+  }
+  return out;
+}
+
+function rememberKeyword(list: string[], keyword: string): string[] {
+  const next = [...list.filter((item) => item !== keyword), keyword];
+  return next.length > SEARCH_KEYWORDS_CAP ? next.slice(-SEARCH_KEYWORDS_CAP) : next;
+}
+
 function pickReasonFromEvent(event: AgentToolEvent): string | null {
   const coded = event.args.pickReason;
   if (typeof coded === "string" && PICK_REASON_CODES.has(coded)) {
@@ -78,6 +126,12 @@ export function makeProgressSink(input: {
   let searchTotal = 0;
   let candidateCount: number | null = null;
   let pickReason = "";
+  let searchKeywords: string[] = [];
+  let pickRejectGroups: PickRejectGroup[] = [];
+  let pickExamples: string[] = [];
+  let transferTitle = "";
+  let transferEpisodes: string[] = [];
+  let skippedDuplicates: number | null = null;
 
   return (event: AgentToolEvent) => {
     if (event.toolName === "markObtained") {
@@ -89,10 +143,32 @@ export function makeProgressSink(input: {
       const keyword = String(event.args.keyword ?? "").trim();
       if (keyword) {
         currentKeyword = keyword;
+        searchKeywords = rememberKeyword(searchKeywords, keyword);
       }
       if (typeof event.args.searchTotal === "number" && event.args.searchTotal > 0) {
         searchTotal = event.args.searchTotal;
       }
+    }
+    if (event.toolName === "transferCandidate" || event.toolName === "transferUntilLanded") {
+      const title = String(event.args.title ?? "").replace(/\s+/g, " ").trim();
+      if (title) {
+        transferTitle = title;
+      }
+      const episodes = stringList(event.args.episodes, 8);
+      if (episodes.length > 0) {
+        transferEpisodes = episodes;
+      }
+    }
+    if (typeof event.args.skippedDuplicates === "number" && event.args.skippedDuplicates >= 0) {
+      skippedDuplicates = event.args.skippedDuplicates;
+    }
+    const nextGroups = parseRejectGroups(event.args.rejectGroups);
+    if (nextGroups.length > 0) {
+      pickRejectGroups = nextGroups;
+    }
+    const nextExamples = stringList(event.args.rejectExamples, 3);
+    if (nextExamples.length > 0) {
+      pickExamples = nextExamples;
     }
     if (event.toolName === "reportNoCoverage" || event.activity.includes("未找到可用资源")) {
       noCoverage = true;
@@ -141,6 +217,12 @@ export function makeProgressSink(input: {
         ...(searchTotal > 0 ? { searchTotal } : {}),
         ...(candidateCount !== null ? { candidateCount } : {}),
         ...(pickReason ? { pickReason } : {}),
+        ...(searchKeywords.length > 0 ? { searchKeywords } : {}),
+        ...(pickRejectGroups.length > 0 ? { pickRejectGroups } : {}),
+        ...(pickExamples.length > 0 ? { pickExamples } : {}),
+        ...(transferTitle ? { transferTitle } : {}),
+        ...(transferEpisodes.length > 0 ? { transferEpisodes } : {}),
+        ...(skippedDuplicates !== null ? { skippedDuplicates } : {}),
       }),
     ).catch(() => {
       // Progress is a display nicety; never let its write failure surface.

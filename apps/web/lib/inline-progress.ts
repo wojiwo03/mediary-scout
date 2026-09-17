@@ -111,6 +111,20 @@ export function inlineProgressView(run: ActivityActiveRun | null): InlineProgres
     ...(progress?.searchTotal != null ? { searchTotal: progress.searchTotal } : {}),
     ...(progress?.candidateCount != null ? { candidateCount: progress.candidateCount } : {}),
     ...(progress?.pickReason ? { pickReason: progress.pickReason } : {}),
+    ...(progress?.searchKeywords && progress.searchKeywords.length > 0
+      ? { searchKeywords: progress.searchKeywords }
+      : {}),
+    ...(progress?.pickRejectGroups && progress.pickRejectGroups.length > 0
+      ? { pickRejectGroups: progress.pickRejectGroups }
+      : {}),
+    ...(progress?.pickExamples && progress.pickExamples.length > 0
+      ? { pickExamples: progress.pickExamples }
+      : {}),
+    ...(progress?.transferTitle ? { transferTitle: progress.transferTitle } : {}),
+    ...(progress?.transferEpisodes && progress.transferEpisodes.length > 0
+      ? { transferEpisodes: progress.transferEpisodes }
+      : {}),
+    ...(progress?.skippedDuplicates != null ? { skippedDuplicates: progress.skippedDuplicates } : {}),
     ...(run?.selectionPath ? { selectionPath: run.selectionPath } : {}),
   });
   const headline = acquireStepsHeadline(steps);

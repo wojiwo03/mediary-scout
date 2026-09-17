@@ -133,6 +133,26 @@ describe("inlineProgressView", () => {
     expect(v.step).toBe("选片 · 候选 8 个，均低于画质下限");
     expect(v.steps.find((s) => s.id === "search")?.detail).toContain("兰香如敌");
   });
+  it("passes grouped rejects and transfer share through to the step list", () => {
+    const v = inlineProgressView(
+      run({
+        status: "running",
+        progress: {
+          percent: 48,
+          activity: "正在转存到网盘…",
+          phase: "transfer",
+          updatedAt: "2026-06-23T00:00:00.000Z",
+          obtained: 2,
+          needed: 12,
+          searchKeywords: ["兰香如敌", "兰香如故", "第二季"],
+          transferTitle: "兰香如敌 1080p WEB-DL 中字",
+          transferEpisodes: ["S01E04"],
+        },
+      }),
+    );
+    expect(v.steps.find((s) => s.id === "search")?.detail).toBe("已试：兰香如敌 / 兰香如故 / 第二季");
+    expect(v.step).toBe("转存 · 正在转存 E04 · 兰香如敌 1080p WEB-DL 中字");
+  });
 });
 
 // 2026-06-24 bug: a single `searchResources` tool call ran 94s (half the run); the

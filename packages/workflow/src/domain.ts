@@ -111,6 +111,18 @@ export interface WorkflowRunProgress {
    * redundant-coverage / no-candidates / media-id-mismatch / empty-selection.
    */
   pickReason?: string;
+  /** Unique `searchResources` keywords this run, insertion order (capped). */
+  searchKeywords?: string[];
+  /** Grouped empty-pick rejects `{reason, count}` — UI maps codes to 中文. */
+  pickRejectGroups?: Array<{ reason: string; count: number }>;
+  /** 1–3 rejected share titles as examples (never a raw candidate dump). */
+  pickExamples?: string[];
+  /** Current `transferCandidate` share title. */
+  transferTitle?: string;
+  /** Episode codes this transfer is covering (`SxxExx`). */
+  transferEpisodes?: string[];
+  /** Files deleted by landed-dedup after organize (duplicate skip count). */
+  skippedDuplicates?: number;
 }
 
 export interface WorkflowRun {

@@ -223,6 +223,90 @@ describe("acquireStepsFromProgress", () => {
     expect(byId(steps, "pick").detail).not.toMatch(/media-id|mismatch/);
   });
 
+  it("search current lists tried keywords then the one in flight", () => {
+    const steps = acquireStepsFromProgress({
+      activity: "正在搜索资源:第四集",
+      phase: "search",
+      currentKeyword: "第四集",
+      searchKeywords: ["兰香如敌", "兰香如故", "第二季", "第四集"],
+      searchCount: 4,
+      searchTotal: 5,
+    });
+    expect(byId(steps, "search").detail).toBe("已试：兰香如敌 / 兰香如故 / 第二季 · 正在搜：第四集");
+  });
+
+  it("search tried list caps last 5 plus total count", () => {
+    const steps = acquireStepsFromProgress({
+      activity: "正在搜索资源:第九集",
+      phase: "search",
+      currentKeyword: "第九集",
+      searchKeywords: ["一", "二", "三", "四", "五", "六", "七", "八", "第九集"],
+    });
+    expect(byId(steps, "search").detail).toBe("已试：四 / 五 / 六 / 七 / 八 等 8 个 · 正在搜：第九集");
+  });
+
+  it("search done lists tried keywords instead of only the last one", () => {
+    const steps = acquireStepsFromProgress({
+      activity: "正在按规则筛选候选…",
+      phase: "pick",
+      searchCount: 3,
+      searchKeywords: ["兰香如敌", "兰香如故", "第二季"],
+      currentKeyword: "第二季",
+      candidateCount: 12,
+    });
+    expect(byId(steps, "search").detail).toBe("已试：兰香如敌 / 兰香如故 / 第二季 · 候选 12 个");
+  });
+
+  it("pick failed groups reject reasons and shows 1–3 share examples", () => {
+    const steps = acquireStepsFromProgress({
+      activity: "正在收尾…",
+      phase: "finalize",
+      noCoverage: true,
+      skippedTransfer: true,
+      pickReason: "below-quality-floor",
+      candidateCount: 10,
+      pickRejectGroups: [
+        { reason: "below-quality-floor", count: 8 },
+        { reason: "no-episode-coverage", count: 2 },
+      ],
+      pickExamples: ["兰香如敌 720p WEB-DL", "兰香如故 480p"],
+    });
+    expect(byId(steps, "pick")).toMatchObject({
+      state: "failed",
+      detail: "8 个低于画质下限 · 2 个对不上缺集 · 例如：兰香如敌 720p WEB-DL / 兰香如故 480p",
+    });
+    expect(acquireStepsHeadline(steps).label).toBe(
+      "选片 · 8 个低于画质下限 · 2 个对不上缺集 · 例如：兰香如敌 720p WEB-DL / 兰香如故 480p",
+    );
+  });
+
+  it("transfer current shows the share and episode being moved", () => {
+    const steps = acquireStepsFromProgress({
+      activity: "正在转存到网盘…",
+      phase: "transfer",
+      obtained: 2,
+      needed: 12,
+      shareCount: 2,
+      transferTitle: "兰香如敌 1080p WEB-DL 中字",
+      transferEpisodes: ["S01E04"],
+    });
+    expect(byId(steps, "transfer").detail).toBe("正在转存 E04 · 兰香如敌 1080p WEB-DL 中字");
+  });
+
+  it("transfer done appends skipped duplicates from landed-dedup", () => {
+    const steps = acquireStepsFromProgress({
+      activity: "正在整理到第 1 季…",
+      phase: "organize",
+      obtained: 8,
+      needed: 12,
+      skippedDuplicates: 2,
+    });
+    expect(byId(steps, "transfer")).toMatchObject({
+      state: "done",
+      detail: "已确认 8/12 集 · 跳过重复 2 集",
+    });
+  });
+
   it("live 画质下限 pick line stays on 选片, does not jump to 收尾", () => {
     const steps = acquireStepsFromProgress({
       activity: "候选低于画质下限，不下载…",

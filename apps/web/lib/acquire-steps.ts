@@ -30,6 +30,12 @@ export interface AcquireStepsInput {
   searchTotal?: number;
   candidateCount?: number;
   pickReason?: string | null;
+  searchKeywords?: string[];
+  pickRejectGroups?: Array<{ reason: string; count: number }>;
+  pickExamples?: string[];
+  transferTitle?: string | null;
+  transferEpisodes?: string[];
+  skippedDuplicates?: number;
   selectionPath?: "agent" | "rules" | null;
   /** Run already finished (demo playback 入库完成). All remaining steps become done. */
   completed?: boolean;
@@ -124,6 +130,107 @@ const PICK_REASON_COPY: Record<string, string> = {
   "sequel-or-year": "候选年份或续作对不上",
 };
 
+/** Short labels for `N 个…` grouped rejects. */
+const PICK_REJECT_GROUP_COPY: Record<string, string> = {
+  "below-quality-floor": "低于画质下限",
+  "no-episode-coverage": "对不上缺集",
+  "media-id-mismatch": "对不上这部片子",
+  "redundant-coverage": "与已有覆盖重复",
+  "title-mismatch": "标题对不上",
+  "sequel-or-year": "年份或续作对不上",
+  "raw-foreign": "外语原盘",
+  "disc-image": "碟片镜像",
+  "tv-pack": "剧集合集",
+  extra: "花絮预告",
+};
+
+const KEYWORD_DISPLAY_CAP = 5;
+const KEYWORD_ITEM_MAX = 16;
+const SHARE_NAME_MAX = 24;
+
+function clipText(text: string, max: number): string {
+  const trimmed = text.replace(/\s+/g, " ").trim();
+  if (trimmed.length <= max) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, max - 1)}…`;
+}
+
+function formatKeywordList(keywords: readonly string[]): string {
+  const clean = keywords.map((item) => item.trim()).filter(Boolean);
+  if (clean.length === 0) {
+    return "";
+  }
+  const shown = clean.slice(-KEYWORD_DISPLAY_CAP).map((item) => clipText(item, KEYWORD_ITEM_MAX));
+  const joined = shown.join(" / ");
+  return clean.length > KEYWORD_DISPLAY_CAP ? `${joined} 等 ${clean.length} 个` : joined;
+}
+
+function triedKeywords(input: AcquireStepsInput, current?: string | null): string[] {
+  const raw = (input.searchKeywords ?? []).map((item) => item.trim()).filter(Boolean);
+  if (!current) {
+    return raw;
+  }
+  return raw.filter((item) => item !== current);
+}
+
+function compactEpisodeLabel(codes: readonly string[]): string | undefined {
+  const unique = [...new Set(codes.map((code) => code.trim()).filter(Boolean))];
+  if (unique.length === 0) {
+    return undefined;
+  }
+  const sxe: Array<{ season: number; episode: number }> = [];
+  for (const code of unique) {
+    const match = /^S(\d+)E(\d+)$/i.exec(code);
+    if (!match) {
+      return unique[0];
+    }
+    sxe.push({ season: Number(match[1]), episode: Number(match[2]) });
+  }
+  sxe.sort((a, b) => a.season - b.season || a.episode - b.episode);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const dropSeason = new Set(sxe.map((row) => row.season)).size === 1;
+  const fmt = (row: { season: number; episode: number }) =>
+    dropSeason ? `E${pad(row.episode)}` : `S${pad(row.season)}E${pad(row.episode)}`;
+  const first = sxe[0]!;
+  const last = sxe[sxe.length - 1]!;
+  if (sxe.length === 1) {
+    return fmt(first);
+  }
+  const consecutive =
+    dropSeason && last.episode - first.episode + 1 === sxe.length;
+  if (consecutive) {
+    return `${fmt(first)}–E${pad(last.episode)}`;
+  }
+  return `${fmt(first)} 等 ${unique.length} 集`;
+}
+
+function pickGroupLine(input: AcquireStepsInput): string | undefined {
+  const groups = input.pickRejectGroups ?? [];
+  if (groups.length === 0) {
+    return undefined;
+  }
+  const bits: string[] = [];
+  for (const group of groups.slice(0, 3)) {
+    const label = PICK_REJECT_GROUP_COPY[group.reason];
+    if (!label || group.count <= 0) {
+      continue;
+    }
+    bits.push(`${group.count} 个${label}`);
+  }
+  if (bits.length === 0) {
+    return undefined;
+  }
+  const examples = (input.pickExamples ?? [])
+    .map((title) => clipText(title, SHARE_NAME_MAX))
+    .filter(Boolean)
+    .slice(0, 3);
+  if (examples.length > 0) {
+    bits.push(`例如：${examples.join(" / ")}`);
+  }
+  return bits.join(" · ");
+}
+
 function resolvedPickReason(
   input: AcquireStepsInput,
   activity: string,
@@ -143,6 +250,10 @@ function resolvedPickReason(
 }
 
 function pickFailedDetail(input: AcquireStepsInput, activity: string, skippedTransfer: boolean): string {
+  const grouped = pickGroupLine(input);
+  if (grouped) {
+    return grouped;
+  }
   const reason = resolvedPickReason(input, activity, skippedTransfer);
   const n = input.candidateCount;
   if (reason === "no-candidates" || (n === 0 && reason !== "below-quality-floor")) {
@@ -173,10 +284,15 @@ function searchDetail(input: AcquireStepsInput, activity: string, state: Acquire
   const keyword = resolvedKeyword(input, activity);
   const searched = input.searchCount;
   const total = input.searchTotal;
+  const tried = triedKeywords(input, state === "current" ? keyword : null);
+  const allTried = triedKeywords(input, null);
   if (state === "current") {
-    if (keyword) {
-      const gap = activity.includes("补搜");
-      const lead = gap ? `正在补搜：${keyword}` : `正在搜：${keyword}`;
+    const gap = activity.includes("补搜");
+    const lead = keyword ? (gap ? `正在补搜：${keyword}` : `正在搜：${keyword}`) : null;
+    if (tried.length > 0 && lead) {
+      return `已试：${formatKeywordList(tried)} · ${lead}`;
+    }
+    if (lead) {
       if (searched != null && total != null && total > 0 && searched <= total && !gap) {
         return `${lead} · 已搜 ${searched}/${total}`;
       }
@@ -192,10 +308,14 @@ function searchDetail(input: AcquireStepsInput, activity: string, state: Acquire
   }
   if (state === "done") {
     const parts: string[] = [];
-    if (searched != null && searched > 0) {
+    if (allTried.length > 0) {
+      parts.push(`已试：${formatKeywordList(allTried)}`);
+    } else if (searched != null && searched > 0) {
       parts.push(`已搜 ${searched} 个关键词`);
-    }
-    if (keyword) {
+      if (keyword) {
+        parts.push(keyword);
+      }
+    } else if (keyword) {
       parts.push(keyword);
     }
     if (input.candidateCount != null) {
@@ -247,10 +367,26 @@ function transferDetail(
     if (isQualityFloorActivity(activity)) {
       return "低于画质下限，跳过转存";
     }
+    const episode = compactEpisodeLabel(input.transferEpisodes ?? []);
+    const share = input.transferTitle ? clipText(input.transferTitle, SHARE_NAME_MAX) : "";
+    if (episode && share) {
+      return `正在转存 ${episode} · ${share}`;
+    }
+    if (episode) {
+      return `正在转存 ${episode}`;
+    }
+    if (share) {
+      return `正在转存 · ${share}`;
+    }
     return obtainedLine(input.obtained, input.needed, "正在转存第 ") ?? (activity || "正在转存到网盘…");
   }
   if (state === "done") {
-    return obtainedLine(input.obtained, input.needed, "已确认 ");
+    const moved = obtainedLine(input.obtained, input.needed, "已确认 ");
+    const skip = input.skippedDuplicates;
+    if (skip != null && skip > 0) {
+      return moved ? `${moved} · 跳过重复 ${skip} 集` : `跳过重复 ${skip} 集`;
+    }
+    return moved;
   }
   return undefined;
 }

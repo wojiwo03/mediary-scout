@@ -191,4 +191,65 @@ describe("makeProgressSink", () => {
     expect(last.candidateCount).toBe(6);
     expect(last.pickReason).toBe("no-episode-coverage");
   });
+
+  it("accumulates unique search keywords and stickies reject groups / transfer / dedup", () => {
+    const repo = fakeRepo();
+    const sink = makeProgressSink({ repository: repo, workflowRunId: "r", now: () => "t" });
+    sink({
+      toolName: "searchResources",
+      args: { keyword: "兰香如敌" },
+      activity: "正在搜索资源:兰香如敌",
+      phase: "search",
+    });
+    sink({
+      toolName: "searchResources",
+      args: { keyword: "兰香如故" },
+      activity: "正在搜索资源:兰香如故",
+      phase: "search",
+    });
+    sink({
+      toolName: "searchResources",
+      args: { keyword: "兰香如敌" },
+      activity: "正在搜索资源:兰香如敌",
+      phase: "search",
+    });
+    sink({
+      toolName: "rulesSelectCandidates",
+      args: {
+        shareCount: 0,
+        candidateCount: 10,
+        pickReason: "below-quality-floor",
+        rejectGroups: [
+          { reason: "below-quality-floor", count: 8 },
+          { reason: "no-episode-coverage", count: 2 },
+        ],
+        rejectExamples: ["兰香如敌 720p", "兰香如故 480p"],
+      },
+      activity: "候选低于画质下限，不下载…",
+      phase: "pick",
+    });
+    sink({
+      toolName: "transferCandidate",
+      args: { title: "兰香如敌 1080p", episodes: ["S01E04"] },
+      activity: "正在转存到网盘…",
+      phase: "transfer",
+    });
+    sink({
+      toolName: "deleteFiles",
+      args: { skippedDuplicates: 2, directory: "season" },
+      activity: "正在清理多余文件…",
+      phase: "organize",
+    });
+    sink({ toolName: "finish", args: {}, activity: "正在收尾…", phase: "finalize" });
+    const last = repo.writes.at(-1)!.progress;
+    expect(last.searchKeywords).toEqual(["兰香如故", "兰香如敌"]);
+    expect(last.pickRejectGroups).toEqual([
+      { reason: "below-quality-floor", count: 8 },
+      { reason: "no-episode-coverage", count: 2 },
+    ]);
+    expect(last.pickExamples).toEqual(["兰香如敌 720p", "兰香如故 480p"]);
+    expect(last.transferTitle).toBe("兰香如敌 1080p");
+    expect(last.transferEpisodes).toEqual(["S01E04"]);
+    expect(last.skippedDuplicates).toBe(2);
+  });
 });
