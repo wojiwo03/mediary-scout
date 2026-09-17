@@ -3,7 +3,7 @@ import { MockLanguageModelV3 } from "ai/test";
 import { runTvAcquisitionV2 } from "../src/acquisition-v2/run-tv-v2.js";
 import { FakeStorageExecutor } from "../src/fakes.js";
 import type { ResourceProvider } from "../src/ports.js";
-import type { MediaTitle, ResourceSnapshot, VerifiedFile } from "../src/domain.js";
+import type { MediaTitle, PackageTreeFile, ResourceSnapshot, VerifiedFile } from "../src/domain.js";
 
 const USAGE = {
   inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
@@ -51,6 +51,16 @@ function throwingModel() {
 
 class HangListVideoExecutor extends FakeStorageExecutor {
   override async listVideoFiles(): Promise<VerifiedFile[]> {
+    await new Promise(() => undefined);
+    return [];
+  }
+
+  override async removeDirectory(): Promise<{ removed: boolean }> {
+    await new Promise(() => undefined);
+    return { removed: false };
+  }
+
+  override async listTree(): Promise<PackageTreeFile[]> {
     await new Promise(() => undefined);
     return [];
   }
@@ -151,6 +161,7 @@ describe("runTvAcquisitionV2 — single TV entry over the V2 engine", () => {
           createdAt: "2026-06-15T00:00:00.000Z",
         }),
       };
+      const activities: string[] = [];
       const result = await Promise.race([
         runTvAcquisitionV2({
           title: lanxiang,
@@ -164,6 +175,7 @@ describe("runTvAcquisitionV2 — single TV entry over the V2 engine", () => {
           acquisitionSelectionPath: path,
           qualityFloor: "1080p",
           now: () => "2026-06-15T00:00:00.000Z",
+          onProgress: (event) => activities.push(event.activity),
         }),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error(`${path} acquire stayed running after quality-floor finish`)), 2000),
@@ -174,8 +186,90 @@ describe("runTvAcquisitionV2 — single TV entry over the V2 engine", () => {
       expect(result.notification.trigger).toBe("user");
       expect(result.transferAttempts).toEqual([]);
       expect(result.seasons[0]!.episodes.filter((episode) => episode.obtained)).toHaveLength(0);
+      expect(activities.at(-1)).toBe("正在收尾…");
+      expect(activities.some((line) => line.includes("规则拿不准"))).toBe(false);
+      expect(activities.some((line) => line.includes("探查"))).toBe(false);
     },
   );
+
+  it("rules first-acquire + floor + below-floor and unmarked extras completes no_coverage (no LLM, no hung list/discard)", async () => {
+    // After PR #16 extra recipe queries, PanSou often also returns unmarked
+    // titles (no resolution, no 全集 span). Those used to drop rules confidence
+    // and 转存偷看, then wrap-up list/discard hung the worker at 97% 未找到资源.
+    const lanxiang = {
+      ...title,
+      title: "兰香如敌",
+      aliases: ["Lan Xiang"],
+      year: 2024,
+      originCountries: ["CN"],
+    } as unknown as MediaTitle;
+    const snapId = "snap_tv_floor_first_acquire";
+    const belowFloor = [
+      {
+        id: "low-pack",
+        snapshotId: snapId,
+        index: 0,
+        title: "兰香如敌 第一季 720p WEB-DL",
+        type: "115" as const,
+        source: "pansou",
+        providerPayload: { url: "https://115.com/s/low-pack" },
+      },
+      {
+        id: "low-full",
+        snapshotId: snapId,
+        index: 1,
+        title: "兰香如敌 全集 720p WEB-DL",
+        type: "115" as const,
+        source: "pansou",
+        providerPayload: { url: "https://115.com/s/low-full" },
+      },
+    ];
+    const unmarked = {
+      id: "opaque",
+      snapshotId: snapId,
+      index: 2,
+      title: "兰香如敌 网盘分享",
+      type: "115" as const,
+      source: "pansou",
+      providerPayload: { url: "https://115.com/s/opaque" },
+    };
+    const provider: ResourceProvider = {
+      search: async ({ keyword }): Promise<ResourceSnapshot> => ({
+        id: snapId,
+        provider: "pansou",
+        keyword,
+        candidates: [...belowFloor, unmarked],
+        createdAt: "2026-06-15T00:00:00.000Z",
+      }),
+    };
+    const activities: string[] = [];
+    const result = await Promise.race([
+      runTvAcquisitionV2({
+        title: lanxiang,
+        mode: "type2",
+        seasons: [{ seasonNumber: 1, totalEpisodes: 12, latestAiredEpisode: 12, qualityPreference: "1080p" }],
+        categoryParentId: "tv_root",
+        resourceProvider: provider,
+        storage: new HangListVideoExecutor(),
+        model: throwingModel(),
+        workflowRunId: "run-rules-first-acquire-floor",
+        acquisitionSelectionPath: "rules",
+        qualityFloor: "1080p",
+        now: () => "2026-06-15T00:00:00.000Z",
+        onProgress: (event) => activities.push(event.activity),
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("first acquire stayed running after floor-empty finish")), 2000),
+      ),
+    ]);
+    expect(result.status).toBe("no_coverage");
+    expect(result.notification.kind).toBe("no_coverage");
+    expect(result.transferAttempts).toEqual([]);
+    expect(result.seasons[0]!.episodes.filter((episode) => episode.obtained)).toHaveLength(0);
+    expect(activities.at(-1)).toBe("正在收尾…");
+    expect(activities.some((line) => line.includes("规则拿不准"))).toBe(false);
+    expect(activities.some((line) => line.includes("正在转存"))).toBe(false);
+  });
 
   it("rules 0-coverage finish still becomes no_coverage when listVideoFiles hangs after wrap-up", async () => {
     // Live hang: finish already wrote 「正在收尾」 / 已确认 0/12, then the TV
