@@ -10,7 +10,11 @@ import {
   isTransferCapError,
   MAX_GAP_RESEARCH_ROUNDS,
   transferAttemptSucceeded,
+  uncoveredEpisodes,
 } from "./cover-planner.js";
+import { rulesFirstWaveQueries } from "./rules-search-recipe.js";
+import { normalizeSearchKeyword } from "../planning-search-gate.js";
+import type { SearchProfile } from "./search-profile.js";
 import {
   foldLandedDuplicates,
   indexExistingVideos,
@@ -96,23 +100,43 @@ function snapshotsToCandidates(sandbox: TaskSandbox): RulesSelectorCandidate[] {
   return candidatesFromSnapshots(sandbox.listObservedSnapshots());
 }
 
-async function searchAliases(sandbox: TaskSandbox, target: RulesSelectorTarget, onProgress?: (event: AgentToolEvent) => void): Promise<void> {
-  const extras = target.aliases.filter((alias) => alias.trim() && alias.trim() !== target.title).slice(0, 3);
-  if (target.kind === "movie" && target.year && target.year > 0) {
-    extras.push(`${target.title} ${target.year}`);
+function rulesNeedCovered(
+  sandbox: TaskSandbox,
+  target: RulesSelectorTarget,
+  policy: QualityLadderPolicy,
+  words: readonly string[] | undefined,
+): boolean {
+  const selection = selectWithWords(snapshotsToCandidates(sandbox), target, policy, words);
+  if (selection.selected.length === 0) {
+    return false;
   }
+  if (target.kind !== "tv") {
+    return true;
+  }
+  const missing = target.missingEpisodes ?? [];
+  return uncoveredEpisodes(selection.selected, missing).length === 0;
+}
+
+async function searchFirstWave(
+  sandbox: TaskSandbox,
+  target: RulesSelectorTarget,
+  policy: QualityLadderPolicy,
+  words: readonly string[] | undefined,
+  onProgress?: (event: AgentToolEvent) => void,
+): Promise<void> {
+  if (rulesNeedCovered(sandbox, target, policy, words)) {
+    return;
+  }
+  const primed = normalizeSearchKeyword(target.title);
+  const extras = rulesFirstWaveQueries(target).filter((keyword) => normalizeSearchKeyword(keyword) !== primed);
   for (const keyword of extras) {
     emit(onProgress, "searchResources", { keyword });
     const result = await asEvidence(() => sandbox.searchResources(keyword));
-    if (result && typeof result === "object" && "error" in result) {
-      continue;
+    if (result && typeof result === "object" && "refused" in result && result.refused) {
+      return;
     }
-    const snapshot = result && typeof result === "object" && "snapshot" in result ? result.snapshot : undefined;
-    if (snapshot && snapshot.candidates.length > 0) {
-      // One successful upgrade search is enough — don't burn the budget.
-      if (snapshotsToCandidates(sandbox).length > 0) {
-        return;
-      }
+    if (rulesNeedCovered(sandbox, target, policy, words)) {
+      return;
     }
   }
 }
@@ -619,14 +643,9 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
     }
   }
 
-  let candidates = snapshotsToCandidates(sandbox);
-  if (candidates.length === 0 || selectWithWords(candidates, target, policy, words).selected.length === 0) {
-    await searchAliases(sandbox, target, onProgress);
-    candidates = snapshotsToCandidates(sandbox);
-  }
-
+  await searchFirstWave(sandbox, target, policy, words, onProgress);
   const didGapResearch = await runGapResearch(sandbox, target, policy, words, onProgress);
-  candidates = snapshotsToCandidates(sandbox);
+  const candidates = snapshotsToCandidates(sandbox);
 
   emit(onProgress, "viewResourceSnapshot", {});
   let selection = selectWithWords(candidates, target, policy, words);
@@ -831,7 +850,13 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
   return { text: tvReason, steps: 1, coverage };
 }
 
-export function movieTargetToRules(target: MovieTarget, extras?: { originCountries?: string[]; preferredLanguage?: string }): RulesSelectorTarget {
+export interface RulesTargetExtras {
+  originCountries?: string[];
+  preferredLanguage?: string;
+  searchProfile?: SearchProfile;
+}
+
+export function movieTargetToRules(target: MovieTarget, extras?: RulesTargetExtras): RulesSelectorTarget {
   return {
     kind: "movie",
     title: target.title,
@@ -840,18 +865,21 @@ export function movieTargetToRules(target: MovieTarget, extras?: { originCountri
     ...(target.tmdbId === undefined ? {} : { tmdbId: target.tmdbId }),
     ...(extras?.originCountries ? { originCountries: extras.originCountries } : {}),
     ...(extras?.preferredLanguage ? { preferredLanguage: extras.preferredLanguage } : {}),
+    ...(extras?.searchProfile ? { searchProfile: extras.searchProfile } : { searchProfile: "movie" }),
   };
 }
 
-export function tvTargetToRules(target: TvAnimeTarget, extras?: { originCountries?: string[]; preferredLanguage?: string }): RulesSelectorTarget {
+export function tvTargetToRules(target: TvAnimeTarget, extras?: RulesTargetExtras): RulesSelectorTarget {
   return {
     kind: "tv",
     title: target.title,
     aliases: target.aliases,
     seasons: target.seasons,
     missingEpisodes: target.missingEpisodes,
+    ...(target.year && target.year > 0 ? { year: target.year } : {}),
     ...(target.tmdbId === undefined ? {} : { tmdbId: target.tmdbId }),
     ...(extras?.originCountries ? { originCountries: extras.originCountries } : {}),
     ...(extras?.preferredLanguage ? { preferredLanguage: extras.preferredLanguage } : {}),
+    ...(extras?.searchProfile ? { searchProfile: extras.searchProfile } : {}),
   };
 }

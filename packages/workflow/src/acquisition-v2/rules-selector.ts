@@ -8,6 +8,7 @@
  */
 import { episodeCode } from "../domain.js";
 import { normalizeForTitleMatch } from "../planning-search-gate.js";
+import type { SearchProfile } from "./search-profile.js";
 import {
   greedyCover,
   describeTvSelection,
@@ -56,6 +57,8 @@ export interface RulesSelectorTarget {
    * or hard-reject against the target.
    */
   tmdbId?: number;
+  /** Fine-grained PanSou profile (anime vs live-action). Year is skipped on anime. */
+  searchProfile?: SearchProfile;
 }
 
 export type RankedRulesCandidate = CoverCandidate;

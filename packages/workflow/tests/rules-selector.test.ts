@@ -487,12 +487,26 @@ describe("selectResourceCandidates — mediaBinding", () => {
       tvTargetToRules({
         title: "庆余年",
         aliases: [],
+        year: 2019,
         seasons: [1],
         missingEpisodes: ["S01E01"],
         qualityPreference: "1080p",
         tmdbId: 90000,
       }).tmdbId,
     ).toBe(90000);
+    expect(
+      tvTargetToRules(
+        {
+          title: "庆余年",
+          aliases: [],
+          year: 2019,
+          seasons: [1],
+          missingEpisodes: ["S01E01"],
+          qualityPreference: "1080p",
+        },
+        { searchProfile: "cn-tv" },
+      ),
+    ).toMatchObject({ year: 2019, searchProfile: "cn-tv" });
   });
 });
 

@@ -248,6 +248,8 @@ export function needForMovie(): string[] {
 export interface TvAnimeTarget {
   title: string;
   aliases: string[];
+  /** First-air / release year — live-action year disambiguation in rules search. */
+  year?: number;
   /** The season number(s) this task covers — one, several, or all (multi-season pack). */
   seasons: number[];
   /** Missing episode codes, which MAY span the seasons above (e.g. ["S01E07","S02E13"]). */

@@ -71,6 +71,7 @@ export {
   MAX_GAP_QUERIES_PER_ROUND,
   MAX_TV_TRANSFERS_PER_RUN,
   MAX_BLACKBOX_PROBES,
+  chineseSeasonToken,
   gapSearchQueries,
   groupEpisodeRanges,
   refillCover,
@@ -79,6 +80,10 @@ export {
   candidatesFromSnapshots,
   transferAttemptSucceeded,
 } from "./acquisition-v2/cover-planner.js";
+export {
+  MAX_RULES_FIRST_WAVE_QUERIES,
+  rulesFirstWaveQueries,
+} from "./acquisition-v2/rules-search-recipe.js";
 export {
   inferEpisodeCodeFromListingPath,
   mapTvCoverageFromListing,

@@ -86,6 +86,7 @@ describe("gapSearchQueries", () => {
     expect(queries.length).toBeGreaterThan(0);
     expect(queries.length).toBeLessThanOrEqual(MAX_GAP_QUERIES_PER_ROUND);
     expect(queries[0]).toBe("庆余年 4-10集");
+    expect(queries).toContain("庆余年 第一季 4-10集");
     expect(queries.join(" ")).not.toMatch(/1080|4K|中字/);
   });
 
@@ -99,7 +100,7 @@ describe("gapSearchQueries", () => {
   it("round 1 uses an alias; without aliases it stops", () => {
     expect(
       gapSearchQueries({ title: "庆余年", aliases: ["Joy of Life"], missing: [ep(4)], round: 1 }),
-    ).toEqual(["Joy of Life 第4集"]);
+    ).toEqual(["Joy of Life 第4集", "Joy of Life 第一季 第4集"]);
     expect(gapSearchQueries({ title: "庆余年", missing: [ep(4)], round: 1 })).toEqual([]);
   });
 

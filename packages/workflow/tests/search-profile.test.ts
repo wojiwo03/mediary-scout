@@ -4,6 +4,7 @@ import {
   getAcquisitionQualityGuidance,
   getQualityGuidance,
   getSearchRecipe,
+  isAnimeSearchProfile,
   searchProfile,
   SEARCH_PROFILES,
 } from "../src/index.js";
@@ -66,6 +67,16 @@ describe("searchProfile", () => {
     // anime: JP wins (anime is JP-centric); tv: CN wins (indexed in the 国产/合拍 circle).
     expect(searchProfile({ type: "anime", originCountries: ["US", "JP"] })).toBe("jp-anime");
     expect(searchProfile({ type: "tv", originCountries: ["US", "CN"] })).toBe("cn-tv");
+  });
+});
+
+describe("isAnimeSearchProfile", () => {
+  it("is true only for the four anime buckets", () => {
+    expect(isAnimeSearchProfile("jp-anime")).toBe(true);
+    expect(isAnimeSearchProfile("cn-anime")).toBe(true);
+    expect(isAnimeSearchProfile("us-tv")).toBe(false);
+    expect(isAnimeSearchProfile("movie")).toBe(false);
+    expect(isAnimeSearchProfile(undefined)).toBe(false);
   });
 });
 
