@@ -1,11 +1,7 @@
 import type { AcquisitionAgentResult } from "./agent-loop.js";
 import { interpretTool, type AgentToolEvent } from "./activity.js";
-import { scoreReleaseQuality, type QualityLadderPolicy } from "./quality-ladder.js";
-import {
-  customIdentifierWordsSpread,
-  parseReleaseMeta,
-  type ParseReleaseMetaOptions,
-} from "./release-meta.js";
+import type { QualityLadderPolicy } from "./quality-ladder.js";
+import { customIdentifierWordsSpread } from "./release-meta.js";
 import {
   candidatesFromSnapshots,
   describeTvSelection,
@@ -15,6 +11,13 @@ import {
   MAX_GAP_RESEARCH_ROUNDS,
   transferAttemptSucceeded,
 } from "./cover-planner.js";
+import {
+  foldLandedDuplicates,
+  indexExistingVideos,
+  selectStillMissingMoves,
+  shouldReplaceLanded,
+  anyLandedUpgrade,
+} from "./landed-dedup.js";
 import {
   inferEpisodeCodeFromListingPath,
   mapTvCoverageFromListing,
@@ -53,24 +56,6 @@ export interface RunRulesAcquisitionRequest {
    * the sandbox agent on the same primed snapshots. Forced `rules` omits this.
    */
   escalateOnLowConfidence?: boolean;
-}
-
-function parseOptions(words: readonly string[] | undefined): ParseReleaseMetaOptions {
-  return !words || words.length === 0 ? {} : { customWords: words };
-}
-
-function shouldReplaceTitled(
-  existingTitle: string,
-  candidateTitle: string,
-  policy: QualityLadderPolicy,
-  words: readonly string[] | undefined,
-): boolean {
-  const existing = parseReleaseMeta(existingTitle, parseOptions(words));
-  const candidate = parseReleaseMeta(candidateTitle, parseOptions(words));
-  if (candidate.discImage && !existing.discImage) {
-    return false;
-  }
-  return scoreReleaseQuality(candidate, policy) > scoreReleaseQuality(existing, policy);
 }
 
 function selectWithWords(
@@ -473,47 +458,55 @@ async function transferTvWithRefill(input: {
   };
 }
 
-async function organizeTv(
-  sandbox: TaskSandbox,
-  seasons: readonly number[],
-  onProgress?: (event: AgentToolEvent) => void,
-  words?: readonly string[],
-): Promise<string[]> {
-  emit(onProgress, "inspectStaging", {});
-  const staging = await sandbox.inspectStaging();
-  const allowed = seasons.length > 0 ? seasons : [1];
-  const fallback = allowed.length === 1 ? allowed[0] : undefined;
-  const bySeason = new Map<number, string[]>();
-  const marked: string[] = [];
-
-  for (const file of staging) {
-    if (!file.isVideo && !file.isSubtitle) {
-      continue;
-    }
-    const code = inferEpisodeCodeFromListingPath(file.path, fallback, allowed, words);
-    if (!code) {
-      continue;
-    }
-    const season = Number(/^S(\d+)/.exec(code)?.[1] ?? 0);
-    if (!allowed.includes(season)) {
-      continue;
-    }
-    const ids = bySeason.get(season) ?? [];
-    ids.push(file.id);
-    bySeason.set(season, ids);
-    if (file.isVideo) {
-      marked.push(code);
+async function organizeTv(input: {
+  sandbox: TaskSandbox;
+  seasons: readonly number[];
+  remainingNeed: readonly string[];
+  qualityUpgrade: boolean;
+  policy: QualityLadderPolicy;
+  onProgress?: (event: AgentToolEvent) => void;
+  words?: readonly string[];
+}): Promise<string[]> {
+  emit(input.onProgress, "inspectStaging", {});
+  const staging = await input.sandbox.inspectStaging();
+  const allowed = input.seasons.length > 0 ? input.seasons : [1];
+  const existingFiles = [];
+  for (const season of allowed) {
+    emit(input.onProgress, "inspectTargetDir", { season });
+    const files = await asEvidence(() => input.sandbox.inspectTargetDir({ season }));
+    if (Array.isArray(files)) {
+      existingFiles.push(...files);
     }
   }
-
-  if (bySeason.size === 0) {
+  const existingByCode = indexExistingVideos(
+    existingFiles,
+    allowed,
+    input.words,
+    input.policy,
+    input.qualityUpgrade,
+  );
+  const selected = selectStillMissingMoves({
+    staging,
+    remainingNeed: new Set(input.remainingNeed),
+    existingByCode,
+    seasons: allowed,
+    qualityUpgrade: input.qualityUpgrade,
+    policy: input.policy,
+    ...(input.words && input.words.length > 0 ? { customWords: input.words } : {}),
+  });
+  if (selected.moves.length === 0) {
     return [];
   }
 
-  const moves = [...bySeason.entries()].map(([season, fileIds]) => ({ season, fileIds }));
-  emit(onProgress, "moveToSeason", { moves });
-  await sandbox.moveToSeason({ moves });
-  return [...new Set(marked)];
+  emit(input.onProgress, "moveToSeason", { moves: selected.moves });
+  await input.sandbox.moveToSeason({ moves: selected.moves });
+  await foldLandedDuplicates(input.sandbox, {
+    seasons: allowed,
+    qualityUpgrade: input.qualityUpgrade,
+    ...(Object.keys(input.policy).length > 0 ? { policy: input.policy } : {}),
+    ...(input.words && input.words.length > 0 ? { customWords: input.words } : {}),
+  });
+  return selected.marked;
 }
 
 async function markExistingTv(
@@ -547,6 +540,19 @@ async function markExistingTv(
   }
 }
 
+async function markExistingMovie(
+  sandbox: TaskSandbox,
+  onProgress?: (event: AgentToolEvent) => void,
+): Promise<void> {
+  emit(onProgress, "inspectTargetDir", {});
+  const files = await asEvidence(() => sandbox.inspectTargetDir());
+  if (!Array.isArray(files) || !files.some((file) => file.isVideo)) {
+    return;
+  }
+  emit(onProgress, "markObtained", { codes: ["MOVIE"] });
+  await sandbox.markObtained({ codes: ["MOVIE"] });
+}
+
 async function maybeReplaceOldMovieFiles(
   sandbox: TaskSandbox,
   candidateTitle: string,
@@ -555,7 +561,7 @@ async function maybeReplaceOldMovieFiles(
 ): Promise<void> {
   const files = await sandbox.inspectTargetDir();
   const videos = files.filter((file) => file.isVideo);
-  const worse = videos.filter((file) => shouldReplaceTitled(file.path, candidateTitle, policy, words));
+  const worse = videos.filter((file) => shouldReplaceLanded(file.path, candidateTitle, policy, words));
   if (worse.length === 0 || worse.length === videos.length) {
     // Never wipe the only copies if the new file isn't distinguishable yet.
     const still = files.filter((file) => file.isVideo && !worse.some((item) => item.id === file.id));
@@ -585,6 +591,15 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
       emit(onProgress, "finish", {});
       const coverage = await sandbox.finish();
       return { text: "规则选片：目标目录已有缺集，无需转存", steps: 1, coverage };
+    }
+  }
+
+  if (target.kind === "movie") {
+    await markExistingMovie(sandbox, onProgress);
+    if (sandbox.isCoverageMet() && !request.qualityUpgrade) {
+      emit(onProgress, "finish", {});
+      const coverage = await sandbox.finish();
+      return { text: "规则选片：目标目录已有正片，无需转存", steps: 1, coverage };
     }
   }
 
@@ -676,8 +691,28 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
       const best = selection.selected[0]!;
       const anyUpgrade = existing
         .filter((file) => file.isVideo)
-        .some((file) => shouldReplaceTitled(file.path, best.title, policy, words));
+        .some((file) => shouldReplaceLanded(file.path, best.title, policy, words));
       if (!anyUpgrade) {
+        emit(onProgress, "finish", {});
+        const coverage = await sandbox.finish();
+        return { text: "规则选片：已入库画质不低于候选，跳过升级", steps: 1, coverage };
+      }
+    }
+  }
+
+  if (request.qualityUpgrade && target.kind === "tv") {
+    const existingTitles: string[] = [];
+    for (const season of target.seasons ?? []) {
+      const existing = await asEvidence(() => sandbox.inspectTargetDir({ season }));
+      if (Array.isArray(existing)) {
+        existingTitles.push(...existing.filter((file) => file.isVideo).map((file) => file.path));
+      }
+    }
+    if (existingTitles.length > 0) {
+      const candidateTitles = selection.selected.map((candidate) => candidate.title);
+      if (!anyLandedUpgrade(existingTitles, candidateTitles, policy, words)) {
+        emit(onProgress, "discardStaging", {});
+        await asEvidence(() => sandbox.discardStaging());
         emit(onProgress, "finish", {});
         const coverage = await sandbox.finish();
         return { text: "规则选片：已入库画质不低于候选，跳过升级", steps: 1, coverage };
@@ -736,7 +771,15 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
     refill: transfer.refill,
     transferCap: transfer.transferCap,
   });
-  const marked = await organizeTv(sandbox, target.seasons ?? [1], onProgress, words);
+  const marked = await organizeTv({
+    sandbox,
+    seasons: target.seasons ?? [1],
+    remainingNeed: sandbox.remainingNeed(),
+    qualityUpgrade: request.qualityUpgrade === true,
+    policy,
+    ...(onProgress ? { onProgress } : {}),
+    ...(words && words.length > 0 ? { words } : {}),
+  });
   if (marked.length > 0) {
     emit(onProgress, "markObtained", { codes: marked });
     await sandbox.markObtained({ codes: marked });

@@ -44,12 +44,12 @@ function snapshot(id: string, keyword: string, candidates: ResourceCandidate[]):
   };
 }
 
-function videoFile(id: string, name: string, episodeCode: string | null): VerifiedFile {
+function videoFile(id: string, name: string, episodeCode: string | null, sizeBytes = 1_000_000): VerifiedFile {
   return {
     id,
     storageDirectoryId: "staging",
     name,
-    sizeBytes: 1_000_000,
+    sizeBytes,
     episodeCode,
     providerFileId: id,
   };
@@ -744,3 +744,253 @@ describe("runAcquisitionV2 — auto path confidence fallback", () => {
     expect(activities.at(-1)).toBe("正在收尾…");
   });
 });
+
+describe("runAcquisitionV2 — rules landed dedup", () => {
+  it("TV: a full-season pack only moves still-missing episodes and matching subs", async () => {
+    const snapId = "snap_partial";
+    const provider: ResourceProvider = {
+      search: async ({ keyword }) =>
+        snapshot(snapId, keyword, [
+          candidate({ id: "full", snapshotId: snapId, index: 0, title: "庆余年 全集 1080p WEB-DL" }),
+        ]),
+    };
+    const executor = new FakeStorageExecutor({
+      directories: {
+        staging: [],
+        season: [
+          videoFile("old-e1", "庆余年.S01E01.1080p.mkv", "S01E01", 1_200_000),
+          videoFile("old-e2", "庆余年.S01E02.1080p.mkv", "S01E02", 1_200_000),
+        ],
+      },
+      transferOutcomes: {
+        full: {
+          status: "succeeded",
+          providerMessage: "ok",
+          files: [
+            videoFile("new-e1", "庆余年.S01E01.1080p.mkv", "S01E01", 800_000),
+            videoFile("new-e1s", "庆余年.S01E01.zh.ass", "S01E01", 2_000),
+            videoFile("new-e2", "庆余年.S01E02.1080p.mkv", "S01E02", 800_000),
+            videoFile("new-e3", "庆余年.S01E03.1080p.mkv", "S01E03", 800_000),
+            videoFile("new-e3s", "庆余年.S01E03.zh.ass", "S01E03", 2_000),
+            videoFile("new-e4", "庆余年.S01E04.1080p.mkv", "S01E04", 800_000),
+          ],
+        },
+      },
+    });
+
+    const result = await runAcquisitionV2({
+      provider,
+      executor,
+      model: throwingModel(),
+      workflowRunId: "run-rules-still-missing",
+      target: {
+        kind: "tv",
+        title: "庆余年",
+        aliases: [],
+        seasons: [1],
+        missingEpisodes: ["S01E01", "S01E02", "S01E03", "S01E04"],
+        qualityPreference: "1080p",
+      },
+      stagingDirectoryId: "staging",
+      targetSeasonDirectoryIds: { 1: "season" },
+      acquisitionSelectionPath: "rules",
+    });
+
+    expect(result.coverage.coverageMet).toBe(true);
+    expect(result.coverage.obtained.sort()).toEqual(["S01E01", "S01E02", "S01E03", "S01E04"]);
+    const landed = await executor.listVideoFiles("season");
+    expect(landed.map((file) => file.id).sort()).toEqual(["new-e3", "new-e3s", "new-e4", "old-e1", "old-e2"]);
+    expect(landed.some((file) => file.id === "new-e1")).toBe(false);
+    expect(landed.some((file) => file.id === "new-e2")).toBe(false);
+  });
+
+  it("TV: same-episode fold keeps the larger file from a colliding pack", async () => {
+    const snapId = "snap_dupes";
+    const provider: ResourceProvider = {
+      search: async ({ keyword }) =>
+        snapshot(snapId, keyword, [
+          candidate({ id: "pack", snapshotId: snapId, index: 0, title: "庆余年 第1集 1080p WEB-DL" }),
+        ]),
+    };
+    const executor = new FakeStorageExecutor({
+      directories: { staging: [], season: [] },
+      transferOutcomes: {
+        pack: {
+          status: "succeeded",
+          providerMessage: "ok",
+          files: [
+            videoFile("big", "庆余年.S01E01.1080p.mkv", "S01E01", 1_200_000_000),
+            videoFile("small", "庆余年.S01E01.720p.mkv", "S01E01", 400_000_000),
+          ],
+        },
+      },
+    });
+
+    const result = await runAcquisitionV2({
+      provider,
+      executor,
+      model: throwingModel(),
+      workflowRunId: "run-rules-keep-larger",
+      target: {
+        kind: "tv",
+        title: "庆余年",
+        aliases: [],
+        seasons: [1],
+        missingEpisodes: ["S01E01"],
+        qualityPreference: "1080p",
+      },
+      stagingDirectoryId: "staging",
+      targetSeasonDirectoryIds: { 1: "season" },
+      acquisitionSelectionPath: "rules",
+    });
+
+    expect(result.coverage.coverageMet).toBe(true);
+    const landed = await executor.listVideoFiles("season");
+    expect(landed.map((file) => file.id)).toEqual(["big"]);
+  });
+
+  it("movie: inspects the landing dir and skips re-transfer when a video is already there", async () => {
+    const snapId = "snap_movie_have";
+    const provider: ResourceProvider = {
+      search: async ({ keyword }) =>
+        snapshot(snapId, keyword, [
+          candidate({ id: "dv", snapshotId: snapId, index: 0, title: "盗梦空间 2010 2160p DV REMUX 中字" }),
+        ]),
+    };
+    const executor = new FakeStorageExecutor({
+      directories: {
+        staging: [],
+        movie: [videoFile("already", "盗梦空间.2010.1080p.mkv", null)],
+      },
+      transferOutcomes: {
+        dv: {
+          status: "succeeded",
+          providerMessage: "must not run",
+          files: [videoFile("film", "盗梦空间.2010.2160p.mkv", null)],
+        },
+      },
+    });
+
+    const result = await runAcquisitionV2({
+      provider,
+      executor,
+      model: throwingModel(),
+      workflowRunId: "run-rules-movie-present",
+      target: {
+        kind: "movie",
+        title: "盗梦空间",
+        aliases: ["Inception"],
+        year: 2010,
+        qualityPreference: "1080p",
+      },
+      stagingDirectoryId: "staging",
+      targetMovieDirectoryId: "movie",
+      acquisitionSelectionPath: "rules",
+    });
+
+    expect(result.coverage.coverageMet).toBe(true);
+    expect(result.coverage.obtained).toEqual(["MOVIE"]);
+    expect(result.outcome.transferAttempts).toEqual([]);
+    expect(result.text).toMatch(/已有正片/);
+    const landed = await executor.listVideoFiles("movie");
+    expect(landed.map((file) => file.id)).toEqual(["already"]);
+  });
+
+  it("TV quality upgrade: skips when landed filenames are not strictly worse", async () => {
+    const snapId = "snap_tv_skip_up";
+    const provider: ResourceProvider = {
+      search: async ({ keyword }) =>
+        snapshot(snapId, keyword, [
+          candidate({ id: "same", snapshotId: snapId, index: 0, title: "庆余年 全集 1080p WEB-DL" }),
+        ]),
+    };
+    const executor = new FakeStorageExecutor({
+      directories: {
+        staging: [],
+        season: [videoFile("old", "庆余年.S01E01.1080p.WEB-DL.mkv", "S01E01", 1_200_000)],
+      },
+      transferOutcomes: {
+        same: {
+          status: "succeeded",
+          providerMessage: "must not run",
+          files: [videoFile("dup", "庆余年.S01E01.1080p.WEB-DL.mkv", "S01E01", 800_000)],
+        },
+      },
+    });
+
+    const result = await runAcquisitionV2({
+      provider,
+      executor,
+      model: throwingModel(),
+      workflowRunId: "run-rules-tv-skip-upgrade",
+      target: {
+        kind: "tv",
+        title: "庆余年",
+        aliases: [],
+        seasons: [1],
+        missingEpisodes: ["S01E01"],
+        qualityPreference: "1080p",
+      },
+      stagingDirectoryId: "staging",
+      targetSeasonDirectoryIds: { 1: "season" },
+      acquisitionSelectionPath: "rules",
+      qualityUpgrade: true,
+      priorObtainedMarks: ["S01E01"],
+    });
+
+    expect(result.coverage.coverageMet).toBe(true);
+    expect(result.outcome.transferAttempts).toEqual([]);
+    expect(result.text).toMatch(/跳过升级/);
+    const landed = await executor.listVideoFiles("season");
+    expect(landed.map((file) => file.id)).toEqual(["old"]);
+  });
+
+  it("TV quality upgrade: replaces with a strictly better file and deletes the old copy", async () => {
+    const snapId = "snap_tv_do_up";
+    const provider: ResourceProvider = {
+      search: async ({ keyword }) =>
+        snapshot(snapId, keyword, [
+          candidate({ id: "dv", snapshotId: snapId, index: 0, title: "庆余年 全集 2160p DV WEB-DL" }),
+        ]),
+    };
+    const executor = new FakeStorageExecutor({
+      directories: {
+        staging: [],
+        season: [videoFile("old", "庆余年.S01E01.1080p.WEB-DL.mkv", "S01E01", 2_000_000_000)],
+      },
+      transferOutcomes: {
+        dv: {
+          status: "succeeded",
+          providerMessage: "ok",
+          files: [videoFile("new", "庆余年.S01E01.2160p.DV.mkv", "S01E01", 1_000_000_000)],
+        },
+      },
+    });
+
+    const result = await runAcquisitionV2({
+      provider,
+      executor,
+      model: throwingModel(),
+      workflowRunId: "run-rules-tv-do-upgrade",
+      target: {
+        kind: "tv",
+        title: "庆余年",
+        aliases: [],
+        seasons: [1],
+        missingEpisodes: ["S01E01"],
+        qualityPreference: "1080p",
+      },
+      stagingDirectoryId: "staging",
+      targetSeasonDirectoryIds: { 1: "season" },
+      acquisitionSelectionPath: "rules",
+      qualityUpgrade: true,
+      priorObtainedMarks: ["S01E01"],
+    });
+
+    expect(result.coverage.coverageMet).toBe(true);
+    expect(result.outcome.transferAttempts.map((attempt) => attempt.candidateId)).toEqual(["dv"]);
+    const landed = await executor.listVideoFiles("season");
+    expect(landed.map((file) => file.id)).toEqual(["new"]);
+  });
+});
+

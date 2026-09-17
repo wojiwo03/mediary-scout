@@ -17,6 +17,7 @@ import {
   runRulesAcquisition,
   tvTargetToRules,
 } from "./rules-task.js";
+import { foldLandedDuplicates } from "./landed-dedup.js";
 import { customIdentifierWordsSpread } from "./release-meta.js";
 import {
   AGENT_DECISION_NODE,
@@ -293,6 +294,17 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
       usedPath = "rules";
       result = rulesResult;
     }
+  }
+
+  if (usedPath === "agent" && request.target.kind === "tv") {
+    await foldLandedDuplicates(sandbox, {
+      seasons: request.target.seasons,
+      qualityUpgrade: request.qualityUpgrade === true,
+      ...(request.qualityPolicy ? { policy: request.qualityPolicy } : {}),
+      ...(request.customIdentifierWords && request.customIdentifierWords.length > 0
+        ? { customWords: request.customIdentifierWords }
+        : {}),
+    });
   }
 
   // The agent transferred candidates by id; the storage adapter recorded the
