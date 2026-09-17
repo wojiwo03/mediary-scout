@@ -2,7 +2,7 @@ import type { LanguageModel } from "ai";
 import type { AgentDecision, AuditEvent, ResourceSnapshot, TransferAttempt } from "../domain.js";
 import type { ResourceProvider, StorageExecutor } from "../ports.js";
 import type { AcquisitionAgentResult } from "./agent-loop.js";
-import type { AgentToolEvent } from "./activity.js";
+import { interpretTool, type AgentToolEvent } from "./activity.js";
 import { CandidateRegistry } from "./candidate-registry.js";
 import type { DeadLinkStore } from "./dead-links.js";
 import { RealResourceProviderV2 } from "./real-provider-adapter.js";
@@ -299,7 +299,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
   }
 
   if (usedPath === "agent" && request.target.kind === "tv" && result.coverage.obtained.length > 0) {
-    await foldLandedDuplicates(sandbox, {
+    const deleted = await foldLandedDuplicates(sandbox, {
       seasons: request.target.seasons,
       qualityUpgrade: request.qualityUpgrade === true,
       ...(request.qualityPolicy ? { policy: request.qualityPolicy } : {}),
@@ -307,6 +307,14 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
         ? { customWords: request.customIdentifierWords }
         : {}),
     });
+    if (deleted.length > 0 && request.onProgress) {
+      const args = { skippedDuplicates: deleted.length, directory: "season" };
+      request.onProgress({
+        toolName: "deleteFiles",
+        args,
+        ...interpretTool("deleteFiles", args),
+      });
+    }
   }
 
   // The agent transferred candidates by id; the storage adapter recorded the

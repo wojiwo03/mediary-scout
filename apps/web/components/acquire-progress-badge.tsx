@@ -6,6 +6,7 @@ import { LoaderCircle } from "lucide-react";
 import { RequestedBadge } from "./request-state";
 import { useActiveRun } from "../lib/use-active-run";
 import { advanceTrickle, initialTrickleState, inlineProgressView } from "../lib/inline-progress";
+import { AcquireStepDots } from "./acquire-step-list";
 
 /**
  * Smoothly trickle the displayed bar forward between server updates. Server progress
@@ -64,6 +65,7 @@ export function AcquireProgressBadge({
       <span className="demo-playback-bar">
         <span className="demo-playback-fill" style={{ width: `${displayPercent}%` }} />
       </span>
+      <AcquireStepDots steps={view.steps} />
       {/* aria-live on the step text (NOT the anchor): keeps the element a proper
           link for assistive tech while still announcing progress updates. */}
       <span className="demo-playback-step" aria-live="polite">

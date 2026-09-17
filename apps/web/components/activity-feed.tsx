@@ -11,10 +11,12 @@ import type {
   RetryRefusalReason,
 } from "../lib/activity-view";
 import { seasonLabelText } from "../lib/activity-season-label";
-import { explainActivityStep } from "../lib/activity-status-copy";
+import { acquireStepsFromProgress } from "../lib/acquire-steps";
+import { inlineProgressView } from "../lib/inline-progress";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { demoCompletedItems, demoInProgressActivityItems } from "../lib/demo-session";
 import { useDemoAcquisitions, useDemoInProgress } from "../lib/use-demo-session";
+import { AcquireStepList } from "./acquire-step-list";
 
 const POLL_MS = 2600;
 const POSTER = "https://image.tmdb.org/t/p/w185";
@@ -105,7 +107,7 @@ export function ActivityFeed({ storageId }: { storageId?: string | undefined }) 
             <div className="quiet-state compact act-idle">
               <Search size={22} aria-hidden />
               <strong>现在没有进行中的任务</strong>
-              <span>点获取之后，进度会出现在这里。「正在收尾」是正常核对，不是卡住。</span>
+              <span>点获取之后，这里会列出搜索、选片、转存、入库和收尾。「收尾」是核对结果，不是卡住。</span>
               <Link className="primary-button" href={searchHref}>
                 去搜索获取
               </Link>
@@ -170,8 +172,8 @@ function seasonLabel(run: ActivityActiveRun): string {
 }
 
 function RunningRow({ run, storageId }: { run: ActivityActiveRun; storageId?: string | undefined }) {
-  const percent = Math.max(3, Math.min(100, run.progress?.percent ?? 3));
-  const step = explainActivityStep(run.progress?.activity);
+  const view = inlineProgressView(run);
+  const percent = Math.max(3, Math.min(100, view.percent));
   const headline =
     run.progress?.needed && run.progress.needed > 0
       ? `已确认 ${run.progress.obtained ?? 0} / ${run.progress.needed} 集`
@@ -183,10 +185,7 @@ function RunningRow({ run, storageId }: { run: ActivityActiveRun; storageId?: st
         <div className="act-row-head">
           <strong>{run.title}</strong>
           {seasonLabel(run) ? <span className="act-sub">{seasonLabel(run)}</span> : null}
-          <span className="act-frac">
-            {headline ? `${headline} · ` : ""}
-            {Math.round(percent)}%
-          </span>
+          {headline ? <span className="act-frac">{headline}</span> : null}
           {run.qualityUpgrade ? <span className="act-pill">升级画质</span> : null}
           {run.selectionPath === "rules" ? <span className="act-pill">规则选片</span> : null}
           {run.selectionPath === "agent" ? <span className="act-pill">智能选片</span> : null}
@@ -194,60 +193,23 @@ function RunningRow({ run, storageId }: { run: ActivityActiveRun; storageId?: st
         <div className="act-bar">
           <div className="act-bar-fill" style={{ width: `${percent}%` }} />
         </div>
-        <div className="act-ticker-row">
-          <Loader2 size={14} className="act-spin" aria-hidden />
-          <Ticker text={step.label} />
-        </div>
-        {step.hint ? <p className="act-step-hint">{step.hint}</p> : null}
+        <AcquireStepList steps={view.steps} />
       </div>
     </Link>
-  );
-}
-
-function Ticker({ text }: { text: string }) {
-  // Two absolutely-stacked lines: the outgoing slides up & out, the incoming slides
-  // up into place. On collapse we keep ONLY the incoming — its key is stable, so
-  // React preserves the element (no remount) and it's already at rest (translateY
-  // 0 = the is-in end state) → seamless, no "jump in from the top" flash.
-  const idRef = useRef(0);
-  const [lines, setLines] = useState<{ id: number; text: string }[]>([{ id: 0, text }]);
-  const prev = useRef(text);
-
-  useEffect(() => {
-    if (text === prev.current) {
-      return;
-    }
-    prev.current = text;
-    idRef.current += 1;
-    const id = idRef.current;
-    setLines((current) => {
-      const outgoing = current[current.length - 1];
-      return outgoing ? [outgoing, { id, text }] : [{ id, text }];
-    });
-    const timer = setTimeout(() => setLines([{ id, text }]), 380);
-    return () => clearTimeout(timer);
-  }, [text]);
-
-  return (
-    <div className="act-ticker" aria-live="polite">
-      {lines.map((line, index) => (
-        <div
-          key={line.id}
-          className={`act-ticker-line${lines.length > 1 ? (index === 0 ? " is-out" : " is-in") : ""}`}
-        >
-          {line.text}
-        </div>
-      ))}
-    </div>
   );
 }
 
 type DemoActivityItem = ReturnType<typeof demoInProgressActivityItems>[number];
 
 /** Demo-only 获取中 row: clock-driven progress, no DB run (not a link). Mirrors
- *  RunningRow's poster + progress bar + step layout. */
+ *  RunningRow's poster + progress bar + step list. */
 function DemoRunningRow({ item }: { item: DemoActivityItem }) {
   const percent = Math.max(3, Math.min(100, item.progress));
+  const steps = acquireStepsFromProgress({
+    activity: item.step,
+    phase: item.phase,
+    ...(item.noCoverage === true ? { noCoverage: true } : {}),
+  });
   return (
     <div className="act-row act-row-active">
       {poster(item.posterPath, item.title, "info")}
@@ -258,10 +220,7 @@ function DemoRunningRow({ item }: { item: DemoActivityItem }) {
         <div className="act-bar">
           <div className="act-bar-fill" style={{ width: `${percent}%` }} />
         </div>
-        <div className="act-ticker-row">
-          <Loader2 size={14} className="act-spin" aria-hidden />
-          <Ticker text={item.step} />
-        </div>
+        <AcquireStepList steps={steps} />
       </div>
     </div>
   );

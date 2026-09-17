@@ -1,5 +1,9 @@
 import type { ActivityActiveRun } from "./activity-view";
-import { explainActivityStep } from "./activity-status-copy";
+import {
+  acquireStepsFromProgress,
+  acquireStepsHeadline,
+  type AcquireStepView,
+} from "./acquire-steps";
 
 /** Find THIS card's active run: same tmdbId, and `seasonNumber === null` matches
  *  ANY season (movies, and the TV "all remaining seasons" scope), preferring a
@@ -81,14 +85,50 @@ export function advanceTrickle(
   return { anchorPercent, anchorAtMs, displayed, key: input.key };
 }
 
+export interface InlineProgressView {
+  running: boolean;
+  percent: number;
+  step: string;
+  hint?: string;
+  steps: AcquireStepView[];
+}
+
 /** Derive the inline progress display from the matched run. */
-export function inlineProgressView(
-  run: ActivityActiveRun | null,
-): { running: boolean; percent: number; step: string; hint?: string } {
+export function inlineProgressView(run: ActivityActiveRun | null): InlineProgressView {
   const running = run?.status === "running";
   const percent = Math.max(3, Math.min(100, run?.progress?.percent ?? 3));
-  const explained = explainActivityStep(run?.progress?.activity);
-  return explained.hint
-    ? { running, percent, step: explained.label, hint: explained.hint }
-    : { running, percent, step: explained.label };
+  const progress = run?.progress;
+  const steps = acquireStepsFromProgress({
+    ...(progress?.activity != null ? { activity: progress.activity } : {}),
+    ...(progress?.phase != null ? { phase: progress.phase } : {}),
+    ...(progress?.obtained != null ? { obtained: progress.obtained } : {}),
+    ...(progress?.needed != null ? { needed: progress.needed } : {}),
+    ...(progress?.noCoverage === true ? { noCoverage: true } : {}),
+    ...(progress?.skippedTransfer === true ? { skippedTransfer: true } : {}),
+    ...(progress?.searchCount != null ? { searchCount: progress.searchCount } : {}),
+    ...(progress?.shareCount != null ? { shareCount: progress.shareCount } : {}),
+    ...(progress?.currentKeyword ? { currentKeyword: progress.currentKeyword } : {}),
+    ...(progress?.searchTotal != null ? { searchTotal: progress.searchTotal } : {}),
+    ...(progress?.candidateCount != null ? { candidateCount: progress.candidateCount } : {}),
+    ...(progress?.pickReason ? { pickReason: progress.pickReason } : {}),
+    ...(progress?.searchKeywords && progress.searchKeywords.length > 0
+      ? { searchKeywords: progress.searchKeywords }
+      : {}),
+    ...(progress?.pickRejectGroups && progress.pickRejectGroups.length > 0
+      ? { pickRejectGroups: progress.pickRejectGroups }
+      : {}),
+    ...(progress?.pickExamples && progress.pickExamples.length > 0
+      ? { pickExamples: progress.pickExamples }
+      : {}),
+    ...(progress?.transferTitle ? { transferTitle: progress.transferTitle } : {}),
+    ...(progress?.transferEpisodes && progress.transferEpisodes.length > 0
+      ? { transferEpisodes: progress.transferEpisodes }
+      : {}),
+    ...(progress?.skippedDuplicates != null ? { skippedDuplicates: progress.skippedDuplicates } : {}),
+    ...(run?.selectionPath ? { selectionPath: run.selectionPath } : {}),
+  });
+  const headline = acquireStepsHeadline(steps);
+  return headline.hint
+    ? { running, percent, step: headline.label, hint: headline.hint, steps }
+    : { running, percent, step: headline.label, steps };
 }

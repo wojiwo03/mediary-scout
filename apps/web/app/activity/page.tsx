@@ -37,7 +37,7 @@ async function ActivitySurface({ searchParams }: { searchParams: Promise<{ w?: s
         <div className="section-heading library-heading">
           <div>
             <h1>活动</h1>
-            <p>正在搜片、转存和收尾的任务。点条目可进详情，「正在收尾」是正常核对。</p>
+            <p>正在搜片、转存和收尾。点条目看搜索、选片、转存、入库、核对各步；收尾是核对，不是卡住。</p>
           </div>
         </div>
         {/* ActivityFeed is a client component in the page's STATIC shell (not inside a

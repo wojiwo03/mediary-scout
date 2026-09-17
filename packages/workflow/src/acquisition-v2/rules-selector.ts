@@ -494,6 +494,72 @@ function emptySelectionReason(
     : "规则选片：没有能覆盖缺集的标题匹配候选";
 }
 
+/** Machine code for an empty pick — activity UI maps this to 中文, not a raw enum. */
+export type EmptyPickReasonCode =
+  | "no-candidates"
+  | "below-quality-floor"
+  | "no-episode-coverage"
+  | "media-id-mismatch"
+  | "redundant-coverage"
+  | "empty-selection";
+
+export interface PickRejectGroup {
+  reason: string;
+  count: number;
+}
+
+/** Count rejects by reason and keep 1–3 share titles as card examples. */
+export function summarizePickRejects(
+  rejected: ReadonlyArray<{ reason: string; title: string }>,
+): { groups: PickRejectGroup[]; examples: string[] } {
+  const counts = new Map<string, number>();
+  const examples: string[] = [];
+  const seen = new Set<string>();
+  for (const row of rejected) {
+    const reason = row.reason.trim();
+    if (reason) {
+      counts.set(reason, (counts.get(reason) ?? 0) + 1);
+    }
+    const title = row.title.replace(/\s+/g, " ").trim();
+    if (title && !seen.has(title) && examples.length < 3) {
+      seen.add(title);
+      examples.push(title);
+    }
+  }
+  const groups = [...counts.entries()]
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+  return { groups, examples };
+}
+
+export function classifyEmptyPickReason(
+  rejected: ReadonlyArray<{ reason: string }>,
+  candidateCount: number,
+): EmptyPickReasonCode {
+  if (candidateCount <= 0) {
+    return "no-candidates";
+  }
+  const reasons = rejected.map((row) => row.reason);
+  const count = (reason: string) => reasons.filter((value) => value === reason).length;
+  const floor = count(BELOW_QUALITY_FLOOR_REASON);
+  const noEpisode = count("no-episode-coverage");
+  const media = count("media-id-mismatch");
+  const redundant = count("redundant-coverage");
+  if (floor > 0 && floor >= noEpisode && floor >= media) {
+    return "below-quality-floor";
+  }
+  if (noEpisode > 0 && noEpisode >= media) {
+    return "no-episode-coverage";
+  }
+  if (media > 0 && media >= redundant) {
+    return "media-id-mismatch";
+  }
+  if (redundant > 0) {
+    return "redundant-coverage";
+  }
+  return "empty-selection";
+}
+
 function rejectMovieNoise(title: string, customWords?: readonly string[]): string | null {
   const titled = titledWithWords(title, customWords);
   const quality = parseReleaseMeta(title, parseOptions(customWords));

@@ -483,6 +483,23 @@ export interface AcquisitionAgentResult {
   coverage: { coverageMet: boolean; obtained: string[]; missing: string[]; subtitleFallback: boolean };
 }
 
+function transferTitleFromSandbox(
+  sandbox: TaskSandbox,
+  args: Record<string, unknown>,
+): string | undefined {
+  const candidateId = typeof args.candidateId === "string" ? args.candidateId : "";
+  const snapshotId = typeof args.snapshotId === "string" ? args.snapshotId : "";
+  const fallbackIds = Array.isArray(args.candidateIds) ? args.candidateIds.map(String) : [];
+  const want = candidateId || fallbackIds[0] || "";
+  if (!want) {
+    return undefined;
+  }
+  const snapshots = sandbox.listObservedSnapshots();
+  const scoped = snapshotId ? snapshots.find((snapshot) => snapshot.id === snapshotId) : undefined;
+  const pool = scoped ? scoped.candidates : snapshots.flatMap((snapshot) => snapshot.candidates);
+  return pool.find((candidate) => candidate.id === want)?.title;
+}
+
 /** Run the strong agent's self-driven loop over the sandbox tools. */
 export async function runAcquisitionAgent(
   request: AcquisitionAgentRequest,
@@ -495,8 +512,16 @@ export async function runAcquisitionAgent(
     ...(request.coverPlan ? { coverPlan: request.coverPlan } : {}),
     ...(onProgress
       ? {
-          onToolCall: (toolName: string, args: Record<string, unknown>) =>
-            onProgress({ toolName, args, ...interpretTool(toolName, args) }),
+          onToolCall: (toolName: string, args: Record<string, unknown>) => {
+            let next = args;
+            if (toolName === "transferCandidate" || toolName === "transferUntilLanded") {
+              const title = transferTitleFromSandbox(request.sandbox, args);
+              if (title) {
+                next = { ...args, title };
+              }
+            }
+            onProgress({ toolName, args: next, ...interpretTool(toolName, next) });
+          },
         }
       : {}),
   });

@@ -89,6 +89,40 @@ export interface WorkflowRunProgress {
   /** Real sub-fraction headline when known (episodes obtained / needed this run). */
   obtained?: number;
   needed?: number;
+  /**
+   * Sticky UI flags. `finish` overwrites `activity` to 「正在收尾」, so the
+   * activity page needs these to keep 未找到资源 / 跳过转存 visible as step
+   * outcomes instead of a frozen 97%.
+   */
+  noCoverage?: boolean;
+  skippedTransfer?: boolean;
+  /** Count of `searchResources` tool calls this run (keyword searches). */
+  searchCount?: number;
+  /** Last known selected-share count from the pick step (`shareCount` arg). */
+  shareCount?: number;
+  /** Last `searchResources` keyword (sticky through 「正在收尾」). */
+  currentKeyword?: string;
+  /** Planned first-wave keyword count when known (`searchTotal` arg). */
+  searchTotal?: number;
+  /** Raw recall size at pick time (snapshot candidates, not selected shares). */
+  candidateCount?: number;
+  /**
+   * Why pick selected nothing. Codes: below-quality-floor / no-episode-coverage /
+   * redundant-coverage / no-candidates / media-id-mismatch / empty-selection.
+   */
+  pickReason?: string;
+  /** Unique `searchResources` keywords this run, insertion order (capped). */
+  searchKeywords?: string[];
+  /** Grouped empty-pick rejects `{reason, count}` — UI maps codes to 中文. */
+  pickRejectGroups?: Array<{ reason: string; count: number }>;
+  /** 1–3 rejected share titles as examples (never a raw candidate dump). */
+  pickExamples?: string[];
+  /** Current `transferCandidate` share title. */
+  transferTitle?: string;
+  /** Episode codes this transfer is covering (`SxxExx`). */
+  transferEpisodes?: string[];
+  /** Files deleted by landed-dedup after organize (duplicate skip count). */
+  skippedDuplicates?: number;
 }
 
 export interface WorkflowRun {

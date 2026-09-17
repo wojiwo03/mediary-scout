@@ -10,6 +10,8 @@ import {
   parseSeasonMarkers,
   selectResourceCandidates,
   assessRulesConfidence,
+  classifyEmptyPickReason,
+  summarizePickRejects,
 } from "../src/acquisition-v2/rules-selector.js";
 import { joinReleaseTitleParts } from "../src/acquisition-v2/release-meta.js";
 import { movieTargetToRules, tvTargetToRules } from "../src/acquisition-v2/rules-task.js";
@@ -918,5 +920,44 @@ describe("selectResourceCandidates — quality floor hard reject", () => {
     expect(selection.rejected.some((row) => row.candidateId === "filler" && row.reason === BELOW_QUALITY_FLOOR_REASON)).toBe(
       true,
     );
+  });
+});
+
+describe("classifyEmptyPickReason", () => {
+  it("empty recall → no-candidates", () => {
+    expect(classifyEmptyPickReason([], 0)).toBe("no-candidates");
+  });
+  it("floor hits beat other rejects", () => {
+    expect(
+      classifyEmptyPickReason(
+        [{ reason: BELOW_QUALITY_FLOOR_REASON }, { reason: "no-episode-coverage" }],
+        4,
+      ),
+    ).toBe("below-quality-floor");
+  });
+  it("title matched but no episode span → no-episode-coverage", () => {
+    expect(classifyEmptyPickReason([{ reason: "no-episode-coverage" }, { reason: "no-episode-coverage" }], 2)).toBe(
+      "no-episode-coverage",
+    );
+  });
+  it("tmdb mediaBinding mismatch", () => {
+    expect(classifyEmptyPickReason([{ reason: "media-id-mismatch" }], 1)).toBe("media-id-mismatch");
+  });
+});
+
+describe("summarizePickRejects", () => {
+  it("groups by reason and keeps 1–3 share titles", () => {
+    const summary = summarizePickRejects([
+      { reason: "below-quality-floor", title: "兰香如敌 720p" },
+      { reason: "below-quality-floor", title: "兰香如敌 480p" },
+      { reason: "below-quality-floor", title: "兰香如敌 720p" },
+      { reason: "no-episode-coverage", title: "兰香如故 全集" },
+      { reason: "no-episode-coverage", title: "其他分享" },
+    ]);
+    expect(summary.groups).toEqual([
+      { reason: "below-quality-floor", count: 3 },
+      { reason: "no-episode-coverage", count: 2 },
+    ]);
+    expect(summary.examples).toEqual(["兰香如敌 720p", "兰香如敌 480p", "兰香如故 全集"]);
   });
 });

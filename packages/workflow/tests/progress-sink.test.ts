@@ -107,4 +107,149 @@ describe("makeProgressSink", () => {
     for (let i = 1; i < percents.length; i += 1) expect(percents[i]!).toBeGreaterThanOrEqual(percents[i - 1]!);
     expect(percents.at(-1)!).toBeGreaterThanOrEqual(95);
   });
+
+  it("reportNoCoverage then finish keeps sticky noCoverage through 正在收尾", () => {
+    const repo = fakeRepo();
+    const sink = makeProgressSink({ repository: repo, workflowRunId: "r", neededHint: 12, now: () => "t" });
+    sink({ toolName: "searchResources", args: { keyword: "a" }, activity: "正在搜索资源:a", phase: "search" });
+    sink({
+      toolName: "rulesSelectCandidates",
+      args: { shareCount: 0, reason: "规则选片：没有达到画质下限" },
+      activity: "候选低于画质下限，不下载…",
+      phase: "pick",
+    });
+    sink({
+      toolName: "reportNoCoverage",
+      args: { reason: "空集" },
+      activity: "未找到可用资源",
+      phase: "finalize",
+    });
+    sink({ toolName: "finish", args: {}, activity: "正在收尾…", phase: "finalize" });
+    const last = repo.writes.at(-1)!.progress;
+    expect(last.activity).toBe("正在收尾…");
+    expect(last.noCoverage).toBe(true);
+    expect(last.skippedTransfer).toBe(true);
+    expect(last.searchCount).toBe(1);
+    expect(last.currentKeyword).toBe("a");
+    expect(last.pickReason).toBe("below-quality-floor");
+    expect(last.percent).toBeGreaterThanOrEqual(95);
+  });
+
+  it("counts searchResources and sticky shareCount; omits unset optional flags", () => {
+    const repo = fakeRepo();
+    const sink = makeProgressSink({ repository: repo, workflowRunId: "r", now: () => "t" });
+    sink({ toolName: "searchResources", args: { keyword: "a" }, activity: "搜 a", phase: "search" });
+    sink({ toolName: "searchResources", args: { keyword: "b" }, activity: "搜 b", phase: "search" });
+    sink({
+      toolName: "rulesSelectCandidates",
+      args: { shareCount: 3 },
+      activity: "用 3 个分享补齐缺集…",
+      phase: "pick",
+    });
+    const last = repo.writes.at(-1)!.progress;
+    expect(last.searchCount).toBe(2);
+    expect(last.shareCount).toBe(3);
+    expect(last.currentKeyword).toBe("b");
+    expect(last).not.toHaveProperty("noCoverage");
+    expect(last).not.toHaveProperty("skippedTransfer");
+    expect(last).not.toHaveProperty("pickReason");
+  });
+
+  it("stickies currentKeyword, searchTotal, candidateCount, pickReason through finish", () => {
+    const repo = fakeRepo();
+    const sink = makeProgressSink({ repository: repo, workflowRunId: "r", now: () => "t" });
+    sink({
+      toolName: "searchResources",
+      args: { keyword: "兰香如敌", searchIndex: 1, searchTotal: 4 },
+      activity: "正在搜索资源:兰香如敌",
+      phase: "search",
+    });
+    sink({
+      toolName: "searchResources",
+      args: { keyword: "第二季", searchIndex: 2, searchTotal: 4 },
+      activity: "正在搜索资源:第二季",
+      phase: "search",
+    });
+    sink({
+      toolName: "viewResourceSnapshot",
+      args: { candidateCount: 6 },
+      activity: "正在浏览候选资源…",
+      phase: "search",
+    });
+    sink({
+      toolName: "rulesSelectCandidates",
+      args: { shareCount: 0, candidateCount: 6, pickReason: "no-episode-coverage" },
+      activity: "正在按规则筛选候选…",
+      phase: "pick",
+    });
+    sink({ toolName: "finish", args: {}, activity: "正在收尾…", phase: "finalize" });
+    const last = repo.writes.at(-1)!.progress;
+    expect(last.activity).toBe("正在收尾…");
+    expect(last.currentKeyword).toBe("第二季");
+    expect(last.searchTotal).toBe(4);
+    expect(last.searchCount).toBe(2);
+    expect(last.candidateCount).toBe(6);
+    expect(last.pickReason).toBe("no-episode-coverage");
+  });
+
+  it("accumulates unique search keywords and stickies reject groups / transfer / dedup", () => {
+    const repo = fakeRepo();
+    const sink = makeProgressSink({ repository: repo, workflowRunId: "r", now: () => "t" });
+    sink({
+      toolName: "searchResources",
+      args: { keyword: "兰香如敌" },
+      activity: "正在搜索资源:兰香如敌",
+      phase: "search",
+    });
+    sink({
+      toolName: "searchResources",
+      args: { keyword: "兰香如故" },
+      activity: "正在搜索资源:兰香如故",
+      phase: "search",
+    });
+    sink({
+      toolName: "searchResources",
+      args: { keyword: "兰香如敌" },
+      activity: "正在搜索资源:兰香如敌",
+      phase: "search",
+    });
+    sink({
+      toolName: "rulesSelectCandidates",
+      args: {
+        shareCount: 0,
+        candidateCount: 10,
+        pickReason: "below-quality-floor",
+        rejectGroups: [
+          { reason: "below-quality-floor", count: 8 },
+          { reason: "no-episode-coverage", count: 2 },
+        ],
+        rejectExamples: ["兰香如敌 720p", "兰香如故 480p"],
+      },
+      activity: "候选低于画质下限，不下载…",
+      phase: "pick",
+    });
+    sink({
+      toolName: "transferCandidate",
+      args: { title: "兰香如敌 1080p", episodes: ["S01E04"] },
+      activity: "正在转存到网盘…",
+      phase: "transfer",
+    });
+    sink({
+      toolName: "deleteFiles",
+      args: { skippedDuplicates: 2, directory: "season" },
+      activity: "正在清理多余文件…",
+      phase: "organize",
+    });
+    sink({ toolName: "finish", args: {}, activity: "正在收尾…", phase: "finalize" });
+    const last = repo.writes.at(-1)!.progress;
+    expect(last.searchKeywords).toEqual(["兰香如故", "兰香如敌"]);
+    expect(last.pickRejectGroups).toEqual([
+      { reason: "below-quality-floor", count: 8 },
+      { reason: "no-episode-coverage", count: 2 },
+    ]);
+    expect(last.pickExamples).toEqual(["兰香如敌 720p", "兰香如故 480p"]);
+    expect(last.transferTitle).toBe("兰香如敌 1080p");
+    expect(last.transferEpisodes).toEqual(["S01E04"]);
+    expect(last.skippedDuplicates).toBe(2);
+  });
 });

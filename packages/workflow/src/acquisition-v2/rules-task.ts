@@ -38,6 +38,8 @@ import {
   selectResourceCandidates,
   assessRulesConfidence,
   planTvCover,
+  classifyEmptyPickReason,
+  summarizePickRejects,
   type RankedRulesCandidate,
   type RulesSelectorCandidate,
   type RulesSelectorTarget,
@@ -93,6 +95,27 @@ function emit(onProgress: ((event: AgentToolEvent) => void) | undefined, toolNam
   } catch {
     // progress is a display nicety
   }
+}
+
+function emitTransferCandidate(
+  onProgress: ((event: AgentToolEvent) => void) | undefined,
+  candidate: { snapshotId: string; candidateId: string; title: string },
+  episodes?: readonly string[],
+): void {
+  emit(onProgress, "transferCandidate", {
+    snapshotId: candidate.snapshotId,
+    candidateId: candidate.candidateId,
+    title: candidate.title,
+    ...(episodes && episodes.length > 0 ? { episodes: [...episodes] } : {}),
+  });
+}
+
+function emptyPickRejectArgs(rejected: ReadonlyArray<{ reason: string; title: string }>): Record<string, unknown> {
+  const summary = summarizePickRejects(rejected);
+  return {
+    ...(summary.groups.length > 0 ? { rejectGroups: summary.groups.slice(0, 4) } : {}),
+    ...(summary.examples.length > 0 ? { rejectExamples: summary.examples } : {}),
+  };
 }
 
 function asEvidence<T>(run: () => Promise<T>): Promise<T | { error: string }> {
@@ -169,8 +192,11 @@ async function searchFirstWave(
     ...target,
     ...(words && words.length > 0 ? { customIdentifierWords: words } : {}),
   }).filter((keyword) => normalizeSearchKeyword(keyword) !== primed);
+  const searchTotal = extras.length;
+  let searchIndex = 0;
   for (const keyword of extras) {
-    emit(onProgress, "searchResources", { keyword });
+    searchIndex += 1;
+    emit(onProgress, "searchResources", { keyword, searchIndex, searchTotal });
     const result = await asEvidence(() => sandbox.searchResources(keyword));
     if (result && typeof result === "object" && "refused" in result && result.refused) {
       return;
@@ -292,10 +318,7 @@ async function probeOpaqueTvShares(input: {
     if (Array.isArray(before)) {
       beforeIds = new Set(before.map((file) => file.id));
     }
-    emit(input.onProgress, "transferCandidate", {
-      snapshotId: candidate.snapshotId,
-      candidateId: candidate.candidateId,
-    });
+    emitTransferCandidate(input.onProgress, candidate);
     const result = await asEvidence(() =>
       input.sandbox.transferCandidate({
         snapshotId: candidate.snapshotId,
@@ -379,10 +402,7 @@ async function transferRanked(
     return { landed: false };
   }
   for (const candidate of selected) {
-    emit(onProgress, "transferCandidate", {
-      snapshotId: candidate.snapshotId,
-      candidateId: candidate.candidateId,
-    });
+    emitTransferCandidate(onProgress, candidate);
     const result = await asEvidence(() =>
       sandbox.transferCandidate({ snapshotId: candidate.snapshotId, candidateId: candidate.candidateId }),
     );
@@ -462,10 +482,7 @@ async function transferTvWithRefill(input: {
         }
         continue;
       }
-      emit(onProgress, "transferCandidate", {
-        snapshotId: candidate.snapshotId,
-        candidateId: candidate.candidateId,
-      });
+      emitTransferCandidate(onProgress, candidate, gain);
       const result = await asEvidence(() =>
         sandbox.transferCandidate({ snapshotId: candidate.snapshotId, candidateId: candidate.candidateId }),
       );
@@ -592,12 +609,18 @@ async function organizeTv(input: {
 
   emit(input.onProgress, "moveToSeason", { moves: selected.moves });
   await input.sandbox.moveToSeason({ moves: selected.moves });
-  await foldLandedDuplicates(input.sandbox, {
+  const deleted = await foldLandedDuplicates(input.sandbox, {
     seasons: allowed,
     qualityUpgrade: input.qualityUpgrade,
     ...(Object.keys(input.policy).length > 0 ? { policy: input.policy } : {}),
     ...(input.words && input.words.length > 0 ? { customWords: input.words } : {}),
   });
+  if (deleted.length > 0) {
+    emit(input.onProgress, "deleteFiles", {
+      skippedDuplicates: deleted.length,
+      directory: "season",
+    });
+  }
   return selected.marked;
 }
 
@@ -701,7 +724,7 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
   const didGapResearch = await runGapResearch(sandbox, target, policy, words, onProgress);
   const candidates = snapshotsToCandidates(sandbox);
 
-  emit(onProgress, "viewResourceSnapshot", {});
+  emit(onProgress, "viewResourceSnapshot", { candidateCount: candidates.length });
   let selection = selectWithWords(candidates, target, policy, words);
   const confidenceInput = {
     target,
@@ -759,6 +782,8 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
         fallback: "agent",
         reasons: report.reasons,
         reason: `规则选片置信度低（${report.reasons.join("、")}），改走 agent`,
+        candidateCount: candidates.length,
+        ...(report.reasons[0] ? { pickReason: report.reasons[0] } : {}),
       });
       return {
         text: `规则选片置信度低，改走 agent：${report.reasons.join("、")}`,
@@ -775,6 +800,13 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
       ? describeTvSelection(selection.selected, target.missingEpisodes ?? [], reasonExtras)
       : selection.reason,
     shareCount: selection.selected.length,
+    candidateCount: candidates.length,
+    ...(selection.selected.length === 0
+      ? {
+          pickReason: classifyEmptyPickReason(selection.rejected, candidates.length),
+          ...emptyPickRejectArgs(selection.rejected),
+        }
+      : {}),
     ...(didGapResearch ? { gapResearch: true } : {}),
   });
 

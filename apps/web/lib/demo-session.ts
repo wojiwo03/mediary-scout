@@ -152,6 +152,7 @@ export interface DemoInProgressActive extends DemoInProgressEntry {
   progress: number;
   /** Human step label at `now` (e.g. "转存到网盘…"). */
   step: string;
+  phase: "search" | "pick" | "transfer" | "verify" | "organize" | "mark" | "finalize";
 }
 
 const INPROGRESS_KEY = "mediary-demo-inprogress";
@@ -273,7 +274,7 @@ export function demoInProgressView(
       continue;
     }
     const state = playbackStateAt(Math.max(0, elapsed));
-    active.push({ ...e, progress: state.progress, step: state.label });
+    active.push({ ...e, progress: state.progress, step: state.label, phase: state.phase });
   }
   return { active, done };
 }
@@ -307,6 +308,8 @@ export function demoInProgressActivityItems(active: DemoInProgressActive[]): Arr
   posterPath: string | null;
   progress: number;
   step: string;
+  phase: DemoInProgressActive["phase"];
+  noCoverage?: boolean;
 }> {
   return active.map((e) => ({
     id: `demo-inprogress-${e.tmdbId}`,
@@ -317,6 +320,7 @@ export function demoInProgressActivityItems(active: DemoInProgressActive[]): Arr
     posterPath: e.posterPath,
     progress: e.progress,
     step: e.step,
+    phase: e.phase,
   }));
 }
 

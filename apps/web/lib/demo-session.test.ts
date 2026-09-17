@@ -187,6 +187,7 @@ describe("demo in-progress view mappers", () => {
       startedAt: 0,
       progress: 40,
       step: "转存到网盘…",
+      phase: "transfer",
     },
   ];
 
