@@ -163,7 +163,7 @@ function transferDetail(
     if (isQualityFloorActivity(activity)) {
       return "低于画质下限，跳过转存";
     }
-    return obtainedLine(input.obtained, input.needed, "正在转存第 ") ?? activity || "正在转存到网盘…";
+    return obtainedLine(input.obtained, input.needed, "正在转存第 ") ?? (activity || "正在转存到网盘…");
   }
   if (state === "done") {
     return obtainedLine(input.obtained, input.needed, "已确认 ");

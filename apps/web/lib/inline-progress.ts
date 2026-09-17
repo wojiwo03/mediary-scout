@@ -99,8 +99,8 @@ export function inlineProgressView(run: ActivityActiveRun | null): InlineProgres
   const percent = Math.max(3, Math.min(100, run?.progress?.percent ?? 3));
   const progress = run?.progress;
   const steps = acquireStepsFromProgress({
-    activity: progress?.activity,
-    phase: progress?.phase,
+    ...(progress?.activity != null ? { activity: progress.activity } : {}),
+    ...(progress?.phase != null ? { phase: progress.phase } : {}),
     ...(progress?.obtained != null ? { obtained: progress.obtained } : {}),
     ...(progress?.needed != null ? { needed: progress.needed } : {}),
     ...(progress?.noCoverage === true ? { noCoverage: true } : {}),
