@@ -89,6 +89,17 @@ export interface WorkflowRunProgress {
   /** Real sub-fraction headline when known (episodes obtained / needed this run). */
   obtained?: number;
   needed?: number;
+  /**
+   * Sticky UI flags. `finish` overwrites `activity` to 「正在收尾」, so the
+   * activity page needs these to keep 未找到资源 / 跳过转存 visible as step
+   * outcomes instead of a frozen 97%.
+   */
+  noCoverage?: boolean;
+  skippedTransfer?: boolean;
+  /** Count of `searchResources` tool calls this run (keyword searches). */
+  searchCount?: number;
+  /** Last known selected-share count from the pick step (`shareCount` arg). */
+  shareCount?: number;
 }
 
 export interface WorkflowRun {

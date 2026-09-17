@@ -9,6 +9,8 @@ import {
   startDemoInProgress,
   type DemoAcquisitionEntry,
 } from "../lib/demo-session";
+import { acquireStepsFromProgress, acquireStepsHeadline } from "../lib/acquire-steps";
+import { AcquireStepDots } from "./acquire-step-list";
 
 /**
  * Read-only demo: a scripted, client-only playback of an agent acquisition. Drives
@@ -52,6 +54,12 @@ export function DemoAcquirePlayback({ entry }: { entry?: DemoAcquisitionEntry | 
 
   const state = playbackStateAt(elapsed);
   const done = state.progress >= 100;
+  const steps = acquireStepsFromProgress({
+    activity: state.label,
+    phase: state.phase,
+    ...(done ? { completed: true } : {}),
+  });
+  const headline = acquireStepsHeadline(steps);
 
   useEffect(() => {
     if (done && entry && !recorded.current) {
@@ -66,9 +74,10 @@ export function DemoAcquirePlayback({ entry }: { entry?: DemoAcquisitionEntry | 
       <div className="demo-playback-bar">
         <div className="demo-playback-fill" style={{ width: `${state.progress}%` }} />
       </div>
+      <AcquireStepDots steps={steps} />
       <div className="demo-playback-step">
         {done ? <Check size={14} aria-hidden /> : <LoaderCircle size={14} className="spin" aria-hidden />}
-        <span>{state.label}</span>
+        <span>{done ? "入库完成" : headline.label}</span>
       </div>
       {done ? <p className="demo-playback-note">已加入媒体库 · 仅本次演示</p> : null}
     </div>

@@ -29,11 +29,34 @@ export function makeProgressSink(input: {
   // instead of freezing at the band midpoint — it should reflect ongoing work.
   let currentPhase: AgentToolEvent["phase"] | null = null;
   let stepsInPhase = 0;
+  // Sticky display facts: `finish` rewrites activity to 「正在收尾」, but the UI
+  // still needs to know 选片 ended with no_coverage / transfer was skipped.
+  let noCoverage = false;
+  let skippedTransfer = false;
+  let searchCount = 0;
+  let shareCount = 0;
 
   return (event: AgentToolEvent) => {
     if (event.toolName === "markObtained") {
       const codes = Array.isArray(event.args.codes) ? event.args.codes : [];
       obtained += codes.filter((code) => code !== "MOVIE").length;
+    }
+    if (event.toolName === "searchResources") {
+      searchCount += 1;
+    }
+    if (event.toolName === "reportNoCoverage" || event.activity.includes("未找到可用资源")) {
+      noCoverage = true;
+    }
+    if (
+      event.activity.includes("画质下限") ||
+      event.activity.includes("跳过转存") ||
+      String(event.args.error ?? event.args.refused ?? "").includes("BELOW_QUALITY_FLOOR")
+    ) {
+      skippedTransfer = true;
+    }
+    const argShare = event.args.shareCount;
+    if (typeof argShare === "number" && argShare > 0) {
+      shareCount = argShare;
     }
     if (event.phase !== currentPhase) {
       currentPhase = event.phase;
@@ -53,6 +76,10 @@ export function makeProgressSink(input: {
         percent,
         updatedAt: now(),
         ...(needed > 0 ? { obtained, needed } : {}),
+        ...(noCoverage ? { noCoverage: true } : {}),
+        ...(skippedTransfer ? { skippedTransfer: true } : {}),
+        ...(searchCount > 0 ? { searchCount } : {}),
+        ...(shareCount > 0 ? { shareCount } : {}),
       }),
     ).catch(() => {
       // Progress is a display nicety; never let its write failure surface.

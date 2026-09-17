@@ -107,4 +107,47 @@ describe("makeProgressSink", () => {
     for (let i = 1; i < percents.length; i += 1) expect(percents[i]!).toBeGreaterThanOrEqual(percents[i - 1]!);
     expect(percents.at(-1)!).toBeGreaterThanOrEqual(95);
   });
+
+  it("reportNoCoverage then finish keeps sticky noCoverage through 正在收尾", () => {
+    const repo = fakeRepo();
+    const sink = makeProgressSink({ repository: repo, workflowRunId: "r", neededHint: 12, now: () => "t" });
+    sink({ toolName: "searchResources", args: { keyword: "a" }, activity: "正在搜索资源:a", phase: "search" });
+    sink({
+      toolName: "rulesSelectCandidates",
+      args: { shareCount: 0, reason: "规则选片：没有达到画质下限" },
+      activity: "候选低于画质下限，不下载…",
+      phase: "pick",
+    });
+    sink({
+      toolName: "reportNoCoverage",
+      args: { reason: "空集" },
+      activity: "未找到可用资源",
+      phase: "finalize",
+    });
+    sink({ toolName: "finish", args: {}, activity: "正在收尾…", phase: "finalize" });
+    const last = repo.writes.at(-1)!.progress;
+    expect(last.activity).toBe("正在收尾…");
+    expect(last.noCoverage).toBe(true);
+    expect(last.skippedTransfer).toBe(true);
+    expect(last.searchCount).toBe(1);
+    expect(last.percent).toBeGreaterThanOrEqual(95);
+  });
+
+  it("counts searchResources and sticky shareCount; omits unset optional flags", () => {
+    const repo = fakeRepo();
+    const sink = makeProgressSink({ repository: repo, workflowRunId: "r", now: () => "t" });
+    sink({ toolName: "searchResources", args: { keyword: "a" }, activity: "搜 a", phase: "search" });
+    sink({ toolName: "searchResources", args: { keyword: "b" }, activity: "搜 b", phase: "search" });
+    sink({
+      toolName: "rulesSelectCandidates",
+      args: { shareCount: 3 },
+      activity: "用 3 个分享补齐缺集…",
+      phase: "pick",
+    });
+    const last = repo.writes.at(-1)!.progress;
+    expect(last.searchCount).toBe(2);
+    expect(last.shareCount).toBe(3);
+    expect(last).not.toHaveProperty("noCoverage");
+    expect(last).not.toHaveProperty("skippedTransfer");
+  });
 });

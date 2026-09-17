@@ -1,5 +1,9 @@
 import type { ActivityActiveRun } from "./activity-view";
-import { explainActivityStep } from "./activity-status-copy";
+import {
+  acquireStepsFromProgress,
+  acquireStepsHeadline,
+  type AcquireStepView,
+} from "./acquire-steps";
 
 /** Find THIS card's active run: same tmdbId, and `seasonNumber === null` matches
  *  ANY season (movies, and the TV "all remaining seasons" scope), preferring a
@@ -81,14 +85,32 @@ export function advanceTrickle(
   return { anchorPercent, anchorAtMs, displayed, key: input.key };
 }
 
+export interface InlineProgressView {
+  running: boolean;
+  percent: number;
+  step: string;
+  hint?: string;
+  steps: AcquireStepView[];
+}
+
 /** Derive the inline progress display from the matched run. */
-export function inlineProgressView(
-  run: ActivityActiveRun | null,
-): { running: boolean; percent: number; step: string; hint?: string } {
+export function inlineProgressView(run: ActivityActiveRun | null): InlineProgressView {
   const running = run?.status === "running";
   const percent = Math.max(3, Math.min(100, run?.progress?.percent ?? 3));
-  const explained = explainActivityStep(run?.progress?.activity);
-  return explained.hint
-    ? { running, percent, step: explained.label, hint: explained.hint }
-    : { running, percent, step: explained.label };
+  const progress = run?.progress;
+  const steps = acquireStepsFromProgress({
+    activity: progress?.activity,
+    phase: progress?.phase,
+    ...(progress?.obtained != null ? { obtained: progress.obtained } : {}),
+    ...(progress?.needed != null ? { needed: progress.needed } : {}),
+    ...(progress?.noCoverage === true ? { noCoverage: true } : {}),
+    ...(progress?.skippedTransfer === true ? { skippedTransfer: true } : {}),
+    ...(progress?.searchCount != null ? { searchCount: progress.searchCount } : {}),
+    ...(progress?.shareCount != null ? { shareCount: progress.shareCount } : {}),
+    ...(run?.selectionPath ? { selectionPath: run.selectionPath } : {}),
+  });
+  const headline = acquireStepsHeadline(steps);
+  return headline.hint
+    ? { running, percent, step: headline.label, hint: headline.hint, steps }
+    : { running, percent, step: headline.label, steps };
 }

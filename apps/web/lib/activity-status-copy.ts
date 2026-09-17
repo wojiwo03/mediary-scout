@@ -17,13 +17,13 @@ const WRAPPING_UP = new Set(["正在收尾…", "正在收尾", "完成收尾"])
 export function explainActivityStep(activity: string | null | undefined): ActivityStepCopy {
   const label = activity?.trim() || "正在准备…";
   if (WRAPPING_UP.has(label) || label.startsWith("正在收尾")) {
-    return { label: label.endsWith("…") ? label : "正在收尾…", hint: "正常收尾，正在核对结果" };
+    return { label: label.endsWith("…") ? label : "正在收尾…", hint: "核对结果，清理暂存" };
   }
   if (label === "正在准备…") {
     return { label, hint: "开始搜片和匹配候选" };
   }
-  if (label === "未找到可用资源") {
-    return { label, hint: "这次没有可转存的片源，会按设置留给巡检" };
+  if (label === "未找到可用资源" || label === "未找到资源") {
+    return { label: "未找到资源", hint: "选片没有可转存的片源，会按设置留给巡检" };
   }
   return { label };
 }

@@ -28,8 +28,12 @@ function run(over: Partial<ActivityActiveRun>): ActivityActiveRun {
   };
 }
 
-function progress(percent: number, activity: string): ActivityActiveRun["progress"] {
-  return { percent, activity, phase: "transfer", updatedAt: "2026-06-23T00:00:00.000Z" };
+function progress(
+  percent: number,
+  activity: string,
+  phase: NonNullable<ActivityActiveRun["progress"]>["phase"] = "transfer",
+): ActivityActiveRun["progress"] {
+  return { percent, activity, phase, updatedAt: "2026-06-23T00:00:00.000Z" };
 }
 
 describe("findActiveRun", () => {
@@ -57,27 +61,56 @@ describe("findActiveRun", () => {
 });
 
 describe("inlineProgressView", () => {
-  it("running run → running:true, percent clamped, step from activity", () => {
-    const v = inlineProgressView(run({ status: "running", progress: progress(42, "转存中…") }));
-    expect(v).toEqual({ running: true, percent: 42, step: "转存中…" });
+  it("running run → running:true, percent clamped, step from the 5-step list", () => {
+    const v = inlineProgressView(run({ status: "running", progress: progress(42, "正在转存到网盘…") }));
+    expect(v.running).toBe(true);
+    expect(v.percent).toBe(42);
+    expect(v.step).toMatch(/^转存/);
+    expect(v.steps).toHaveLength(5);
+    expect(v.steps.map((s) => s.id)).toEqual(["search", "pick", "transfer", "organize", "finalize"]);
   });
   it("clamps percent to [3,100] and falls back step", () => {
     expect(inlineProgressView(run({ status: "running", progress: progress(0, "") })).percent).toBe(3);
     expect(inlineProgressView(run({ status: "running", progress: progress(250, "x") })).percent).toBe(100);
-    expect(inlineProgressView(run({ status: "running", progress: null })).step).toBe("正在准备…");
+    expect(inlineProgressView(run({ status: "running", progress: null })).step).toBe("搜索 · 开始搜片和匹配候选");
   });
   it("treats empty/whitespace activity as missing → fallback step", () => {
-    expect(inlineProgressView(run({ status: "running", progress: progress(50, "") })).step).toBe("正在准备…");
-    expect(inlineProgressView(run({ status: "running", progress: progress(50, "   ") })).step).toBe("正在准备…");
+    expect(inlineProgressView(run({ status: "running", progress: progress(50, "", "search") })).step).toBe(
+      "搜索 · 开始搜片和匹配候选",
+    );
+    expect(inlineProgressView(run({ status: "running", progress: progress(50, "   ", "search") })).step).toBe(
+      "搜索 · 开始搜片和匹配候选",
+    );
   });
   it("queued or null → running:false", () => {
     expect(inlineProgressView(run({ status: "queued" })).running).toBe(false);
     expect(inlineProgressView(null).running).toBe(false);
   });
-  it("正在收尾 carries a hint so the badge does not read as stuck", () => {
-    const v = inlineProgressView(run({ status: "running", progress: progress(96, "正在收尾…") }));
-    expect(v.step).toBe("正在收尾…");
-    expect(v.hint).toBe("正常收尾，正在核对结果");
+  it("正在收尾 is the last step (核对), not a hung percent", () => {
+    const v = inlineProgressView(run({ status: "running", progress: progress(96, "正在收尾…", "finalize") }));
+    expect(v.step).toBe("收尾 · 核对结果，清理暂存");
+    expect(v.steps.find((s) => s.id === "finalize")?.state).toBe("current");
+  });
+  it("no_coverage wrap-up surfaces 未找到资源 on 选片, not frozen 97%", () => {
+    const v = inlineProgressView(
+      run({
+        status: "running",
+        progress: {
+          percent: 97,
+          activity: "正在收尾…",
+          phase: "finalize",
+          updatedAt: "2026-06-23T00:00:00.000Z",
+          noCoverage: true,
+          searchCount: 4,
+          needed: 12,
+          obtained: 0,
+        },
+      }),
+    );
+    expect(v.step).toBe("选片 · 未找到资源");
+    expect(v.hint).toBe("核对结果，清理暂存");
+    expect(v.steps.find((s) => s.id === "pick")?.state).toBe("failed");
+    expect(v.steps.find((s) => s.id === "transfer")?.state).toBe("skipped");
   });
 });
 
