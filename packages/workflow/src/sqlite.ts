@@ -691,6 +691,11 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     // Read the run's payload, clamp percent monotonically (a retry never rewinds the
     // bar), and re-upsert. Unknown run → no-op. upsertWorkflowRun preserves the
     // account/storage columns on conflict. Mirrors postgres.ts.
+    //
+    // better-sqlite3 is synchronous, so this read-modify-write cannot interleave
+    // with the terminal saveWorkflowRunSnapshot the way the Postgres one could.
+    // The terminal-status guard is still required by the repository contract: a
+    // progress write must never be able to revive a finished run.
     const row = this.db
       .prepare("SELECT payload FROM workflow_runs WHERE id = ?")
       .get(workflowRunId) as { payload: string } | undefined;
@@ -698,6 +703,9 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       return;
     }
     const run = JSON.parse(row.payload) as WorkflowRun;
+    if (!isActiveWorkflowStatus(run.status)) {
+      return;
+    }
     const previousPercent = run.progress?.percent ?? 0;
     this.upsertWorkflowRun({
       ...run,

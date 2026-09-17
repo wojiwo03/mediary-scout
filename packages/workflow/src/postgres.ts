@@ -1,6 +1,7 @@
 import pg from "pg";
 import type { Pool, PoolClient } from "pg";
 import {
+  ACTIVE_WORKFLOW_STATUSES,
   DEFAULT_ACCOUNT_ID,
   episodeNumberFromCode,
   type AgentDecision,
@@ -543,21 +544,29 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
   }
 
   async updateWorkflowRunProgress(workflowRunId: string, progress: WorkflowRunProgress): Promise<void> {
-    await this.withTransaction(async (client) => {
-      const run = await this.selectOne<WorkflowRun>(
-        client,
-        "SELECT payload FROM workflow_runs WHERE id = $1",
-        [workflowRunId],
-      );
-      if (!run) {
-        return;
-      }
-      const previousPercent = run.progress?.percent ?? 0;
-      await this.upsertWorkflowRun(client, {
-        ...run,
-        progress: { ...progress, percent: Math.max(previousPercent, progress.percent) },
-      });
-    });
+    // ONE statement that touches ONLY the `progress` key, and only while the run
+    // is still active. It must NOT be a read-modify-write of the whole payload:
+    // progress writes are fire-and-forget and the LAST of them is issued
+    // microseconds before the terminal saveWorkflowRunSnapshot, so a JS-side
+    // read-modify-write loses that update — it re-wrote the payload it had read
+    // (status `running`, finishedAt null) on top of the just-committed terminal
+    // status. Live symptom: the run reappeared in 获取中 at 97%「未找到资源」
+    // forever while its no_coverage notification (a child row the revert cannot
+    // touch) already sat in 已完成. jsonb_set cannot revert status/finishedAt,
+    // and the status guard is re-checked against the row this statement actually
+    // locks — so a write that waited behind the terminal transaction is dropped
+    // instead of resurrecting the run.
+    // `numeric`, not `int`: this write is fire-and-forget with a swallowed catch, so
+    // a cast that throws on a fractional percent would silently freeze the bar for
+    // the rest of the run instead of failing loudly.
+    await this.ensureSchema();
+    await this.pool.query(
+      "UPDATE workflow_runs SET payload = jsonb_set(payload, '{progress}', " +
+        "$2::jsonb || jsonb_build_object('percent', GREATEST(" +
+        "COALESCE((payload #>> '{progress,percent}')::numeric, 0), $3::numeric)), true) " +
+        "WHERE id = $1 AND payload ->> 'status' = ANY($4::text[])",
+      [workflowRunId, json(progress), progress.percent, [...ACTIVE_WORKFLOW_STATUSES]],
+    );
   }
 
   async appendAgentStep(workflowRunId: string, step: AgentStep): Promise<void> {
