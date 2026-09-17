@@ -779,6 +779,69 @@ describe("runAcquisitionV2 — auto path confidence fallback", () => {
     expect(activities.some((line) => line.includes("规则拿不准"))).toBe(false);
     expect(activities.at(-1)).toBe("正在收尾…");
   });
+
+  it("auto TV + 1080p floor + 720p-only 12-ep season stays on rules and does not probe/transfer", async () => {
+    const snapId = "snap_tv_floor";
+    const missing = Array.from({ length: 12 }, (_, i) => `S01E${String(i + 1).padStart(2, "0")}`);
+    const provider: ResourceProvider = {
+      search: async ({ keyword }) =>
+        snapshot(snapId, keyword, [
+          candidate({ id: "low-pack", snapshotId: snapId, index: 0, title: "兰香如敌 第一季 720p WEB-DL" }),
+          candidate({ id: "low-full", snapshotId: snapId, index: 1, title: "兰香如敌 全集 720p WEB-DL" }),
+        ]),
+    };
+    const executor = new FakeStorageExecutor({
+      directories: { staging: [], season: [] },
+      transferOutcomes: {
+        "low-pack": {
+          status: "succeeded",
+          providerMessage: "must not probe-transfer below floor",
+          files: [videoFile("e1", "兰香如敌.S01E01.720p.mkv", "S01E01")],
+        },
+        "low-full": {
+          status: "succeeded",
+          providerMessage: "must not probe-transfer below floor",
+          files: [videoFile("e2", "兰香如敌.S01E02.720p.mkv", "S01E02")],
+        },
+      },
+    });
+    const activities: string[] = [];
+    const result = await runAcquisitionV2({
+      provider,
+      executor,
+      model: throwingModel(),
+      workflowRunId: "run-auto-tv-floor",
+      target: {
+        kind: "tv",
+        title: "兰香如敌",
+        aliases: [],
+        seasons: [1],
+        missingEpisodes: missing,
+        qualityPreference: "1080p",
+        originCountries: ["CN"],
+      },
+      stagingDirectoryId: "staging",
+      targetSeasonDirectoryIds: { 1: "season" },
+      acquisitionSelectionPath: "auto",
+      originCountries: ["CN"],
+      qualityPolicy: { resolutionFloor: "1080p" },
+      onProgress: (event) => activities.push(event.activity),
+    });
+
+    expect(result.coverage.coverageMet).toBe(false);
+    expect(result.coverage.obtained).toEqual([]);
+    expect(result.coverage.missing).toEqual(missing);
+    expect(result.outcome.transferAttempts).toEqual([]);
+    expect(result.text).toMatch(/画质下限/);
+    expect(
+      result.auditEvents.some(
+        (event) => event.type === ACQUISITION_SELECTION_PATH_AUDIT_TYPE && event.data?.["path"] === "rules",
+      ),
+    ).toBe(true);
+    expect(activities.some((line) => line.includes("规则拿不准"))).toBe(false);
+    expect(activities.some((line) => line.includes("探查"))).toBe(false);
+    expect(activities.at(-1)).toBe("正在收尾…");
+  });
 });
 
 describe("runAcquisitionV2 — rules landed dedup", () => {

@@ -630,8 +630,20 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
 
   emit(onProgress, "viewResourceSnapshot", {});
   let selection = selectWithWords(candidates, target, policy, words);
+  const confidenceInput = {
+    target,
+    selection,
+    candidateCount: candidates.length,
+    ...(words && words.length > 0 ? { customWords: words } : {}),
+  };
+  // High-confidence empty (hard quality floor) must NOT probe opaque shares —
+  // 115 has no listing-without-transfer, so probe would 转存偷看, then finish
+  // with leftover staging and the wrap-up delete hung the UI on 「正在收尾」.
+  const preProbeConfidence = assessRulesConfidence(confidenceInput);
+  const skipOpaqueProbe =
+    target.kind === "tv" && selection.selected.length === 0 && preProbeConfidence.confidence === "high";
   const probe =
-    target.kind === "tv"
+    target.kind === "tv" && !skipOpaqueProbe
       ? await probeOpaqueTvShares({
           sandbox,
           candidates,
@@ -658,10 +670,8 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
 
   if (request.escalateOnLowConfidence) {
     const report = assessRulesConfidence({
-      target,
+      ...confidenceInput,
       selection,
-      candidateCount: candidates.length,
-      ...(words && words.length > 0 ? { customWords: words } : {}),
     });
     if (report.confidence === "low") {
       emit(onProgress, "rulesSelectCandidates", {
@@ -690,6 +700,13 @@ export async function runRulesAcquisition(request: RunRulesAcquisitionRequest): 
 
   if (selection.selected.length === 0) {
     const reported = await asEvidence(() => sandbox.reportNoCoverage(selection.reason));
+    // Probe (115 staging-peek) may have left files; wipe them before finish so
+    // wrap-up delete cannot pin the UI on 「正在收尾」. Floor-empty skips probe,
+    // so skip this extra 115 call — the harness still discards empty staging.
+    if (target.kind === "tv" && !skipOpaqueProbe) {
+      emit(onProgress, "discardStaging", {});
+      await asEvidence(() => withTimeout(sandbox.discardStaging(), POST_FINISH_IO_TIMEOUT_MS));
+    }
     if (reported && typeof reported === "object" && "error" in reported) {
       emit(onProgress, "finish", {});
       const coverage = await sandbox.finish();

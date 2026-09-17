@@ -671,6 +671,10 @@ export function selectResourceCandidates(input: {
     }
 
     const override = input.coverageOverrides?.get(candidate.candidateId);
+    if (isBelowQualityFloor(candidate.title, policy.resolutionFloor)) {
+      rejected.push({ ...candidate, reason: BELOW_QUALITY_FLOOR_REASON });
+      continue;
+    }
     const covered = override
       ? [...override].filter((code) => missing.includes(code))
       : mapTvCoverage({
@@ -681,10 +685,6 @@ export function selectResourceCandidates(input: {
         });
     if (covered.length === 0) {
       rejected.push({ ...candidate, reason: "no-episode-coverage" });
-      continue;
-    }
-    if (isBelowQualityFloor(candidate.title, policy.resolutionFloor)) {
-      rejected.push({ ...candidate, reason: BELOW_QUALITY_FLOOR_REASON });
       continue;
     }
     if (preferZh && !originCN && looksLikeEnglishScene(titled)) {

@@ -111,6 +111,69 @@ describe("runTvAcquisitionV2 — single TV entry over the V2 engine", () => {
     expect(result.auditEvents.some((e) => e.type === "search_dedup")).toBe(true);
   });
 
+  it("manual auto TV + 1080p floor + 720p-only 12-ep season stays on rules and leaves running", async () => {
+    // Live hang: 兰香如敌 S1, quality floor set, user clicked 获取 (type2),
+    // 「第一季 720p」 was tagged no-episode-coverage → auto escalated to agent →
+    // finish wrote 「正在收尾」 / 已确认 0/12 and wrap-up never persisted.
+    const lanxiang = {
+      ...title,
+      title: "兰香如敌",
+      originCountries: ["CN"],
+    } as unknown as MediaTitle;
+    const snapId = "snap_tv_floor";
+    const provider: ResourceProvider = {
+      search: async ({ keyword }): Promise<ResourceSnapshot> => ({
+        id: snapId,
+        provider: "pansou",
+        keyword,
+        candidates: [
+          {
+            id: "low-pack",
+            snapshotId: snapId,
+            index: 0,
+            title: "兰香如敌 第一季 720p WEB-DL",
+            type: "115",
+            source: "pansou",
+            providerPayload: { url: "https://115.com/s/low-pack" },
+          },
+          {
+            id: "low-full",
+            snapshotId: snapId,
+            index: 1,
+            title: "兰香如敌 全集 720p WEB-DL",
+            type: "115",
+            source: "pansou",
+            providerPayload: { url: "https://115.com/s/low-full" },
+          },
+        ],
+        createdAt: "2026-06-15T00:00:00.000Z",
+      }),
+    };
+    const result = await Promise.race([
+      runTvAcquisitionV2({
+        title: lanxiang,
+        mode: "type2",
+        seasons: [{ seasonNumber: 1, totalEpisodes: 12, latestAiredEpisode: 12, qualityPreference: "1080p" }],
+        categoryParentId: "tv_root",
+        resourceProvider: provider,
+        storage: new HangListVideoExecutor(),
+        model: throwingModel(),
+        workflowRunId: "run-auto-tv-floor-hang",
+        acquisitionSelectionPath: "auto",
+        qualityFloor: "1080p",
+        now: () => "2026-06-15T00:00:00.000Z",
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("manual acquire stayed running after quality-floor finish")), 2000),
+      ),
+    ]);
+    expect(result.status).toBe("no_coverage");
+    expect(result.notification.kind).toBe("no_coverage");
+    expect(result.notification.trigger).toBe("user");
+    expect(result.transferAttempts).toEqual([]);
+    expect(result.seasons[0]!.episodes.filter((episode) => episode.obtained)).toHaveLength(0);
+  });
+
   it("rules 0-coverage finish still becomes no_coverage when listVideoFiles hangs after wrap-up", async () => {
     // Live hang: finish already wrote 「正在收尾」 / 已确认 0/12, then the TV
     // workflow listed season dirs for landed-size and never persisted.
