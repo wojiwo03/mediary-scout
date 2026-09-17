@@ -90,6 +90,8 @@ describe("demoCompletedItems", () => {
     expect(it0.posterPath).toBe("/p.jpg");
     expect(it0.seasonLabel).toBeNull();
     expect(it0.sizeText).toBeNull();
+    expect(it0.tmdbId).toBe(27205);
+    expect(it0.mediaType).toBe("movie");
     expect(typeof it0.createdAt).toBe("string");
   });
 });

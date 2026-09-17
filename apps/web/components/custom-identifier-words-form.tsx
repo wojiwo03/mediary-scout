@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Check, LoaderCircle } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { saveCustomIdentifierWordsAction } from "../app/actions";
 import { runAction } from "../lib/run-action";
+import { SettingsSaveRow } from "./settings-save-row";
 
 const PLACEHOLDER = `# 一行一条；# 开头为注释
 # 屏蔽（从标题去掉）
@@ -16,33 +17,36 @@ B-Blobal => B-Global
 旧名 => 新名 && 第 <> 集 >> EP-1`;
 
 export function CustomIdentifierWordsForm({ initial }: { initial: string }) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [value, setValue] = useState(initial);
-  const [result, setResult] = useState<string | null>(null);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const dirty = value !== initial;
 
   const handleSave = () => {
     startTransition(async () => {
       const r = await runAction(
         () => saveCustomIdentifierWordsAction(value),
         (msg) => {
-          setResult(`❌ ${msg}`);
+          setResult({ ok: false, text: msg });
           setTimeout(() => setResult(null), 4000);
         },
       );
       if (!r.ok) return;
       const res = r.value;
-      setResult(res.success ? "✅ 保存成功" : `❌ ${res.message ?? "保存失败"}`);
+      if (res.success) router.refresh();
+      setResult({ ok: res.success, text: res.success ? "已保存" : (res.message ?? "保存失败") });
       setTimeout(() => setResult(null), res.success ? 3000 : 6000);
     });
   };
 
   return (
-    <div className="push-form">
-      <p className="panel-note" style={{ marginBottom: 12 }}>
-        规则选片与画质升级在解析标题前会先套用这些识别词。内置词始终先生效，再应用你保存的条目。一行一条，可直接粘贴多行；以{" "}
-        <code>#</code> 开头的行当作注释保留。
+    <div className="settings-stack">
+      <p className="panel-note">
+        规则选片和画质升级在读标题前会先套用这些词。内置词始终先生效，再轮到你保存的条目。一行一条；<code>#</code>{" "}
+        开头当注释。
       </p>
-      <ul className="panel-note" style={{ margin: "0 0 12px", paddingLeft: 18, lineHeight: 1.6 }}>
+      <ul className="settings-help-list">
         <li>
           <strong>屏蔽</strong>：整行当作正则，从标题中删除。例：<code>招募翻译校对</code>
         </li>
@@ -65,17 +69,7 @@ export function CustomIdentifierWordsForm({ initial }: { initial: string }) {
         aria-label="自定义识别词"
         style={{ width: "100%", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
       />
-      <div className="setting-row" style={{ marginTop: 16 }}>
-        <button type="button" className="primary-button" onClick={handleSave} disabled={isPending}>
-          {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <Check size={14} aria-hidden />}
-          保存
-        </button>
-      </div>
-      {result ? (
-        <p className="panel-note" style={{ marginTop: 10 }}>
-          {result}
-        </p>
-      ) : null}
+      <SettingsSaveRow dirty={dirty} pending={isPending} result={result} onSave={handleSave} />
     </div>
   );
 }

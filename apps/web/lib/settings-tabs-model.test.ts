@@ -79,6 +79,7 @@ describe("SETTINGS_TABS", () => {
       "账号",
       "远程访问",
     ]);
+    expect(SETTINGS_TABS.find((tab) => tab.id === "preferences")?.hint).toContain("画质下限");
   });
 
   it("受观察（内容为空即隐藏）的 tab 就是 account + remote", () => {

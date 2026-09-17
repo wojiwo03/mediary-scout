@@ -57,6 +57,9 @@ export interface ActivityCompletedItem {
   sizeText: string | null;
   createdAt: string;
   qualityUpgrade: boolean;
+  /** Tap-through to the title hub; null on legacy notifications. */
+  tmdbId: number | null;
+  mediaType: MediaType | null;
 }
 
 export interface ActivityView {
@@ -163,6 +166,8 @@ export async function getActivityView(input: {
         sizeText: size ? `${size.label} ${size.value}` : null,
         createdAt: notification.createdAt,
         qualityUpgrade: notification.kind === "quality_upgrade",
+        tmdbId: report.tmdbId ?? null,
+        mediaType: report.mediaType ?? null,
       };
     });
 

@@ -1,9 +1,9 @@
-import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense, type ReactNode } from "react";
 import { TriangleAlert } from "lucide-react";
 import { isMovieUnreleased } from "@media-track/workflow";
 import { AcquiringPoller } from "../../../components/acquiring-poller";
+import { AcquireProgressBadge } from "../../../components/acquire-progress-badge";
 import { AcquisitionLockProvider } from "../../../components/acquisition-lock";
 import { AppSidebar } from "../../../components/app-sidebar";
 import { BackLink } from "../../../components/back-link";
@@ -223,6 +223,14 @@ function TvHub({
               : ""}
           </p>
           <div className="hub-actions">
+            {view.acquiring ? (
+              <AcquireProgressBadge
+                tmdbId={view.tmdbId}
+                seasonNumber={null}
+                storageId={storageId}
+                title="后台正在获取——点查看进度（活动）"
+              />
+            ) : null}
             {/* Single-season titles get their button on the season row. */}
             {view.untrackedSeasonNumbers.length > 0 && view.seasons.length > 1 ? (
               <RequestRemainingButton
@@ -308,7 +316,6 @@ function MovieHub({
   globalQualityFloor?: QualityFloorBand | undefined;
 }) {
   const meta = movieStateMeta[view.state];
-  const activityHref = storageId ? `/activity?w=${encodeURIComponent(storageId)}` : "/activity";
   const nowIso = new Date().toISOString();
   const unreleased =
     view.state === "untracked" && isMovieUnreleased(view.releaseDate, nowIso);
@@ -379,10 +386,13 @@ function MovieHub({
                     upgrade={view.upgrade}
                   />
                 ) : null}
-                {view.state === "acquiring" ? (
-                  <Link className="primary-button" href={activityHref}>
-                    查看活动
-                  </Link>
+                {view.state === "acquiring" || view.acquiring ? (
+                  <AcquireProgressBadge
+                    tmdbId={view.tmdbId}
+                    seasonNumber={null}
+                    storageId={storageId}
+                    title="后台正在获取——点查看进度（活动）"
+                  />
                 ) : null}
                 {view.state !== "untracked" ? (
                   <UntrackButton tmdbId={view.tmdbId} storageId={storageId} mediaKind="movie" basePath={basePath} />

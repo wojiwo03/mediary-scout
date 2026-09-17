@@ -74,6 +74,11 @@ describe("inlineProgressView", () => {
     expect(inlineProgressView(run({ status: "queued" })).running).toBe(false);
     expect(inlineProgressView(null).running).toBe(false);
   });
+  it("正在收尾 carries a hint so the badge does not read as stuck", () => {
+    const v = inlineProgressView(run({ status: "running", progress: progress(96, "正在收尾…") }));
+    expect(v.step).toBe("正在收尾…");
+    expect(v.hint).toBe("正常收尾，正在核对结果");
+  });
 });
 
 // 2026-06-24 bug: a single `searchResources` tool call ran 94s (half the run); the

@@ -113,6 +113,8 @@ export function SettingsTabs(props: {
     document.getElementById(`settings-tab-${next.id}`)?.focus();
   };
 
+  const activeMeta = SETTINGS_TABS.find((tab) => tab.id === active);
+
   return (
     <>
       <div className="settings-tabs" role="tablist" aria-label="设置分区" onKeyDown={onTablistKeyDown}>
@@ -132,6 +134,7 @@ export function SettingsTabs(props: {
           </button>
         ))}
       </div>
+      {activeMeta ? <p className="settings-tab-hint">{activeMeta.hint}</p> : null}
       {panels.map((panel) => (
         <div
           key={panel.id}
