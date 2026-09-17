@@ -1,4 +1,5 @@
 import type { StorageExecutor } from "../ports.js";
+import { POST_FINISH_IO_TIMEOUT_MS, withTimeout } from "./best-effort.js";
 
 export interface LandedSize {
   fileCount: number;
@@ -19,22 +20,30 @@ export interface LandedSize {
 export async function readLandedSize(
   executor: Pick<StorageExecutor, "listVideoFiles">,
   directoryIds: string[],
+  timeoutMs: number = POST_FINISH_IO_TIMEOUT_MS,
 ): Promise<LandedSize | undefined> {
   try {
-    let fileCount = 0;
-    let totalBytes = 0;
-    for (const directoryId of directoryIds) {
-      if (!directoryId) {
-        continue;
-      }
-      const files = await executor.listVideoFiles(directoryId);
-      for (const file of files) {
-        fileCount += 1;
-        totalBytes += file.sizeBytes;
-      }
-    }
-    return fileCount > 0 ? { fileCount, totalBytes } : undefined;
+    return await withTimeout(sumLandedSize(executor, directoryIds), timeoutMs);
   } catch {
     return undefined;
   }
+}
+
+async function sumLandedSize(
+  executor: Pick<StorageExecutor, "listVideoFiles">,
+  directoryIds: string[],
+): Promise<LandedSize | undefined> {
+  let fileCount = 0;
+  let totalBytes = 0;
+  for (const directoryId of directoryIds) {
+    if (!directoryId) {
+      continue;
+    }
+    const files = await executor.listVideoFiles(directoryId);
+    for (const file of files) {
+      fileCount += 1;
+      totalBytes += file.sizeBytes;
+    }
+  }
+  return fileCount > 0 ? { fileCount, totalBytes } : undefined;
 }

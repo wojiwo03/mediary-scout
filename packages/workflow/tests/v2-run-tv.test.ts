@@ -3,7 +3,7 @@ import { MockLanguageModelV3 } from "ai/test";
 import { runTvAcquisitionV2 } from "../src/acquisition-v2/run-tv-v2.js";
 import { FakeStorageExecutor } from "../src/fakes.js";
 import type { ResourceProvider } from "../src/ports.js";
-import type { MediaTitle, ResourceSnapshot } from "../src/domain.js";
+import type { MediaTitle, ResourceSnapshot, VerifiedFile } from "../src/domain.js";
 
 const USAGE = {
   inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
@@ -39,6 +39,21 @@ function searchThenReportModel() {
       return { content: [{ type: "text" as const, text: "done" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: USAGE, warnings: [] };
     },
   });
+}
+
+function throwingModel() {
+  return new MockLanguageModelV3({
+    doGenerate: async () => {
+      throw new Error("LLM must not be called on the rules path");
+    },
+  });
+}
+
+class HangListVideoExecutor extends FakeStorageExecutor {
+  override async listVideoFiles(): Promise<VerifiedFile[]> {
+    await new Promise(() => undefined);
+    return [];
+  }
 }
 
 const title = {
@@ -94,6 +109,97 @@ describe("runTvAcquisitionV2 — single TV entry over the V2 engine", () => {
     // search_dedup event. Both together prove multi-event flow
     // sandbox → orchestrator → workflow → bridge → runner.
     expect(result.auditEvents.some((e) => e.type === "search_dedup")).toBe(true);
+  });
+
+  it.each(["auto", "rules"] as const)(
+    "type2 %s + 1080p floor + 720p-only 12-ep season leaves running (no wrap-up hang)",
+    async (path) => {
+      // Live hang: 兰香如敌 S1, quality floor set, user clicked 获取 (type2).
+      // Settings「规则模式」is forced `rules` (not auto under the hood). Floor-empty
+      // must finish and persist even when season-dir listing never returns.
+      const lanxiang = {
+        ...title,
+        title: "兰香如敌",
+        originCountries: ["CN"],
+      } as unknown as MediaTitle;
+      const snapId = `snap_tv_floor_${path}`;
+      const provider: ResourceProvider = {
+        search: async ({ keyword }): Promise<ResourceSnapshot> => ({
+          id: snapId,
+          provider: "pansou",
+          keyword,
+          candidates: [
+            {
+              id: "low-pack",
+              snapshotId: snapId,
+              index: 0,
+              title: "兰香如敌 第一季 720p WEB-DL",
+              type: "115",
+              source: "pansou",
+              providerPayload: { url: "https://115.com/s/low-pack" },
+            },
+            {
+              id: "low-full",
+              snapshotId: snapId,
+              index: 1,
+              title: "兰香如敌 全集 720p WEB-DL",
+              type: "115",
+              source: "pansou",
+              providerPayload: { url: "https://115.com/s/low-full" },
+            },
+          ],
+          createdAt: "2026-06-15T00:00:00.000Z",
+        }),
+      };
+      const result = await Promise.race([
+        runTvAcquisitionV2({
+          title: lanxiang,
+          mode: "type2",
+          seasons: [{ seasonNumber: 1, totalEpisodes: 12, latestAiredEpisode: 12, qualityPreference: "1080p" }],
+          categoryParentId: "tv_root",
+          resourceProvider: provider,
+          storage: new HangListVideoExecutor(),
+          model: throwingModel(),
+          workflowRunId: `run-${path}-tv-floor-hang`,
+          acquisitionSelectionPath: path,
+          qualityFloor: "1080p",
+          now: () => "2026-06-15T00:00:00.000Z",
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`${path} acquire stayed running after quality-floor finish`)), 2000),
+        ),
+      ]);
+      expect(result.status).toBe("no_coverage");
+      expect(result.notification.kind).toBe("no_coverage");
+      expect(result.notification.trigger).toBe("user");
+      expect(result.transferAttempts).toEqual([]);
+      expect(result.seasons[0]!.episodes.filter((episode) => episode.obtained)).toHaveLength(0);
+    },
+  );
+
+  it("rules 0-coverage finish still becomes no_coverage when listVideoFiles hangs after wrap-up", async () => {
+    // Live hang: finish already wrote 「正在收尾」 / 已确认 0/12, then the TV
+    // workflow listed season dirs for landed-size and never persisted.
+    const result = await Promise.race([
+      runTvAcquisitionV2({
+        title,
+        mode: "type2",
+        seasons: [{ seasonNumber: 1, totalEpisodes: 12, latestAiredEpisode: 12, qualityPreference: "4K" }],
+        categoryParentId: "tv_root",
+        resourceProvider: emptyProvider(),
+        storage: new HangListVideoExecutor(),
+        model: throwingModel(),
+        workflowRunId: "run-rules-0cov-hang-size",
+        acquisitionSelectionPath: "rules",
+        now: () => "2026-06-15T00:00:00.000Z",
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("run stayed running after rules finish")), 2000),
+      ),
+    ]);
+    expect(result.status).toBe("no_coverage");
+    expect(result.notification.kind).toBe("no_coverage");
+    expect(result.seasons[0]!.episodes.filter((episode) => episode.obtained)).toHaveLength(0);
   });
 
   it("no-op type3 patrol (nothing missing) → succeeded, the model is never invoked", async () => {

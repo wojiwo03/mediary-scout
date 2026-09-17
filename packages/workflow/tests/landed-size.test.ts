@@ -39,4 +39,15 @@ describe("readLandedSize", () => {
     };
     expect(await readLandedSize(executor, ["d1"])).toBeUndefined();
   });
+
+  it("returns undefined when listVideoFiles never settles (does not hang the run)", async () => {
+    const executor = { listVideoFiles: () => new Promise<VerifiedFile[]>(() => undefined) };
+    const result = await Promise.race([
+      readLandedSize(executor, ["d1"], 40),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("readLandedSize hung")), 500),
+      ),
+    ]);
+    expect(result).toBeUndefined();
+  });
 });

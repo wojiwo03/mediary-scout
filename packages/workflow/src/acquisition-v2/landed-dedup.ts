@@ -9,6 +9,7 @@
 import { inferEpisodeCodeFromListingPath } from "./listing-coverage.js";
 import { scoreReleaseQuality, type QualityLadderPolicy } from "./quality-ladder.js";
 import { parseReleaseMeta, type ParseReleaseMetaOptions } from "./release-meta.js";
+import { POST_FINISH_IO_TIMEOUT_MS, withTimeout } from "./best-effort.js";
 
 export interface DedupListingFile {
   id: string;
@@ -261,7 +262,8 @@ export function worseDuplicateIds(
   return worse;
 }
 
-/** Best-effort: never throw — a good acquisition must not fail on cleanup. */
+/** Best-effort: never throw — a good acquisition must not fail on cleanup.
+ *  Bounded so a hung inspectTargetDir after finish cannot pin the UI on 「正在收尾」. */
 export async function foldLandedDuplicates(
   sandbox: LandedDedupSandbox,
   input: {
@@ -269,24 +271,30 @@ export async function foldLandedDuplicates(
     qualityUpgrade: boolean;
     policy?: QualityLadderPolicy;
     customWords?: readonly string[];
+    timeoutMs?: number;
   },
 ): Promise<string[]> {
   const deleted: string[] = [];
   try {
-    for (const season of input.seasons) {
-      const files = await sandbox.inspectTargetDir({ season });
-      const worse = worseDuplicateIds(files, {
-        seasons: [season],
-        qualityUpgrade: input.qualityUpgrade,
-        ...(input.policy ? { policy: input.policy } : {}),
-        ...(input.customWords && input.customWords.length > 0 ? { customWords: input.customWords } : {}),
-      });
-      if (worse.length === 0) {
-        continue;
-      }
-      await sandbox.deleteFiles({ directory: "season", season, fileIds: worse });
-      deleted.push(...worse);
-    }
+    await withTimeout(
+      (async () => {
+        for (const season of input.seasons) {
+          const files = await sandbox.inspectTargetDir({ season });
+          const worse = worseDuplicateIds(files, {
+            seasons: [season],
+            qualityUpgrade: input.qualityUpgrade,
+            ...(input.policy ? { policy: input.policy } : {}),
+            ...(input.customWords && input.customWords.length > 0 ? { customWords: input.customWords } : {}),
+          });
+          if (worse.length === 0) {
+            continue;
+          }
+          await sandbox.deleteFiles({ directory: "season", season, fileIds: worse });
+          deleted.push(...worse);
+        }
+      })(),
+      input.timeoutMs ?? POST_FINISH_IO_TIMEOUT_MS,
+    );
   } catch {
     return deleted;
   }

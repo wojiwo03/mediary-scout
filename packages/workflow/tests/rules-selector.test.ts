@@ -731,6 +731,7 @@ describe("assessRulesConfidence", () => {
       },
       policy: qualityLadderPolicyFromFlags({ resolutionFloor: "1080p" }),
     });
+    expect(tvSel.rejected.some((row) => row.reason === BELOW_QUALITY_FLOOR_REASON)).toBe(true);
     expect(
       assessRulesConfidence({
         target: {
@@ -742,6 +743,37 @@ describe("assessRulesConfidence", () => {
           originCountries: ["CN"],
         },
         selection: tvSel,
+        candidateCount: 1,
+      }).confidence,
+    ).toBe("high");
+
+    // Season-named 720p without 全集 used to be tagged no-episode-coverage
+    // (parser uncertainty → auto escalate) because floor ran after coverage.
+    const tvNoSpan = selectResourceCandidates({
+      candidates: [cand("s1", "兰香如敌 第一季 720p WEB-DL")],
+      target: {
+        kind: "tv",
+        title: "兰香如敌",
+        aliases: [],
+        seasons: [1],
+        missingEpisodes: ["S01E01"],
+        originCountries: ["CN"],
+      },
+      policy: qualityLadderPolicyFromFlags({ resolutionFloor: "1080p" }),
+    });
+    expect(tvNoSpan.rejected.some((row) => row.reason === BELOW_QUALITY_FLOOR_REASON)).toBe(true);
+    expect(tvNoSpan.rejected.some((row) => row.reason === "no-episode-coverage")).toBe(false);
+    expect(
+      assessRulesConfidence({
+        target: {
+          kind: "tv",
+          title: "兰香如敌",
+          aliases: [],
+          seasons: [1],
+          missingEpisodes: ["S01E01"],
+          originCountries: ["CN"],
+        },
+        selection: tvNoSpan,
         candidateCount: 1,
       }).confidence,
     ).toBe("high");
@@ -831,6 +863,15 @@ describe("selectResourceCandidates — quality floor hard reject", () => {
     expect(tvSel.selected).toEqual([]);
     expect(tvSel.rejected.some((row) => row.reason === BELOW_QUALITY_FLOOR_REASON)).toBe(true);
     expect(tvSel.reason).toMatch(/画质下限/);
+
+    const tvOpaque = selectResourceCandidates({
+      candidates: [cand("s1", "Show 第一季 720p WEB-DL")],
+      target: tv,
+      policy: qualityLadderPolicyFromFlags({ resolutionFloor: "1080p" }),
+    });
+    expect(tvOpaque.selected).toEqual([]);
+    expect(tvOpaque.rejected.some((row) => row.reason === BELOW_QUALITY_FLOOR_REASON)).toBe(true);
+    expect(tvOpaque.rejected.some((row) => row.reason === "no-episode-coverage")).toBe(false);
   });
 
   it("per-run override can raise or disable the global floor", () => {
