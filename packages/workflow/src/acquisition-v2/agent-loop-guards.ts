@@ -175,16 +175,18 @@ export function buildNoCoverageStop<TOOLS extends ToolSet = ToolSet>(): StopCond
 }
 
 /** Whether any step carries a SUCCESSFUL finish result — the coverage summary,
- *  error-free AND coverageMet:true. Mirrors hasSuccessfulNoCoverageReport: finish
- *  is the symmetric terminal declaration — 复联4 live (2026-07-17) showed the model
- *  calling finish ×3 in a row (~2 wasted steps) because only reportNoCoverage had
- *  a mechanical stop. Two cases deliberately do NOT stop:
- *  - {error} result (premature call stays recoverable);
- *  - coverageMet:false — unlike reportNoCoverage (whose §9 guard REJECTS a
- *    premature report), sandbox.finish() has no guard and always returns the
- *    summary, so a first-move premature finish would otherwise hard-kill the run
- *    with nothing done. Unmet coverage hands judgment back to the model; a model
- *    that loops finish anyway is caught by the repetition stop / step cap. */
+ *  error-free. Mirrors hasSuccessfulNoCoverageReport: finish is the symmetric
+ *  terminal declaration — 复联4 live (2026-07-17) showed the model calling
+ *  finish ×3 in a row (~2 wasted steps) because only reportNoCoverage had a
+ *  mechanical stop.
+ *
+ *  Any honest summary stops the loop, including coverageMet:false. The tool is
+ *  documented TERMINAL, the UI already shows 「正在收尾」, and quality-floor /
+ *  leftover-for-patrol runs are supposed to finish with gaps. Requiring
+ *  coverageMet:true left those runs spinning on 正在收尾 until the step cap.
+ *  {error} still does NOT stop (a refused call stays recoverable). A first-move
+ *  premature finish completes as no_coverage — patrol retries, which is better
+ *  than hanging the activity ticker. */
 export function hasSuccessfulFinish(steps: ReadonlyArray<StepLike>): boolean {
   for (const step of steps) {
     if (!(step.toolCalls ?? []).some((c) => c.toolName === "finish")) {
@@ -192,7 +194,7 @@ export function hasSuccessfulFinish(steps: ReadonlyArray<StepLike>): boolean {
     }
     for (const result of step.toolResults ?? []) {
       const output = result.output as { error?: unknown; coverageMet?: unknown } | undefined;
-      if (output && output.error === undefined && output.coverageMet === true) {
+      if (output && output.error === undefined && typeof output.coverageMet === "boolean") {
         return true;
       }
     }

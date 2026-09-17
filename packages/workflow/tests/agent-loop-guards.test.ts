@@ -224,7 +224,7 @@ describe("hasSuccessfulFinish — finish 后即停(复联4 live:finish ×3 尾�
     expect(hasSuccessfulFinish(steps)).toBe(true);
   });
 
-  it("coverageMet:false 的 finish → false(早产 finish 可恢复;sandbox.finish 无护栏,连环 finish 由 repetition 停兜底)", () => {
+  it("coverageMet:false 的 finish → true(诚实留缺也是终结声明;不停的话 UI 会卡在「正在收尾」)", () => {
     const steps = [
       {
         toolCalls: [{ toolName: "finish", input: {} }],
@@ -233,7 +233,7 @@ describe("hasSuccessfulFinish — finish 后即停(复联4 live:finish ×3 尾�
         ],
       },
     ];
-    expect(hasSuccessfulFinish(steps)).toBe(false);
+    expect(hasSuccessfulFinish(steps)).toBe(true);
   });
 
   it("finish 带 {error} 结果 → false(循环继续,可恢复)", () => {
