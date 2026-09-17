@@ -12,7 +12,7 @@ import {
   transferAttemptSucceeded,
   uncoveredEpisodes,
 } from "./cover-planner.js";
-import { rulesFirstWaveQueries } from "./rules-search-recipe.js";
+import { rulesFirstWaveQueries, rulesSearchNameValues } from "./rules-search-recipe.js";
 import { normalizeSearchKeyword } from "../planning-search-gate.js";
 import type { SearchProfile } from "./search-profile.js";
 import {
@@ -128,7 +128,10 @@ async function searchFirstWave(
     return;
   }
   const primed = normalizeSearchKeyword(target.title);
-  const extras = rulesFirstWaveQueries(target).filter((keyword) => normalizeSearchKeyword(keyword) !== primed);
+  const extras = rulesFirstWaveQueries({
+    ...target,
+    ...(words && words.length > 0 ? { customIdentifierWords: words } : {}),
+  }).filter((keyword) => normalizeSearchKeyword(keyword) !== primed);
   for (const keyword of extras) {
     emit(onProgress, "searchResources", { keyword });
     const result = await asEvidence(() => sandbox.searchResources(keyword));
@@ -297,11 +300,15 @@ async function lightGapSearch(
   sandbox: TaskSandbox,
   target: RulesSelectorTarget,
   remaining: readonly string[],
+  words: readonly string[] | undefined,
   onProgress?: (event: AgentToolEvent) => void,
 ): Promise<boolean> {
   const queries = gapSearchQueries({
     title: target.title,
-    aliases: target.aliases,
+    aliases: rulesSearchNameValues({
+      ...target,
+      ...(words && words.length > 0 ? { customIdentifierWords: words } : {}),
+    }).slice(1),
     missing: remaining,
     round: 0,
   });
@@ -390,7 +397,7 @@ async function transferTvWithRefill(input: {
         break;
       }
       didLightResearch = true;
-      const searched = await lightGapSearch(sandbox, target, [...remaining], onProgress);
+      const searched = await lightGapSearch(sandbox, target, [...remaining], words, onProgress);
       if (!searched) {
         break;
       }

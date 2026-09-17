@@ -82,8 +82,14 @@ export {
 } from "./acquisition-v2/cover-planner.js";
 export {
   MAX_RULES_FIRST_WAVE_QUERIES,
+  MAX_RULES_NAME_SLOTS,
+  buildRulesSearchRecipe,
+  collectSearchNames,
+  collectSearchModifiers,
   rulesFirstWaveQueries,
+  rulesSearchNameValues,
 } from "./acquisition-v2/rules-search-recipe.js";
+export { simplifiedToTraditional } from "./acquisition-v2/zh-s2t.js";
 export {
   inferEpisodeCodeFromListingPath,
   mapTvCoverageFromListing,

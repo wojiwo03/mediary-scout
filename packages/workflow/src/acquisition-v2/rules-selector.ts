@@ -16,6 +16,7 @@ import {
   uncoveredEpisodes,
   type CoverCandidate,
 } from "./cover-planner.js";
+import { rulesSearchNameValues } from "./rules-search-recipe.js";
 import {
   BELOW_QUALITY_FLOOR_REASON,
   formatQualityFloorLabel,
@@ -825,7 +826,12 @@ export function planTvCover(input: {
         ? []
         : gapSearchQueries({
             title: input.target.title,
-            aliases: input.target.aliases,
+            aliases: rulesSearchNameValues({
+              ...input.target,
+              ...(input.customIdentifierWords && input.customIdentifierWords.length > 0
+                ? { customIdentifierWords: input.customIdentifierWords }
+                : {}),
+            }).slice(1),
             missing: uncovered,
             round: input.gapRound ?? 0,
           }),
