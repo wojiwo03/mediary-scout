@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { CheckCircle2, ChevronDown, ChevronRight, Clock3, Loader2, RotateCcw, Sparkles, TriangleAlert, X } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronRight, Clock3, Loader2, RotateCcw, Search, Sparkles, TriangleAlert, X } from "lucide-react";
 import { showHref } from "@media-track/workflow/scope";
 import type {
   ActivityActiveRun,
@@ -11,6 +11,7 @@ import type {
   RetryRefusalReason,
 } from "../lib/activity-view";
 import { seasonLabelText } from "../lib/activity-season-label";
+import { explainActivityStep } from "../lib/activity-status-copy";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { demoCompletedItems, demoInProgressActivityItems } from "../lib/demo-session";
 import { useDemoAcquisitions, useDemoInProgress } from "../lib/use-demo-session";
@@ -23,7 +24,9 @@ export function ActivityFeed({ storageId }: { storageId?: string | undefined }) 
   // Robust to notification createdAt timing (a since-filter wrongly dropped runs
   // the user opened the page after — createdAt ≈ run-start, not finish).
   const seenActive = useRef<Set<string>>(new Set());
+  const readyRef = useRef(false);
   const [view, setView] = useState<ActivityView>({ active: [], recentCompleted: [] });
+  const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
 
   useEffect(() => {
     let alive = true;
@@ -31,14 +34,21 @@ export function ActivityFeed({ storageId }: { storageId?: string | undefined }) 
       try {
         const url = storageId ? `/api/activity?w=${encodeURIComponent(storageId)}` : "/api/activity";
         const res = await fetch(url, { cache: "no-store" });
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (alive && !readyRef.current) setPhase("error");
+          return;
+        }
         const data = (await res.json()) as ActivityView;
         for (const run of data.active) {
           seenActive.current.add(run.runId);
         }
-        if (alive) setView(data);
+        readyRef.current = true;
+        if (alive) {
+          setView(data);
+          setPhase("ready");
+        }
       } catch {
-        // transient — keep the last view, retry next tick
+        if (alive && !readyRef.current) setPhase("error");
       }
     };
     void poll(); // immediate first load (the page renders this client component in the static shell)
@@ -63,13 +73,49 @@ export function ActivityFeed({ storageId }: { storageId?: string | undefined }) 
   const demoDone = isDemo ? demoCompletedItems(demoAcq) : [];
   const demoActive = demoInProgressActivityItems(useDemoInProgress());
   const allCompleted = [...demoDone, ...completed];
+  const searchHref = storageId ? `/w/${storageId}?tab=search` : "/?tab=search";
+  const noticesHref = storageId ? `/notifications?w=${encodeURIComponent(storageId)}` : "/notifications";
+  const liveCount = running.length + demoActive.length;
+
+  if (phase === "loading") {
+    return (
+      <div className="activity" aria-busy="true">
+        <div className="skeleton skeleton-feed-card" />
+        <div className="skeleton skeleton-feed-card" />
+      </div>
+    );
+  }
+
+  if (phase === "error") {
+    return (
+      <div className="quiet-state compact" role="alert">
+        <TriangleAlert size={22} aria-hidden />
+        <strong>活动暂时读不到</strong>
+        <span>网络或服务可能短暂不可用，过几秒会自动重试。</span>
+      </div>
+    );
+  }
 
   return (
     <div className="activity">
       <section className="act-section">
-        <div className="act-section-head act-section-head-static">获取中</div>
-        {running.length === 0 && demoActive.length === 0 ? (
-          <p className="act-empty">当前没有正在处理的任务。</p>
+        <div className="act-section-head act-section-head-static">获取中{liveCount > 0 ? ` · ${liveCount}` : ""}</div>
+        {liveCount === 0 ? (
+          queued.length === 0 && allCompleted.length === 0 ? (
+            <div className="quiet-state compact act-idle">
+              <Search size={22} aria-hidden />
+              <strong>现在没有进行中的任务</strong>
+              <span>点获取之后，进度会出现在这里。「正在收尾」是正常核对，不是卡住。</span>
+              <Link className="primary-button" href={searchHref}>
+                去搜索获取
+              </Link>
+              <Link className="ghost-button" href={noticesHref}>
+                查看历史通知
+              </Link>
+            </div>
+          ) : (
+            <p className="act-empty">当前没有正在处理的任务。</p>
+          )
         ) : (
           <>
             {demoActive.map((item) => (
@@ -82,21 +128,30 @@ export function ActivityFeed({ storageId }: { storageId?: string | undefined }) 
         )}
       </section>
 
-      <CollapsibleSection title="排队中" count={queued.length} defaultOpen>
-        {queued.length === 0 ? (
-          <p className="act-empty">没有排队的任务。</p>
-        ) : (
-          queued.map((run) => <QueuedRow run={run} key={run.runId} />)
-        )}
-      </CollapsibleSection>
+      {liveCount > 0 || queued.length > 0 || allCompleted.length > 0 ? (
+        <>
+          <CollapsibleSection title="排队中" count={queued.length} defaultOpen={queued.length > 0}>
+            {queued.length === 0 ? (
+              <p className="act-empty">没有排队的任务。</p>
+            ) : (
+              queued.map((run) => <QueuedRow run={run} key={run.runId} />)
+            )}
+          </CollapsibleSection>
 
-      <CollapsibleSection title="已完成" count={allCompleted.length} note="仅本次浏览" defaultOpen>
-        {allCompleted.length === 0 ? (
-          <p className="act-empty">本次浏览还没有完成的任务，历史可在通知查看。</p>
-        ) : (
-          allCompleted.map((item) => <CompletedRow item={item} key={item.workflowRunId} />)
-        )}
-      </CollapsibleSection>
+          <CollapsibleSection title="已完成" count={allCompleted.length} note="仅本次浏览" defaultOpen={allCompleted.length > 0}>
+            {allCompleted.length === 0 ? (
+              <p className="act-empty">
+                本次浏览还没有完成的任务。历史记录在{" "}
+                <Link href={noticesHref}>通知</Link>。
+              </p>
+            ) : (
+              allCompleted.map((item) => (
+                <CompletedRow item={item} storageId={storageId} key={item.workflowRunId} />
+              ))
+            )}
+          </CollapsibleSection>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -116,6 +171,7 @@ function seasonLabel(run: ActivityActiveRun): string {
 
 function RunningRow({ run, storageId }: { run: ActivityActiveRun; storageId?: string | undefined }) {
   const percent = Math.max(3, Math.min(100, run.progress?.percent ?? 3));
+  const step = explainActivityStep(run.progress?.activity);
   const headline =
     run.progress?.needed && run.progress.needed > 0
       ? `已确认 ${run.progress.obtained ?? 0} / ${run.progress.needed} 集`
@@ -127,7 +183,10 @@ function RunningRow({ run, storageId }: { run: ActivityActiveRun; storageId?: st
         <div className="act-row-head">
           <strong>{run.title}</strong>
           {seasonLabel(run) ? <span className="act-sub">{seasonLabel(run)}</span> : null}
-          {headline ? <span className="act-frac">{headline}</span> : null}
+          <span className="act-frac">
+            {headline ? `${headline} · ` : ""}
+            {Math.round(percent)}%
+          </span>
           {run.qualityUpgrade ? <span className="act-pill">升级画质</span> : null}
           {run.selectionPath === "rules" ? <span className="act-pill">规则选片</span> : null}
           {run.selectionPath === "agent" ? <span className="act-pill">智能选片</span> : null}
@@ -137,8 +196,9 @@ function RunningRow({ run, storageId }: { run: ActivityActiveRun; storageId?: st
         </div>
         <div className="act-ticker-row">
           <Loader2 size={14} className="act-spin" aria-hidden />
-          <Ticker text={run.progress?.activity ?? "正在准备…"} />
+          <Ticker text={step.label} />
         </div>
+        {step.hint ? <p className="act-step-hint">{step.hint}</p> : null}
       </div>
     </Link>
   );
@@ -239,11 +299,23 @@ function completedPillLabel(status: ActivityCompletedItem["status"]): string {
   }
 }
 
-function CompletedRow({ item }: { item: ActivityCompletedItem }) {
+function CompletedRow({
+  item,
+  storageId,
+}: {
+  item: ActivityCompletedItem;
+  storageId?: string | undefined;
+}) {
   const ok = item.status === "complete" || item.status === "acquired" || item.status === "airing";
   const failed = item.status === "failed";
-  return (
-    <div className="act-row act-row-done">
+  const href =
+    item.tmdbId == null
+      ? null
+      : item.mediaType
+        ? showHref(item.tmdbId, "library", storageId, item.mediaType)
+        : showHref(item.tmdbId, "library", storageId);
+  const body = (
+    <>
       {poster(item.posterPath, item.title, ok ? "success" : "warn")}
       <div className="act-row-body act-row-inline">
         <strong>{item.title}</strong>
@@ -261,8 +333,16 @@ function CompletedRow({ item }: { item: ActivityCompletedItem }) {
         {item.sizeText ? <span className="act-sub">{item.sizeText}</span> : null}
         {failed ? <RetryButton runId={item.workflowRunId} title={item.title} /> : null}
       </div>
-    </div>
+    </>
   );
+  if (href && !failed) {
+    return (
+      <Link className="act-row act-row-done" href={href}>
+        {body}
+      </Link>
+    );
+  }
+  return <div className="act-row act-row-done">{body}</div>;
 }
 
 function RetryButton({ runId, title }: { runId: string; title: string }) {

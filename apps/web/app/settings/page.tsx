@@ -82,7 +82,7 @@ export default function SettingsPage({
         <div className="section-heading library-heading">
           <div>
             <h1>设置</h1>
-            <p>网盘连接与系统配置</p>
+            <p>网盘、获取偏好（画质下限 / 选片方式 / 识别词）与巡检</p>
           </div>
         </div>
         {isDemoMode() ? (
@@ -263,7 +263,7 @@ async function AcquisitionSelectionModeSection() {
             片源选片方式
           </h2>
           <p className="panel-note">
-            搜索之后如何选出要转存的候选。规则模式无需 LLM，按画质阶梯与中文标题/集数匹配。
+            规则 / 自动 / 智能 agent。规则模式无需 LLM，按画质阶梯与中文标题/集数匹配。
           </p>
         </div>
       </div>
@@ -335,7 +335,7 @@ async function QualityPreferenceSection() {
             偏好画质
           </h2>
           <p className="panel-note">
-            偏好是软排序；「低于此画质不下载」是硬性下限。比较阶梯只在召回后读候选标题，搜索仍用裸标题。
+            目标画质是软排序；「低于此画质不下载」是硬性下限，低于该档不转存。
           </p>
         </div>
       </div>

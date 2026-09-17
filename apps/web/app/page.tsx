@@ -113,7 +113,7 @@ async function HomeSurface({
             <div className="search-hero">
               <div>
                 <h1>搜索</h1>
-                <p>找到目标后发起获取，后台会处理资源判断、转存和验证。</p>
+                <p>找到片名后点获取。后台负责搜源、转存和验证，进度在活动页。</p>
               </div>
               <SearchForm basePath={basePath} defaultQuery={query} />
             </div>
@@ -254,7 +254,11 @@ async function SearchResults({
             <div className="quiet-state compact">
               <TriangleAlert size={22} aria-hidden />
               <strong>没有匹配结果</strong>
-              <span>{searchView.query}</span>
+              <span>换个关键词试试，或回到搜索页看看热门。</span>
+              <span className="panel-note">{searchView.query}</span>
+              <Link className="ghost-button" href={basePath}>
+                看看热门
+              </Link>
             </div>
           )}
         </section>
@@ -431,12 +435,16 @@ async function LibrarySurface({ mediaType, filter, storageId }: { mediaType: str
   const wall = rawWall.filter((entry) => !inProgressIds.has(entry.tmdbId));
 
   if (wall.length === 0 && inProgress.length === 0) {
+    const searchHref = `${storageId ? `/w/${storageId}` : "/"}?tab=search`;
     return (
       <section className="library-surface">
         <div className="quiet-state">
           <Library size={24} aria-hidden />
           <strong>媒体库还是空的</strong>
-          <span>去搜索页发起第一次获取吧。</span>
+          <span>搜索片名后点获取，资源会进这个库。</span>
+          <Link className="primary-button" href={searchHref}>
+            去搜索
+          </Link>
         </div>
       </section>
     );
@@ -455,11 +463,12 @@ async function LibrarySurface({ mediaType, filter, storageId }: { mediaType: str
         <div className="section-heading library-heading">
           <div>
             <h1>我的媒体库</h1>
+            <p>点海报进详情。获取中的片子可以点进去看进度。</p>
           </div>
         </div>
 
         {inProgress.length > 0 ? <AcquiringPoller /> : null}
-        <InProgressRow titles={inProgress} />
+        <InProgressRow titles={inProgress} storageId={storageId} />
 
         <CategoryRow label="电影" type="movie" {...byType("movie")} storageId={storageId} />
         <CategoryRow label="电视剧" type="tv" {...byType("tv")} storageId={storageId} />
@@ -500,7 +509,7 @@ async function LibrarySurface({ mediaType, filter, storageId }: { mediaType: str
         </div>
       </div>
 
-      <div style={{ marginBottom: 16, display: "flex", gap: 8 }}>
+      <div className="library-filter-row">
         <Link
           className={`filter-pill ${filter === "all" ? "is-active" : ""}`}
           href={`/?tab=library&type=${mediaType}&filter=all`}
@@ -528,7 +537,7 @@ async function LibrarySurface({ mediaType, filter, storageId }: { mediaType: str
       </div>
 
       {inProgress.length > 0 ? <AcquiringPoller /> : null}
-      <InProgressRow titles={inProgress.filter((title) => title.type === mediaType)} />
+      <InProgressRow titles={inProgress.filter((title) => title.type === mediaType)} storageId={storageId} />
 
       <div className="poster-wall">
         {filteredWall.map((entry) => (
@@ -566,7 +575,7 @@ function CategoryRow({
       </Link>
       <div className="poster-row">
         {inProgressTitles.map((title) => (
-          <InProgressCard title={title} key={`ip_${title.tmdbId}`} />
+          <InProgressCard title={title} storageId={storageId} key={`ip_${title.tmdbId}`} />
         ))}
         {wallEntries.map((entry) => (
           <PosterCard entry={entry} activeStorageId={storageId} key={entry.tmdbId} />
@@ -576,7 +585,13 @@ function CategoryRow({
   );
 }
 
-function InProgressRow({ titles }: { titles: InProgressTitle[] }) {
+function InProgressRow({
+  titles,
+  storageId,
+}: {
+  titles: InProgressTitle[];
+  storageId?: string | undefined;
+}) {
   if (titles.length === 0) {
     return null;
   }
@@ -587,16 +602,23 @@ function InProgressRow({ titles }: { titles: InProgressTitle[] }) {
       </div>
       <div className="poster-row">
         {titles.map((title) => (
-          <InProgressCard title={title} key={title.tmdbId} />
+          <InProgressCard title={title} storageId={storageId} key={title.tmdbId} />
         ))}
       </div>
     </div>
   );
 }
 
-function InProgressCard({ title }: { title: InProgressTitle }) {
+function InProgressCard({
+  title,
+  storageId,
+}: {
+  title: InProgressTitle;
+  storageId?: string | undefined;
+}) {
+  const href = storageId ? `/activity?w=${encodeURIComponent(storageId)}` : "/activity";
   return (
-    <div className="wall-card is-loading" aria-disabled title="获取中，完成后可进入">
+    <Link className="wall-card is-loading" href={href} title="正在获取，点开看进度">
       <span className="wall-poster">
         {title.posterPath ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -611,9 +633,9 @@ function InProgressCard({ title }: { title: InProgressTitle }) {
       </span>
       <span className="wall-copy">
         <strong>{title.title}</strong>
-        <span>{title.year} · 正在获取</span>
+        <span>{title.year} · 点开看进度</span>
       </span>
-    </div>
+    </Link>
   );
 }
 

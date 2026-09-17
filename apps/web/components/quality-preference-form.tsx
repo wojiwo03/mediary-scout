@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Check, ChevronDown, LoaderCircle } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import {
   QUALITY_UPGRADE_MODE_COPY,
   parseQualityFloorSetting,
@@ -17,6 +17,7 @@ import {
 } from "../lib/patrol-quality-upgrade-sync";
 import { runAction } from "../lib/run-action";
 import { QualityLadderVisual } from "./quality-ladder-visual";
+import { SettingsSaveRow } from "./settings-save-row";
 
 const FLOORS: Array<{ key: QualityFloorSetting; label: string; hint: string }> = [
   { key: "any", label: "不限", hint: "没有硬性下限，找不到目标画质时仍可取更低档" },
@@ -57,7 +58,16 @@ export function QualityPreferenceForm({
   const [upgrade, setUpgrade] = useState(upgradeOnReacquire);
   const [patrolUpgrade, setPatrolUpgrade] = useState(patrolQualityUpgrade);
   const [advancedOpen, setAdvancedOpen] = useState(preferHdrOverResolution || !considerSourceClass);
-  const [result, setResult] = useState<string | null>(null);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const initialFloor: QualityFloorSetting =
+    qualityFloor === "4k" || qualityFloor === "1080p" || qualityFloor === "720p" ? qualityFloor : "any";
+  const dirty =
+    value !== (initial || "any") ||
+    floor !== initialFloor ||
+    hdrFirst !== preferHdrOverResolution ||
+    sourceOn !== considerSourceClass ||
+    upgrade !== upgradeOnReacquire ||
+    patrolUpgrade !== patrolQualityUpgrade;
 
   useEffect(() => {
     setPatrolUpgrade(patrolQualityUpgrade);
@@ -105,7 +115,7 @@ export function QualityPreferenceForm({
             patrolQualityUpgrade: patrolUpgrade,
           }),
         (msg) => {
-          setResult(`❌ ${msg}`);
+          setResult({ ok: false, text: msg });
           setTimeout(() => setResult(null), 3000);
         },
       );
@@ -115,18 +125,18 @@ export function QualityPreferenceForm({
         emitPatrolQualityUpgradeChange(patrolUpgrade);
         router.refresh();
       }
-      setResult(res.success ? "✅ 保存成功" : `❌ ${res.message ?? "保存失败"}`);
+      setResult({ ok: res.success, text: res.success ? "已保存" : (res.message ?? "保存失败") });
       setTimeout(() => setResult(null), 3000);
     });
   };
 
   return (
-    <div className="push-form">
-      <p className="panel-note" style={{ marginBottom: 12 }}>
-        下面的顺序只用于<strong>召回之后</strong>读候选标题选片。搜索仍用裸片名。偏好是软排序；「低于此画质不下载」才是硬性下限——低于下限的候选一律不转存，留给巡检。
+    <div className="settings-stack">
+      <p className="panel-note">
+        偏好是软排序，用来在候选里挑更好的。「低于此画质不下载」才是硬性下限。两者都只在搜到候选之后读标题，搜索本身仍用裸片名。
       </p>
 
-      <p className="quality-section-label">分辨率档位</p>
+      <p className="quality-section-label">目标画质（软排序）</p>
       <div className="quality-choice-grid" role="radiogroup" aria-label="偏好画质档位">
         {QUALITIES.map((quality) => (
           <button
@@ -143,11 +153,11 @@ export function QualityPreferenceForm({
         ))}
       </div>
 
-      <p className="quality-section-label">低于此画质不下载</p>
-      <p className="panel-note" style={{ marginBottom: 8 }}>
-        硬性下限，不是排序。低于此档的候选一律不转存，哪怕是唯一资源也留给巡检，而不是降档凑合。未标注分辨率的标题不因此拒绝。
+      <p className="quality-section-label">低于此画质不下载（硬性下限）</p>
+      <p className="panel-note">
+        低于此档一律不转存，哪怕是唯一候选也留给巡检。标题没写分辨率的不受这条限制。
       </p>
-      <div className="quality-choice-grid" role="radiogroup" aria-label="画质下限">
+      <div className="quality-choice-grid quality-choice-grid-4" role="radiogroup" aria-label="画质下限">
         {FLOORS.map((option) => (
           <button
             key={option.key}
@@ -203,8 +213,8 @@ export function QualityPreferenceForm({
       ) : null}
 
       <p className="quality-section-label">何时用更高画质替换</p>
-      <p className="panel-note" style={{ marginBottom: 8 }}>
-        三种入口都只替换<strong>严格更高</strong>的版本；成功转存并回读验证后才会删掉被替换的低画质文件。失败不会动旧文件。默认全部关闭，避免默默全库重写。
+      <p className="panel-note">
+        只替换<strong>严格更高</strong>的版本；转存并回读成功后才删旧文件。失败不动现有文件。默认关闭自动入口，避免默默全库重写。
       </p>
       <div className="quality-upgrade-modes">
         <div className="quality-upgrade-mode is-always">
@@ -238,17 +248,7 @@ export function QualityPreferenceForm({
         </label>
       </div>
 
-      <div className="setting-row" style={{ marginTop: 16 }}>
-        <button type="button" className="primary-button" onClick={handleSave} disabled={isPending}>
-          {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <Check size={14} aria-hidden />}
-          保存
-        </button>
-      </div>
-      {result ? (
-        <p className="panel-note" style={{ marginTop: 10 }}>
-          {result}
-        </p>
-      ) : null}
+      <SettingsSaveRow dirty={dirty} pending={isPending} result={result} onSave={handleSave} />
     </div>
   );
 }

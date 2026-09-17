@@ -27,10 +27,14 @@ export function AcquireResultNotice({
 }: {
   result: RequestTrackingActionResult | null;
 }) {
-  if (result?.status !== "llm_not_configured") {
+  if (result?.status !== "llm_not_configured" && result?.status !== "unsupported") {
     return null;
   }
-  return <p className="request-result">{result.message}</p>;
+  return (
+    <p className="request-result" role="status">
+      {result.message}
+    </p>
+  );
 }
 
 /** The standalone "已请求" pill shown after a request is queued (spinner — it is

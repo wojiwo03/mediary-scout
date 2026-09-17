@@ -122,6 +122,7 @@ export function RequestSeasonButton({
         disabled={isPending || isLocked || othersAcquiring}
       />
       </div>
+      {othersAcquiring && !inFlight ? <p className="acquire-busy-note">该剧正在获取中，请稍候</p> : null}
       <AcquireResultNotice result={result} />
     </>
   );
@@ -221,6 +222,7 @@ export function RequestRemainingButton({
         disabled={isPending || isLocked || othersAcquiring}
       />
       </div>
+      {othersAcquiring && !inFlight ? <p className="acquire-busy-note">该剧正在获取中，请稍候</p> : null}
       <AcquireResultNotice result={result} />
     </>
   );
@@ -305,13 +307,20 @@ export function QualityUpgradePanel({
   const headline = upgrade?.headline ?? "将按偏好寻找严格更高的版本";
   const currentText = upgrade?.currentLabel ?? "未能从文件名读出";
   const targetText = upgrade?.targetLabel ?? "偏好目标";
+  const atTop = upgrade?.atLadderTop === true;
+  const confirmLabel = atTop ? "再找一次" : "升级画质";
 
   return (
-    <div className="quality-upgrade-panel">
+    <div className={`quality-upgrade-panel${atTop ? " is-current" : ""}`}>
       <p className="quality-upgrade-copy">
         {headline}
-        <small>仅当候选严格更高才替换。找不到或转存失败都不会删除旧文件。</small>
+        <small>
+          {atTop
+            ? "已经在偏好阶梯顶部。仍可再搜一次，只有严格更高才会替换。"
+            : "仅当候选严格更高才替换。找不到或转存失败都不会删除旧文件。"}
+        </small>
       </p>
+      {titleAcquiring ? <p className="acquire-busy-note">这部正在获取中，升级稍后再试。</p> : null}
       {demo ? null : confirming ? (
         <div className="quality-upgrade-preview">
           <div className="quality-upgrade-compare">
@@ -348,10 +357,10 @@ export function QualityUpgradePanel({
           type="button"
           onClick={() => setConfirming(true)}
           disabled={titleAcquiring}
-          title="先预览现在与目标画质，确认后再排队"
+          title={titleAcquiring ? "该片正在获取中，请稍候" : "先预览现在与目标画质，确认后再排队"}
         >
           <Sparkles size={13} aria-hidden />
-          升级画质
+          {confirmLabel}
         </button>
       )}
     </div>

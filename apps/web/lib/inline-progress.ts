@@ -1,4 +1,5 @@
 import type { ActivityActiveRun } from "./activity-view";
+import { explainActivityStep } from "./activity-status-copy";
 
 /** Find THIS card's active run: same tmdbId, and `seasonNumber === null` matches
  *  ANY season (movies, and the TV "all remaining seasons" scope), preferring a
@@ -83,11 +84,11 @@ export function advanceTrickle(
 /** Derive the inline progress display from the matched run. */
 export function inlineProgressView(
   run: ActivityActiveRun | null,
-): { running: boolean; percent: number; step: string } {
+): { running: boolean; percent: number; step: string; hint?: string } {
   const running = run?.status === "running";
   const percent = Math.max(3, Math.min(100, run?.progress?.percent ?? 3));
-  // Empty/whitespace activity (?? only guards null/undefined) would render a blank
-  // label — treat it as missing and fall back.
-  const step = run?.progress?.activity?.trim() || "正在准备…";
-  return { running, percent, step };
+  const explained = explainActivityStep(run?.progress?.activity);
+  return explained.hint
+    ? { running, percent, step: explained.label, hint: explained.hint }
+    : { running, percent, step: explained.label };
 }

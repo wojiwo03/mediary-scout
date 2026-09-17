@@ -60,7 +60,7 @@ export function AcquireProgressBadge({
 
   const href = storageId ? `/activity?w=${encodeURIComponent(storageId)}` : "/activity";
   return (
-    <Link className="demo-playback acquire-progress" href={href} title={title ?? "查看获取进度（活动）"}>
+    <Link className="demo-playback acquire-progress" href={href} title={view.hint ?? title ?? "查看获取进度（活动）"}>
       <span className="demo-playback-bar">
         <span className="demo-playback-fill" style={{ width: `${displayPercent}%` }} />
       </span>

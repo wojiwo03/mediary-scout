@@ -1,12 +1,16 @@
 /** 设置页 tab 的纯模型：id/标签/解析/URL 写回。UI 无关，node 环境可测。 */
 
 export const SETTINGS_TABS = [
-  { id: "drives", label: "网盘" },
-  { id: "services", label: "资源与服务" },
-  { id: "preferences", label: "获取偏好" },
-  { id: "patrol", label: "巡检与通知" },
-  { id: "account", label: "账号" },
-  { id: "remote", label: "远程访问" },
+  { id: "drives", label: "网盘", hint: "连接网盘后才能转存。每块盘是独立工作区。" },
+  { id: "services", label: "资源与服务", hint: "AI 模型、元数据和搜源。规则选片可以不配 LLM。" },
+  {
+    id: "preferences",
+    label: "获取偏好",
+    hint: "选片方式、画质下限、自定义识别词和语言都在这里。",
+  },
+  { id: "patrol", label: "巡检与通知", hint: "定时补集、可选画质升级，以及推送渠道。" },
+  { id: "account", label: "账号", hint: "修改密码与账号管理。" },
+  { id: "remote", label: "远程访问", hint: "从外网打开本机巡影。" },
 ] as const;
 
 export type SettingsTabId = (typeof SETTINGS_TABS)[number]["id"];

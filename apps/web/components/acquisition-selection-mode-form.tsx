@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Check, LoaderCircle } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { saveAcquisitionSelectionModeAction } from "../app/actions";
 import { runAction } from "../lib/run-action";
 import type { AcquisitionSelectionMode } from "@media-track/workflow";
+import { SettingsSaveRow } from "./settings-save-row";
 
 const MODES: Array<{ key: AcquisitionSelectionMode; label: string; hint: string }> = [
   {
@@ -25,30 +26,33 @@ const MODES: Array<{ key: AcquisitionSelectionMode; label: string; hint: string 
 ];
 
 export function AcquisitionSelectionModeForm({ initial }: { initial: AcquisitionSelectionMode }) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [value, setValue] = useState<AcquisitionSelectionMode>(initial);
-  const [result, setResult] = useState<string | null>(null);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const dirty = value !== initial;
 
   const handleSave = () => {
     startTransition(async () => {
       const r = await runAction(
         () => saveAcquisitionSelectionModeAction(value),
         (msg) => {
-          setResult(`❌ ${msg}`);
+          setResult({ ok: false, text: msg });
           setTimeout(() => setResult(null), 3000);
         },
       );
       if (!r.ok) return;
       const res = r.value;
-      setResult(res.success ? "✅ 保存成功" : `❌ ${res.message ?? "保存失败"}`);
+      if (res.success) router.refresh();
+      setResult({ ok: res.success, text: res.success ? "已保存" : (res.message ?? "保存失败") });
       setTimeout(() => setResult(null), 3000);
     });
   };
 
   return (
-    <div className="push-form">
-      <p className="panel-note" style={{ marginBottom: 12 }}>
-        控制片源查询之后<strong>如何选出要转存的候选</strong>。搜索（PanSou / Prowlarr）和转存校验轨道不变；规则模式优化画质阶梯、标题匹配与集数覆盖，不按搜索结果原始顺序盲转。
+    <div className="settings-stack">
+      <p className="panel-note">
+        搜到片源之后<strong>怎么选出要转存的那一档</strong>。搜索和转存校验不变；规则模式按画质阶梯和中文标题/集数匹配，不按搜索结果原始顺序盲转。
       </p>
       <div className="quality-choice-grid" role="radiogroup" aria-label="片源选片方式">
         {MODES.map((mode) => (
@@ -65,17 +69,7 @@ export function AcquisitionSelectionModeForm({ initial }: { initial: Acquisition
           </button>
         ))}
       </div>
-      <div className="setting-row" style={{ marginTop: 16 }}>
-        <button type="button" className="primary-button" onClick={handleSave} disabled={isPending}>
-          {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <Check size={14} aria-hidden />}
-          保存
-        </button>
-      </div>
-      {result ? (
-        <p className="panel-note" style={{ marginTop: 10 }}>
-          {result}
-        </p>
-      ) : null}
+      <SettingsSaveRow dirty={dirty} pending={isPending} result={result} onSave={handleSave} />
     </div>
   );
 }

@@ -82,6 +82,8 @@ function run(input: {
                 newlyObtained: [],
                 realMissing: [],
                 posterPath: `/p${input.tmdbId}.jpg`,
+                tmdbId: input.tmdbId,
+                mediaType: "tv",
                 fileCount: 12,
                 totalBytes: 12 * 410 * 1024 * 1024,
               },
@@ -137,6 +139,8 @@ describe("getActivityView", () => {
     const done = view.recentCompleted.find((c) => c.title === "Done")!;
     expect(done.workflowRunId).toBe("r_done");
     expect(done.sizeText).toBe("每集 约 410 MB");
+    expect(done.tmdbId).toBe(2);
+    expect(done.mediaType).toBe("tv");
   });
 
   it("backfills a missing recentCompleted poster from the tracked title (old notifications lack posterPath)", async () => {
